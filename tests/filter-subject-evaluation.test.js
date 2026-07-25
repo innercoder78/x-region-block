@@ -5,7 +5,7 @@ import { createSettingsRuntime } from '../src/shared/settings-runtime.js';
 import { normalizeSettings } from '../src/shared/settings-schema.js';
 
 const base = (location = {
-  status: 'known', countryCode: 'CA', countryName: 'Canada', regionCode: 'NORTH_AMERICA',
+  status: 'known', countryCode: 'CA', countryName: 'Canada',
 }) => ({
   identity: { handle: 'Account_A', source: 'profile' }, location,
   languages: ['EN'], tags: ['News'],

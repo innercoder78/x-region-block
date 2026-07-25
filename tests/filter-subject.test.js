@@ -44,12 +44,12 @@ describe('filter subject', () => {
     expect(subject.location.countryCode).toBeNull();
   });
 
-  it('does not invent a region and uses fresh frozen defaults', () => {
+  it('derives a region and uses fresh frozen defaults', () => {
     const withoutRegion = { ...knownLocation() };
     delete withoutRegion.regionCode;
     const first = createFilterSubject({ ...input(), location: withoutRegion });
     const second = createFilterSubject({ ...input(), location: withoutRegion });
-    expect(first.location.regionCode).toBeNull();
+    expect(first.location.regionCode).toBe('NORTH_AMERICA');
     expect(first.languages).toEqual([]);
     expect(first.languages).not.toBe(second.languages);
     expect(first.tags).not.toBe(second.tags);

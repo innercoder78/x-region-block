@@ -88,6 +88,7 @@ describe('settings repository', () => {
   it.each([
     ['malformed', { schemaVersion: 1, allowlist: 'user' }],
     ['future', { schemaVersion: 2 }],
+    ['unsupported country', { schemaVersion: 1, country: { hide: ['ZZ'] } }],
   ])('rejects %s stored settings without writing', async (name, value) => {
     const storage = fakeStorage({ [SETTINGS_STORAGE_KEY]: value });
     await expect(createSettingsRepository(storage).initializeSettings()).rejects.toThrow();

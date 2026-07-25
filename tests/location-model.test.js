@@ -32,6 +32,50 @@ describe('location model', () => {
   });
 
   it.each([
+    ['AO', 'AFRICA'], ['JP', 'ASIA'], ['CY', 'EUROPE'], ['EG', 'MIDDLE_EAST'],
+    ['CA', 'NORTH_AMERICA'], ['AU', 'OCEANIA'], ['GF', 'SOUTH_AMERICA'],
+    ['PR', 'CARIBBEAN'], ['MX', 'CENTRAL_AMERICA'],
+  ])('derives %s as %s', (countryCode, regionCode) => {
+    expect(createKnownLocation({ countryCode, countryName: 'Name' }).regionCode).toBe(regionCode);
+  });
+
+  it.each([
+    ['EG', 'MIDDLE_EAST'], ['IR', 'MIDDLE_EAST'], ['TR', 'MIDDLE_EAST'],
+    ['PS', 'MIDDLE_EAST'], ['CY', 'EUROPE'], ['RU', 'EUROPE'], ['AM', 'ASIA'],
+    ['AZ', 'ASIA'], ['GE', 'ASIA'], ['KZ', 'ASIA'], ['AW', 'CARIBBEAN'],
+    ['FK', 'SOUTH_AMERICA'], ['BM', 'NORTH_AMERICA'], ['GL', 'NORTH_AMERICA'],
+    ['PM', 'NORTH_AMERICA'],
+  ])('preserves the explicit policy decision for %s', (countryCode, regionCode) => {
+    expect(createKnownLocation({ countryCode, countryName: 'Name' }).regionCode).toBe(regionCode);
+  });
+
+  it('keeps Antarctica known with null region fields', () => {
+    expect(createKnownLocation({ countryCode: 'AQ', countryName: 'Antarctica' })).toMatchObject({
+      status: 'known', countryCode: 'AQ', regionCode: null, regionName: null,
+    });
+  });
+
+  it('accepts matching assertions and rejects conflicting assertions', () => {
+    expect(createKnownLocation({
+      countryCode: 'CA', countryName: 'Canada', regionCode: ' north_america ',
+      regionName: 'North America',
+    }).regionCode).toBe('NORTH_AMERICA');
+    expect(() => createKnownLocation({
+      countryCode: 'CA', countryName: 'Canada', regionCode: 'EUROPE',
+    })).toThrow('regionCode must match');
+    expect(() => createKnownLocation({
+      countryCode: 'CA', countryName: 'Canada', regionName: 'Northern America',
+    })).toThrow('regionName must match');
+    expect(() => createKnownLocation({
+      countryCode: 'AQ', countryName: 'Antarctica', regionCode: 'UNKNOWN',
+    })).toThrow('does not support a region assertion');
+  });
+
+  it.each(['ZZ', 'UK', 'XK', 'EU'])('rejects unsupported known country code %s', (countryCode) => {
+    expect(() => createKnownLocation({ countryCode, countryName: 'Name' })).toThrow(TypeError);
+  });
+
+  it.each([
     ['hidden', createHiddenLocation, 'private'],
     ['missing', createMissingLocation, null],
     ['unavailable', createUnavailableLocation, null],

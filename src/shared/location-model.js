@@ -1,4 +1,5 @@
-import { getRegion } from './regions.js';
+import { getCountryRegion, normalizeCountryCode } from './country-regions.js';
+import { getRegion, REGION_CODES } from './regions.js';
 
 export const LOCATION_STATUSES = Object.freeze({
   KNOWN: 'known',
@@ -39,22 +40,23 @@ export function createLocationResult(input = {}) {
   let regionName = null;
 
   if (status === LOCATION_STATUSES.KNOWN) {
-    if (typeof input.countryCode !== 'string' || !/^[a-z]{2}$/i.test(input.countryCode)) {
-      throw new TypeError('A known location requires a two-letter countryCode');
-    }
+    countryCode = normalizeCountryCode(input.countryCode);
     if (typeof input.countryName !== 'string' || input.countryName.trim() === '') {
       throw new TypeError('A known location requires a countryName');
     }
-    countryCode = input.countryCode.toUpperCase();
     countryName = input.countryName;
 
-    if (input.regionCode != null || input.regionName != null) {
-      const region = getRegion(input.regionCode);
-      if (!region || region.code === 'UNKNOWN') {
-        throw new TypeError('A known region requires a supported regionCode');
+    const region = getCountryRegion(countryCode);
+    if (region.code === REGION_CODES.UNKNOWN) {
+      if (input.regionCode != null || input.regionName != null) {
+        throw new TypeError('This country does not support a region assertion');
+      }
+    } else {
+      if (input.regionCode != null && getRegion(input.regionCode)?.code !== region.code) {
+        throw new TypeError('regionCode must match the country region');
       }
       if (input.regionName != null && input.regionName !== region.name) {
-        throw new TypeError('regionName must match regionCode');
+        throw new TypeError('regionName must match the country region');
       }
       regionCode = region.code;
       regionName = region.name;
