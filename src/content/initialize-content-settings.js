@@ -18,6 +18,11 @@ export async function initializeContentSettings(globalScope = globalThis) {
     changeAdapter,
     onError: () => globalScope.console?.error?.('Unable to refresh extension settings'),
   });
-  await runtime.start();
+  try {
+    await runtime.start();
+  } catch {
+    runtime.stop();
+    throw new Error('Unable to initialize extension settings');
+  }
   return runtime;
 }

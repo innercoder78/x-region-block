@@ -63,7 +63,11 @@ export function createSettingsRuntime({ repository, changeAdapter, onError }) {
       }
     } catch {
       if (!active || generation !== expectedGeneration) return;
-      onError(new Error('Unable to refresh extension settings'));
+      try {
+        onError(new Error('Unable to refresh extension settings'));
+      } catch {
+        // Error reporting must not reject or poison the serialized refresh queue.
+      }
     }
   }
 
@@ -84,6 +88,9 @@ export function createSettingsRuntime({ repository, changeAdapter, onError }) {
       unsubscribeChanges = changeAdapter.subscribe(
         (changes, areaName) => handleStorageChange(expectedGeneration, changes, areaName),
       );
+      if (typeof unsubscribeChanges !== 'function') {
+        throw new TypeError('changeAdapter.subscribe must return an unsubscribe function');
+      }
     } catch (error) {
       active = false;
       unsubscribeChanges = null;
