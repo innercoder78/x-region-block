@@ -63,6 +63,8 @@ async function validateBrowser(browser) {
   assert(manifest.manifest_version === 3, `${browser} manifest must use Manifest V3`);
   assert(manifest.name === expectedName, `${browser} manifest has an unexpected name`);
   assert(manifest.version === expectedVersion, `${browser} manifest has an unexpected version`);
+  assert(JSON.stringify(manifest.permissions) === JSON.stringify(['storage']),
+    `${browser} manifest must request only the storage permission`);
   assert(!/(?:community.?cache|cloud|https?:\/\/(?!x\.com|twitter\.com))/i.test(manifestText),
     `${browser} manifest contains a prohibited endpoint`);
 

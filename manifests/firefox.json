@@ -3,6 +3,7 @@
   "name": "X Region Reveal & Block",
   "version": "0.0.1",
   "description": "Development foundation for a future X region reveal and block extension; user-facing features are not implemented yet.",
+  "permissions": ["storage"],
   "background": {
     "scripts": ["background/service-worker.js"]
   },
