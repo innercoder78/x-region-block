@@ -1,8 +1,10 @@
 # X Region Reveal & Block
 
-This repository currently contains the development foundation for a browser
-extension. Account lookup, location display, blocking, and settings are not yet
-implemented.
+This repository contains the development foundation for a browser extension,
+including versioned local settings, an options-page settings editor, and
+content-script runtime settings synchronization. X account lookup, location
+detection, country or region display, highlighting, and hiding or blocking X
+content are not yet implemented.
 
 ## Development
 
@@ -14,5 +16,6 @@ npm run check
 
 Individual commands are available for linting (`npm run lint`), testing
 (`npm test`), and building unpacked Chrome and Firefox extensions
-(`npm run build:chrome` and `npm run build:firefox`). Generated extensions are
-written to `dist/chrome` and `dist/firefox`.
+(`npm run build:chrome` and `npm run build:firefox`). Unpacked browser builds are
+written to `dist/chrome` and `dist/firefox`; each generated directory contains
+its own root `manifest.json`.

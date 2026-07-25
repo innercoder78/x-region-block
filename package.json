@@ -8,11 +8,11 @@
   },
   "scripts": {
     "clean": "node -e \"import('node:fs/promises').then(({rm}) => rm('dist', { recursive: true, force: true }))\"",
-    "build:chrome": "rollup --config --environment BROWSER:chrome",
-    "build:firefox": "rollup --config --environment BROWSER:firefox",
+    "build:chrome": "rollup --config config/rollup.config.js --environment BROWSER:chrome",
+    "build:firefox": "rollup --config config/rollup.config.js --environment BROWSER:firefox",
     "build": "npm run clean && npm run build:chrome && npm run build:firefox",
     "validate:build": "node scripts/validate-build.js",
-    "lint": "eslint .",
+    "lint": "eslint --config config/eslint.config.js .",
     "test": "vitest run",
     "check": "npm run lint && npm test && npm run build && npm run validate:build"
   },
