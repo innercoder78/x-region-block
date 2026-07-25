@@ -1,4 +1,5 @@
-import { SUPPORTED_HOSTNAMES } from '../shared/constants.js';
+import { initializeContentSettings } from './initialize-content-settings.js';
 
-// Feature behavior is intentionally deferred; this entry point only initializes.
-void SUPPORTED_HOSTNAMES;
+initializeContentSettings().catch(() => {
+  globalThis.console?.error?.('Unable to initialize extension settings');
+});
