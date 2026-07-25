@@ -8,6 +8,32 @@ export class FakeElement {
     this._textContent = '';
   }
 
+  get parentElement() {
+    return this.parentNode instanceof FakeElement ? this.parentNode : null;
+  }
+
+  querySelectorAll(selector) {
+    const matches = [];
+    const selectors = selector.split(',').map((value) => value.trim());
+    const matchesSelector = (element, fixedSelector) => {
+      if (fixedSelector === 'a[href]') {
+        return element.tagName === 'A' && element.hasAttribute('href');
+      }
+      const match = /^(article)?\[data-testid="([^"]+)"\]$/.exec(fixedSelector);
+      return match !== null
+        && (!match[1] || element.tagName === match[1].toUpperCase())
+        && element.getAttribute('data-testid') === match[2];
+    };
+    const visit = (element) => {
+      for (const child of element.children) {
+        if (selectors.some((candidate) => matchesSelector(child, candidate))) matches.push(child);
+        visit(child);
+      }
+    };
+    visit(this);
+    return matches;
+  }
+
   get textContent() {
     return this.children.length === 0
       ? this._textContent
@@ -56,12 +82,26 @@ export class FakeElement {
 export class FakeDocument {
   constructor() {
     this.created = [];
+    this.children = [];
+    this.baseURI = 'https://x.com/home';
   }
 
   createElement(tagName) {
     const element = new FakeElement(tagName, this);
     this.created.push(element);
     return element;
+  }
+
+  appendChild(child) {
+    this.children.push(child);
+    child.parentNode = this;
+    return child;
+  }
+
+  querySelectorAll(selector) {
+    const root = new FakeElement('document-root', this);
+    root.children = this.children;
+    return root.querySelectorAll(selector);
   }
 }
 
