@@ -13,7 +13,7 @@ describe.each(browsers)('%s manifest', (browser) => {
     const manifest = await readManifest(browser);
 
     expect(manifest.manifest_version).toBe(3);
-    expect(manifest.version).toBe('0.1.0');
+    expect(manifest.version).toBe('0.0.1');
     expect(manifest.name).toBe('X Region Reveal & Block');
   });
 

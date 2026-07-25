@@ -7,15 +7,19 @@ export default [
   },
   eslint.configs.recommended,
   {
-    files: ['src/**/*.js'],
+    files: [
+      '*.config.js',
+      'scripts/**/*.js',
+      'tests/**/*.js',
+    ],
     languageOptions: {
-      globals: globals.browser,
+      globals: globals.node,
     },
   },
   {
-    files: ['tests/**/*.js'],
+    files: ['src/**/*.js'],
     languageOptions: {
-      globals: globals.node,
+      globals: globals.browser,
     },
   },
 ];

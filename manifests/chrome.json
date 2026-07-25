@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X Region Reveal & Block",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "description": "Development foundation for a future X region reveal and block extension; user-facing features are not implemented yet.",
   "background": {
     "service_worker": "background/service-worker.js"
