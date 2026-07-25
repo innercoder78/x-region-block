@@ -8,7 +8,7 @@ export default [
   eslint.configs.recommended,
   {
     files: [
-      '*.config.js',
+      'config/**/*.js',
       'scripts/**/*.js',
       'tests/**/*.js',
     ],

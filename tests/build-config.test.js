@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   browserOutputDirectories,
   entryPoints,
-} from '../rollup.config.js';
+} from '../config/rollup.config.js';
 
 const expectedEntries = [
   'background/service-worker',
