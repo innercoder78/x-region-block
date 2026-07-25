@@ -11,6 +11,8 @@ const expectedJavaScriptEntries = [
   'popup/popup.js',
   'options/options.js',
 ];
+const expectedContentCss = ['content/account-actions.css'];
+const expectedMatches = ['https://x.com/*', 'https://twitter.com/*'];
 
 async function requireFile(root, relativePath) {
   const filePath = path.join(root, relativePath);
@@ -67,6 +69,13 @@ async function validateBrowser(browser) {
     `${browser} manifest must request only the storage permission`);
   assert(!/(?:community.?cache|cloud|https?:\/\/(?!x\.com|twitter\.com))/i.test(manifestText),
     `${browser} manifest contains a prohibited endpoint`);
+  assert(manifest.host_permissions === undefined, `${browser} manifest must not request host permissions`);
+  assert(manifest.content_scripts.length === 1, `${browser} manifest must have one content script`);
+  assert(JSON.stringify(manifest.content_scripts[0].matches) === JSON.stringify(expectedMatches),
+    `${browser} manifest has unexpected match patterns`);
+  assert(JSON.stringify(manifest.content_scripts[0].css) === JSON.stringify(expectedContentCss),
+    `${browser} manifest must reference the account action CSS`);
+  await requireFile(root, expectedContentCss[0]);
 
   for (const file of expectedJavaScriptEntries) {
     await requireFile(root, file);

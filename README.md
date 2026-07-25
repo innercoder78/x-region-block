@@ -48,12 +48,12 @@ canonical settings snapshot changes without repeating a lookup. Targets that
 disappear are cancelled and cleaned up, and all transient account, location,
 request, and DOM state is cleared when processing stops.
 
+The processor now uses an ownership-safe version 1 account-action renderer to apply and clean up reversible `show`, `highlight`, and `hide` decisions on explicitly supplied account containers. A single `data-x-region-block-account-action` attribute represents highlight or hide, while show is represented by its absence. Minimal manifest-loaded CSS highlights with a non-layout-changing outline and hides only through the exact owned attribute selector; it has no effect until the processor applies a recognized value. Location badges continue to render for every action. Profile actions currently apply only to the profile surface container returned by the existing selector policy.
+
 The coordinator has no real X transport or hardcoded query ID, reads no
-authentication data, and is not connected to content-script startup. Filter
-actions are returned within the existing presentation boundary but are not
-applied to X content. About Account request transport, query-ID discovery,
+authentication data, and is not connected to content-script startup. About Account request transport, query-ID discovery,
 memory-only authorization handling, live processor startup, route-aware
-observer startup, applying highlight or hide actions, badge styling, blocking
+surface orchestration, badge styling, blocking
 live X content, and end-to-end browser verification remain unimplemented.
 
 The pure shared models include canonical X account-handle normalization and safe
@@ -82,8 +82,7 @@ metadata is discarded. The parser never produces a hidden location.
 The observed response shape is a versioned observation, not an official stable API. No X
 request, query-ID discovery, authentication-data reading, page integration, content-script
 integration, live location lookup, or automatic account presentation is implemented.
-Memory-only authorization handling, applying highlight or
-hide actions, badge styling, blocking live X content, and end-to-end browser verification
+Memory-only authorization handling, live observer and processor startup, badge styling, blocking live X content, and end-to-end browser verification
 also remain unimplemented.
 
 ## Development
@@ -99,3 +98,5 @@ Individual commands are available for linting (`npm run lint`), testing
 (`npm run build:chrome` and `npm run build:firefox`). Unpacked browser builds are
 written to `dist/chrome` and `dist/firefox`; each generated directory contains
 its own root `manifest.json`.
+
+Live X layout compatibility and end-to-end browser behavior remain unverified. This repository is not production-ready. No real About Account transport, query-ID discovery, memory-only authorization handling, live observer and processor startup, route-aware surface orchestration, badge styling, or end-to-end browser verification is implemented. No authentication handling or persistent account/location storage exists.

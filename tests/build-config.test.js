@@ -49,6 +49,14 @@ describe('build configuration', () => {
     await expect(access(path.join('src', path.dirname(options), 'options.css'))).resolves.toBeUndefined();
   });
 
+  it('copies the account action stylesheet through the existing static mechanism', async () => {
+    const configuration = await readFile('config/rollup.config.js', 'utf8');
+    expect(configuration).toContain(
+      "['src/content/account-actions.css', 'content/account-actions.css']",
+    );
+    expect(configuration).not.toMatch(/postcss|css-loader|sass/);
+  });
+
   it('contains no excluded implementation systems', async () => {
     const sourceFiles = (await walk('src')).filter((file) => file.endsWith('.js'));
     const source = (await Promise.all(sourceFiles.map((file) => readFile(file, 'utf8')))).join('\n');

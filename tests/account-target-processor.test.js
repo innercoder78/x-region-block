@@ -489,3 +489,27 @@ describe('additional asynchronous boundary coverage', () => {
     await expect(settle()).resolves.toBeUndefined();
   });
 });
+
+describe('account action integration', () => {
+  it('renders a badge and reverses highlight, hide, show, then cleans up without a new lookup', async () => {
+    const current = target();
+    const { processor, options } = setup({
+      settings: { country: { highlight: ['jp'] } },
+    });
+    processor.start();
+    processor.processChange(change([current]));
+    await settle();
+
+    expect(current.badgeContainer.textContent).toContain('Asia');
+    expect(current.accountContainer.getAttribute('data-x-region-block-account-action'))
+      .toBe('highlight');
+    processor.setSettings({ country: { hide: ['jp'] } });
+    expect(current.accountContainer.getAttribute('data-x-region-block-account-action')).toBe('hide');
+    processor.setSettings({});
+    expect(current.accountContainer.getAttribute('data-x-region-block-account-action')).toBeNull();
+    processor.processChange(change([], 'mutation'));
+    expect(current.badgeContainer.children).toHaveLength(0);
+    expect(current.accountContainer.getAttribute('data-x-region-block-account-action')).toBeNull();
+    expect(options.loadAboutAccountPayload).toHaveBeenCalledOnce();
+  });
+});
