@@ -51,6 +51,24 @@ verification remain unimplemented. The pure models also include a complete stati
 registry, a versioned deterministic country-to-region policy, and automatic
 region enrichment for known country locations.
 
+## X About Account location parsing
+
+The repository includes version 1 of a deterministic English country-name policy covering
+all 249 supported country codes, with short canonical display names and explicit safe
+aliases for common variants. A pure version 1 parser accepts caller-supplied X About
+Account payloads and converts the exact observed `account_based_in` path into canonical
+known, missing, unavailable, or unknown immutable location results. It deliberately does
+not use `location_accurate` for classification and retains only the trimmed raw country
+name for known or unknown results; other account, request, authentication, and response
+metadata is discarded. The parser never produces a hidden location.
+
+The observed response shape is a versioned observation, not an official stable API. No X
+request, query-ID discovery, authentication-data reading, page integration, content-script
+integration, automatic location lookup or target processing, or automatic account
+presentation is implemented. Memory-only authorization handling, applying highlight or
+hide actions, badge styling, blocking live X content, and end-to-end browser verification
+also remain unimplemented.
+
 ## Development
 
 Install dependencies with `npm ci`, then run the complete validation suite:
