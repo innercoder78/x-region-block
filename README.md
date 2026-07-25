@@ -39,6 +39,23 @@ not connected to content-script startup. It performs no location or account
 lookup, presentation, highlighting, hiding, or blocking. Its underlying
 selector policy has not yet been verified across every live X layout.
 
+An isolated version 1 account-target processing coordinator consumes those
+explicit observer changes and composes canonical About Account parsing with
+account presentation. It groups only currently active canonical accounts,
+deduplicates their dependency-injected payload lookups, rejects stale results
+across target and lifecycle changes, and reevaluates resolved targets when the
+canonical settings snapshot changes without repeating a lookup. Targets that
+disappear are cancelled and cleaned up, and all transient account, location,
+request, and DOM state is cleared when processing stops.
+
+The coordinator has no real X transport or hardcoded query ID, reads no
+authentication data, and is not connected to content-script startup. Filter
+actions are returned within the existing presentation boundary but are not
+applied to X content. About Account request transport, query-ID discovery,
+memory-only authorization handling, live processor startup, route-aware
+observer startup, applying highlight or hide actions, badge styling, blocking
+live X content, and end-to-end browser verification remain unimplemented.
+
 The pure shared models include canonical X account-handle normalization and safe
 parsing of X and Twitter account references, a canonical immutable filter-subject
 model, and a pure subject-to-filter-action evaluation boundary. They also provide
@@ -64,8 +81,8 @@ metadata is discarded. The parser never produces a hidden location.
 
 The observed response shape is a versioned observation, not an official stable API. No X
 request, query-ID discovery, authentication-data reading, page integration, content-script
-integration, automatic location lookup or target processing, or automatic account
-presentation is implemented. Memory-only authorization handling, applying highlight or
+integration, live location lookup, or automatic account presentation is implemented.
+Memory-only authorization handling, applying highlight or
 hide actions, badge styling, blocking live X content, and end-to-end browser verification
 also remain unimplemented.
 
