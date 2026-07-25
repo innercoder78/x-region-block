@@ -4,6 +4,13 @@ import path from 'node:path';
 const browsers = ['chrome', 'firefox'];
 const expectedName = 'X Region Reveal & Block';
 const expectedVersion = '0.0.1';
+const expectedJavaScriptEntries = [
+  'background/service-worker.js',
+  'content/content-script.js',
+  'page/page-script.js',
+  'popup/popup.js',
+  'options/options.js',
+];
 
 async function requireFile(root, relativePath) {
   const filePath = path.join(root, relativePath);
@@ -58,6 +65,10 @@ async function validateBrowser(browser) {
   assert(manifest.version === expectedVersion, `${browser} manifest has an unexpected version`);
   assert(!/(?:community.?cache|cloud|https?:\/\/(?!x\.com|twitter\.com))/i.test(manifestText),
     `${browser} manifest contains a prohibited endpoint`);
+
+  for (const file of expectedJavaScriptEntries) {
+    await requireFile(root, file);
+  }
 
   for (const file of backgroundFiles(manifest)) {
     await requireFile(root, file);
