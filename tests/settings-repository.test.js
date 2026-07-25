@@ -34,12 +34,13 @@ describe('settings repository', () => {
 
   it.each([
     ['unversioned', { country: { hide: ['us'] } }],
-    ['version zero', { schemaVersion: 0, region: { highlight: ['EU'] } }],
+    ['version zero', { schemaVersion: 0, region: { highlight: ['EUROPE'] } }],
     ['current partial', { schemaVersion: 1, language: { highlight: [' EN '] } }],
   ])('migrates and writes canonical %s settings', async (name, value) => {
     const storage = fakeStorage({ [SETTINGS_STORAGE_KEY]: value });
     const result = await createSettingsRepository(storage).initializeSettings();
     expect(result.schemaVersion).toBe(1);
+    if (name === 'version zero') expect(result.region.highlight).toEqual(['EUROPE']);
     expect(storage.set).toHaveBeenCalledOnce();
     expect(storage.data[SETTINGS_STORAGE_KEY]).toEqual(result);
   });
