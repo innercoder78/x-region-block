@@ -125,6 +125,9 @@ describe('parseXAccountReference', () => {
     ['https://x.com/OpenAI/with_replies', undefined],
     ['https://twitter.com/OpenAI/status/123?utm_source=test#fragment', undefined],
     ['/OpenAI', { baseUrl: 'https://x.com' }],
+    ['/OpenAI', { baseUrl: 'HTTPS://X.COM' }],
+    ['/OpenAI', { baseUrl: 'https://twitter.com/base' }],
+    ['/OpenAI', { baseUrl: new URL('https://x.com/base') }],
     ['/OpenAI/status/123', { baseUrl: new URL('https://twitter.com/base') }],
   ])('parses supported reference %s', (reference, options) => {
     expect(parseXAccountReference(reference, options)).toEqual({
@@ -171,8 +174,17 @@ describe('parseXAccountReference', () => {
   });
 
   it('rejects relative paths when the explicit base is unsafe', () => {
-    expect(parseXAccountReference('/OpenAI', { baseUrl: 'https://mobile.x.com' })).toBeNull();
-    expect(parseXAccountReference('/OpenAI', { baseUrl: 'http://x.com' })).toBeNull();
+    for (const baseUrl of [
+      'https://mobile.x.com',
+      'http://x.com',
+      'https:x.com',
+      'https:/x.com',
+      'https:////x.com',
+      'https:\\x.com',
+      'https://x.com\\base',
+    ]) {
+      expect(parseXAccountReference('/OpenAI', { baseUrl })).toBeNull();
+    }
   });
 
   it('exposes one frozen reserved route definition', () => {

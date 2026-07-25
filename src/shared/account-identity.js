@@ -95,10 +95,17 @@ function isSafeSupportedUrl(url) {
   );
 }
 
-function supportedBase(value) {
-  if (typeof value !== 'string' && !(value instanceof URL)) return null;
+function parseSupportedAbsoluteUrl(value) {
+  if (typeof value === 'string') {
+    // URL() repairs malformed slashes and backslashes, so string inputs must
+    // have the documented absolute spelling before component validation.
+    if (value.includes('\\') || !/^https:\/\/[A-Za-z0-9]/i.test(value)) return null;
+  } else if (!(value instanceof URL)) {
+    return null;
+  }
+
   try {
-    const url = new URL(value);
+    const url = value instanceof URL ? value : new URL(value);
     return isSafeSupportedUrl(url) ? url : null;
   } catch {
     return null;
@@ -145,20 +152,17 @@ export function parseXAccountReference(value, options = {}) {
 
   if (!looksLikeUrl) return createAccountIdentity({ ...identityOptions, handle: trimmed });
   if (trimmed.startsWith('//')) return null;
-  if (trimmed.includes('\\')) return null;
-
-  // URL() repairs several malformed spellings. Accept only the documented
-  // absolute syntax before asking it to parse and validate URL components.
-  if (!relative && !/^https:\/\/[A-Za-z0-9]/i.test(trimmed)) return null;
 
   let url;
   try {
     if (relative) {
-      const base = supportedBase(options.baseUrl);
+      if (trimmed.includes('\\')) return null;
+      const base = parseSupportedAbsoluteUrl(options.baseUrl);
       if (!base) return null;
       url = new URL(trimmed, base);
     } else {
-      url = new URL(trimmed);
+      url = parseSupportedAbsoluteUrl(trimmed);
+      if (!url) return null;
     }
   } catch {
     return null;
