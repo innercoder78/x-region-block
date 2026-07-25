@@ -26,7 +26,9 @@ async function walk(directory) {
 describe('build configuration', () => {
   it('defines existing required JavaScript entry points', async () => {
     expect(Object.keys(entryPoints)).toEqual(expectedEntries);
-    await expect(Promise.all(Object.values(entryPoints).map(access))).resolves.toBeDefined();
+    await expect(
+      Promise.all(Object.values(entryPoints).map((file) => access(file))),
+    ).resolves.toBeDefined();
   });
 
   it('targets separate browser output directories', () => {
