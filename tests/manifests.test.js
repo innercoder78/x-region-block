@@ -26,10 +26,11 @@ describe.each(browsers)('%s manifest', (browser) => {
     expect(JSON.stringify(manifest)).not.toMatch(/cloud|cache/i);
   });
 
-  it('requests no extension permissions', async () => {
+  it('requests only local storage access', async () => {
     const manifest = await readManifest(browser);
 
-    expect(manifest.permissions).toBeUndefined();
+    expect(manifest.permissions).toEqual(['storage']);
     expect(manifest.optional_permissions).toBeUndefined();
+    expect(manifest.host_permissions).toBeUndefined();
   });
 });
