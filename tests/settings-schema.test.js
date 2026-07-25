@@ -74,6 +74,12 @@ describe('settings normalization', () => {
     expect(() => normalizeSettings({ country: { hide } })).toThrow(TypeError);
   });
 
+  it.each(['ZZ', 'UK', 'XK', 'EU'])('rejects unsupported country code %s in every country list', (code) => {
+    for (const field of ['hide', 'highlight', 'alwaysShow']) {
+      expect(() => normalizeSettings({ country: { [field]: [code] } })).toThrow(TypeError);
+    }
+  });
+
   it('uses region lookup and stores canonical region codes', () => {
     expect(
       normalizeSettings({ region: { hide: [' north_america ', 'EUROPE', 'North_America'] } }).region.hide,

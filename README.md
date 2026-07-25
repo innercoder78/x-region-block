@@ -9,9 +9,11 @@ content are not yet implemented.
 The pure shared models include canonical X account-handle normalization and safe
 parsing of X and Twitter account references, a canonical immutable filter-subject
 model, and a pure subject-to-filter-action evaluation boundary. Live X DOM
-account discovery, account lookup, location lookup or detection, country or
-region display, highlighting, and hiding or blocking X content remain
-unimplemented.
+account discovery, account lookup, location lookup or detection, country-name
+parsing, country flags or region display, highlighting, and hiding or blocking
+X content remain unimplemented. The pure models now also include a complete
+static ISO alpha-2 registry, a versioned deterministic country-to-region policy,
+and automatic region enrichment for known country locations.
 
 ## Development
 

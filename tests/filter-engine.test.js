@@ -11,7 +11,6 @@ import {
 const canada = createKnownLocation({
   countryCode: 'CA',
   countryName: 'Canada',
-  regionCode: 'NORTH_AMERICA',
 });
 const subject = { allowlistKey: 'account-a', location: canada, languages: ['en'], tags: ['news'] };
 
@@ -51,6 +50,13 @@ describe('filter engine', () => {
         region: { highlight: ['NORTH_AMERICA'] },
       }),
     ).toBe('hide');
+  });
+
+  it('does not match Antarctica against ordinary region filters', () => {
+    const antarctica = createKnownLocation({ countryCode: 'AQ', countryName: 'Antarctica' });
+    expect(
+      decideFilterAction({ location: antarctica }, { region: { hide: ['NORTH_AMERICA'] } }),
+    ).toBe('show');
   });
 
   it('highlights matching geographic, language, or tag rules', () => {

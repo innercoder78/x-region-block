@@ -1,4 +1,5 @@
 import { getRegion, REGION_CODES } from './regions.js';
+import { normalizeCountryCode } from './country-regions.js';
 
 export const SETTINGS_SCHEMA_VERSION = 1;
 
@@ -71,9 +72,11 @@ function stringValue(value, name, transform) {
 }
 
 function countryCode(value, name) {
-  const code = stringValue(value, name, (entry) => entry.toUpperCase());
-  if (!/^[A-Z]{2}$/.test(code)) throw new TypeError(`${name} entries must be two-letter country codes`);
-  return code;
+  try {
+    return normalizeCountryCode(value);
+  } catch {
+    throw new TypeError(`${name} entries must be supported country codes`);
+  }
 }
 
 function regionCode(value, name) {
