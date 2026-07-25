@@ -17,6 +17,12 @@ account link, a caller-supplied location and optional observed languages and
 tags with a settings snapshot. It returns a deeply immutable canonical filter
 subject, filter action, and location-display descriptor.
 
+An isolated, versioned one-account presentation coordinator composes that
+evaluation pipeline with location-badge rendering for an explicitly supplied
+link and badge container. It safely removes stale owned badges for non-account
+links and preserves an existing badge when evaluation fails. The coordinator
+is not connected to live X pages and does not apply highlight or hide actions.
+
 The pure shared models include canonical X account-handle normalization and safe
 parsing of X and Twitter account references, a canonical immutable filter-subject
 model, and a pure subject-to-filter-action evaluation boundary. They also provide
@@ -24,7 +30,7 @@ country flag-emoji generation, a canonical immutable location-display descriptor
 and distinct presentation labels for hidden, missing, unavailable, and unknown
 locations. X account-container discovery, document or timeline scanning,
 mutation observation, automatic account-link reading or evaluation, live
-account lookup, location lookup or detection, renderer startup on X, badge
+account presentation, account lookup, location lookup or detection, renderer startup on X, badge
 styling, applying highlight or hide actions, and blocking live X content remain
 unimplemented. The pure models also include a complete static ISO alpha-2
 registry, a versioned deterministic country-to-region policy, and automatic
