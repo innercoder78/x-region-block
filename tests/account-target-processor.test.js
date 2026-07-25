@@ -39,6 +39,30 @@ function change(current, reason = 'initial') {
   });
 }
 
+function copyTarget(original, overrides = {}) {
+  return Object.freeze({
+    version: original.version,
+    source: original.source,
+    accountContainer: original.accountContainer,
+    link: original.link,
+    badgeContainer: original.badgeContainer,
+    identity: original.identity,
+    ...overrides,
+  });
+}
+
+function copyIdentity(original, overrides = {}) {
+  return Object.freeze({
+    handle: original.handle,
+    displayHandle: original.displayHandle,
+    profileUrl: original.profileUrl,
+    accountId: original.accountId,
+    allowlistKey: original.allowlistKey,
+    source: original.source,
+    ...overrides,
+  });
+}
+
 function deferred() {
   let resolve;
   let reject;
@@ -225,5 +249,243 @@ describe('lookup, reconciliation, and races', () => {
       .toThrow('Invalid account target change');
     expect(processor.getTargets()).toBe(before);
     expect(options.loadAboutAccountPayload).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['handle/allowlist disagreement', (value) => copyTarget(value, {
+      identity: copyIdentity(value.identity, { handle: 'different' }),
+    })],
+    ['display handle disagreement', (value) => copyTarget(value, {
+      identity: copyIdentity(value.identity, { displayHandle: '@different' }),
+    })],
+    ['profile URL disagreement', (value) => copyTarget(value, {
+      identity: copyIdentity(value.identity, { profileUrl: 'https://x.com/different' }),
+    })],
+    ['invalid account ID', (value) => copyTarget(value, {
+      identity: copyIdentity(value.identity, { accountId: 'sensitive-id' }),
+    })],
+    ['identity source disagreement', (value) => copyTarget(value, {
+      identity: copyIdentity(value.identity, { source: 'profile' }),
+    })],
+    ['missing identity field', (value) => {
+      const identity = { ...value.identity };
+      delete identity.profileUrl;
+      return copyTarget(value, { identity });
+    }],
+    ['sensitive identity property', (value) => copyTarget(value, {
+      identity: { ...value.identity, token: 'secret' },
+    })],
+    ['sensitive target property', (value) => ({ ...value, cookie: 'secret' })],
+    ['class target', (value) => Object.assign(new (class Target {})(), value)],
+    ['class identity', (value) => copyTarget(value, {
+      identity: Object.assign(new (class Identity {})(), value.identity),
+    })],
+    ['invalid link', (value) => copyTarget(value, { link: {} })],
+    ['invalid badge container', (value) => copyTarget(value, { badgeContainer: {} })],
+  ])('rejects malformed %s atomically', async (_name, malformed) => {
+    const pending = deferred();
+    const existing = target('existing');
+    const waiting = target('waiting');
+    const { processor, options, controllers } = setup({
+      loadAboutAccountPayload: vi.fn()
+        .mockReturnValueOnce(payload())
+        .mockReturnValueOnce(pending.promise),
+    });
+    processor.start();
+    processor.processChange(change([existing, waiting]));
+    await settle();
+    const settings = processor.setSettings({ country: { highlight: ['jp'] } });
+    const beforeTargets = processor.getTargets();
+    const beforeBadge = existing.badgeContainer.children[0] ?? null;
+    options.loadAboutAccountPayload.mockClear();
+
+    expect(() => processor.processChange(change([malformed(target())], 'mutation')))
+      .toThrowError(new TypeError('Invalid account target change'));
+    expect(processor.getTargets()).toBe(beforeTargets);
+    expect(processor.setSettings(settings)).toEqual(settings);
+    expect(options.loadAboutAccountPayload).not.toHaveBeenCalled();
+    expect(controllers[1].abort).not.toHaveBeenCalled();
+    expect(existing.badgeContainer.children[0] ?? null).toBe(beforeBadge);
+    expect(options.onError).not.toHaveBeenCalled();
+    pending.resolve(payload());
+    await settle();
+  });
+
+  it('rejects class changes and malformed updated pairs atomically', () => {
+    const current = target();
+    const { processor, options } = setup();
+    processor.start();
+    const classChange = Object.assign(new (class Change {})(), change([]));
+    expect(() => processor.processChange(classChange))
+      .toThrowError(new TypeError('Invalid account target change'));
+    const malformed = { ...change([]), updated: [{ previous: current, current, token: 'secret' }] };
+    expect(() => processor.processChange(malformed))
+      .toThrowError(new TypeError('Invalid account target change'));
+    expect(options.loadAboutAccountPayload).not.toHaveBeenCalled();
+    expect(options.onError).not.toHaveBeenCalled();
+  });
+
+  it('never loads an inconsistent identity for a different account link', () => {
+    const openai = target('openai');
+    const malformed = copyTarget(openai, {
+      identity: copyIdentity(openai.identity, { handle: 'different' }),
+    });
+    const { processor, options } = setup();
+    processor.start();
+    expect(() => processor.processChange(change([malformed])))
+      .toThrowError(new TypeError('Invalid account target change'));
+    expect(options.loadAboutAccountPayload).not.toHaveBeenCalled();
+    expect(openai.badgeContainer.children).toHaveLength(0);
+  });
+});
+
+describe('additional asynchronous boundary coverage', () => {
+  it('starts independent lookups and replaces account A with account B', () => {
+    const pending = [];
+    const first = target('first');
+    const second = target('second');
+    const { processor, options, controllers } = setup({
+      loadAboutAccountPayload: vi.fn(() => {
+        const value = deferred();
+        pending.push(value);
+        return value.promise;
+      }),
+    });
+    processor.start();
+    processor.processChange(change([first, second]));
+    expect(options.loadAboutAccountPayload).toHaveBeenCalledTimes(2);
+    const replacement = copyTarget(target('third'), { accountContainer: first.accountContainer });
+    processor.processChange(change([replacement, second], 'mutation'));
+    expect(controllers[0].abort).toHaveBeenCalledOnce();
+    expect(options.loadAboutAccountPayload).toHaveBeenCalledTimes(3);
+  });
+
+  it('ignores an old completion after recreating the same account entry', async () => {
+    const old = deferred();
+    const fresh = deferred();
+    const loader = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
+    const first = target();
+    const { processor } = setup({ loadAboutAccountPayload: loader });
+    processor.start();
+    processor.processChange(change([first]));
+    processor.processChange(change([], 'mutation'));
+    const second = target();
+    processor.processChange(change([second], 'mutation'));
+    old.resolve(payload('Canada'));
+    await settle();
+    expect(second.badgeContainer.children).toHaveLength(0);
+    fresh.resolve(payload('Japan'));
+    await settle();
+    expect(second.badgeContainer.textContent).toContain('Asia');
+  });
+
+  it.each([
+    ['synchronous loader failure', { loader: () => { throw new Error('private'); } }],
+    ['invalid abort controller', { controller: () => null }],
+    ['parser top-level failure', { loader: () => null, error: 'Unable to parse account location' }],
+  ])('isolates %s', async (_name, configured) => {
+    const errors = [];
+    const current = target();
+    const { processor } = setup({
+      loadAboutAccountPayload: vi.fn(configured.loader ?? (() => payload())),
+      abortControllerFactory: vi.fn(configured.controller ?? (() => ({ signal: {}, abort: vi.fn() }))),
+      onError: (error) => errors.push(error.message),
+    });
+    processor.start();
+    expect(() => processor.processChange(change([current]))).not.toThrow();
+    await settle();
+    expect(errors).toEqual([configured.error ?? 'Unable to load account location']);
+    expect(current.badgeContainer.textContent).toContain('unavailable');
+  });
+
+  it('isolates presentation and cleanup failures across targets', async () => {
+    const pending = deferred();
+    const first = target();
+    const second = target();
+    const errors = [];
+    const { processor } = setup({
+      loadAboutAccountPayload: vi.fn(() => pending.promise),
+      onError: (error) => errors.push(error.message),
+    });
+    processor.start();
+    processor.processChange(change([first, second]));
+    first.badgeContainer.appendChild = () => { throw new Error('DOM detail'); };
+    pending.resolve(payload());
+    await settle();
+    expect(second.badgeContainer.children).toHaveLength(1);
+    expect(errors).toEqual(['Unable to present account location']);
+    first.badgeContainer.removeChild = () => { throw new Error('DOM detail'); };
+    second.badgeContainer.removeChild = () => { throw new Error('DOM detail'); };
+    processor.processChange(change([], 'mutation'));
+    expect(errors.filter((message) => message === 'Unable to remove account location badge'))
+      .toHaveLength(1);
+  });
+
+  it('stops by aborting each pending lookup once and cleaning every badge', async () => {
+    const resolved = target('resolved');
+    const waiting = target('waiting');
+    const pending = deferred();
+    const loader = vi.fn().mockReturnValueOnce(payload()).mockReturnValueOnce(pending.promise);
+    const { processor, controllers } = setup({ loadAboutAccountPayload: loader });
+    processor.start();
+    processor.processChange(change([resolved, waiting]));
+    await settle();
+    expect(resolved.badgeContainer.children).toHaveLength(1);
+    processor.stop();
+    expect(controllers[0].abort).not.toHaveBeenCalled();
+    expect(controllers[1].abort).toHaveBeenCalledOnce();
+    expect(resolved.badgeContainer.children).toHaveLength(0);
+    processor.stop();
+    expect(controllers[1].abort).toHaveBeenCalledOnce();
+  });
+
+  it('reorders and applies representative settings without repeated work', async () => {
+    const first = target();
+    const second = target();
+    const { processor, options } = setup();
+    processor.start();
+    processor.processChange(change([first, second]));
+    await settle();
+    const badges = [first.badgeContainer.children[0], second.badgeContainer.children[0]];
+    options.loadAboutAccountPayload.mockClear();
+    processor.processChange(change([second, first], 'mutation'));
+    expect(processor.getTargets()).toEqual([second, first]);
+    expect(first.badgeContainer.children[0]).toBe(badges[0]);
+    expect(second.badgeContainer.children[0]).toBe(badges[1]);
+    for (const settings of [
+      {},
+      { country: { highlight: ['jp'] } },
+      { country: { hide: ['jp'] } },
+      { country: { hide: ['jp'], alwaysShow: ['jp'] } },
+      { country: { hide: ['jp'] }, allowlist: ['@openai'] },
+    ]) processor.setSettings(settings);
+    expect(options.loadAboutAccountPayload).not.toHaveBeenCalled();
+    expect(first.badgeContainer.children).toHaveLength(1);
+  });
+
+  it.each([
+    ['known', payload('Japan'), 'Asia'],
+    ['missing', payload(null), 'Location not provided'],
+    ['unknown', payload('Atlantis'), 'Location unknown'],
+    ['unavailable', {}, 'Location unavailable'],
+    ['Antarctica', payload('Antarctica'), 'Unknown region'],
+  ])('presents %s locations', async (_name, input, label) => {
+    const current = target();
+    const { processor } = setup({ loadAboutAccountPayload: vi.fn(() => input) });
+    processor.start();
+    processor.processChange(change([current]));
+    await settle();
+    expect(current.badgeContainer.textContent).toContain(label);
+  });
+
+  it('swallows error callback failures', async () => {
+    const current = target();
+    const { processor } = setup({
+      loadAboutAccountPayload: vi.fn(() => Promise.reject(new Error('private'))),
+      onError: () => { throw new Error('callback'); },
+    });
+    processor.start();
+    processor.processChange(change([current]));
+    await expect(settle()).resolves.toBeUndefined();
   });
 });

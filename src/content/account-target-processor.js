@@ -2,8 +2,8 @@ import { readXAccountIdentityFromLink } from './account-link-reader.js';
 import { presentXAccountLink } from './account-presentation.js';
 import { ACCOUNT_TARGET_DISCOVERY_VERSION } from './account-target-discovery.js';
 import { ACCOUNT_TARGET_OBSERVER_VERSION } from './account-target-observer.js';
-import { removeLocationBadge } from './location-badge-renderer.js';
-import { ACCOUNT_IDENTITY_SOURCES } from '../shared/account-identity.js';
+import { findLocationBadge, removeLocationBadge } from './location-badge-renderer.js';
+import { ACCOUNT_IDENTITY_SOURCES, createAccountIdentity } from '../shared/account-identity.js';
 import { createUnavailableLocation } from '../shared/location-model.js';
 import { normalizeSettings } from '../shared/settings-schema.js';
 import {
@@ -15,9 +15,32 @@ export const ACCOUNT_TARGET_PROCESSOR_VERSION = 1;
 
 const EMPTY = Object.freeze([]);
 const REASONS = new Set(['initial', 'mutation', 'manual']);
-const ALLOWLIST_KEY = /^@[a-z0-9_]{1,15}$/;
 const hasOwn = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isPlainObject = (value) => {
+  if (!isObject(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype === null || prototype === Object.prototype) return true;
+  // A different realm has a different Object.prototype identity. Its Object.prototype still
+  // terminates the prototype chain directly, unlike a class prototype.
+  return Object.getPrototypeOf(prototype) === null
+    && hasOwn(prototype, 'constructor')
+    && Function.prototype.toString.call(prototype.constructor)
+      === Function.prototype.toString.call(Object);
+};
+const TARGET_KEYS = Object.freeze([
+  'version', 'source', 'accountContainer', 'link', 'badgeContainer', 'identity',
+]);
+const IDENTITY_KEYS = Object.freeze([
+  'handle', 'displayHandle', 'profileUrl', 'accountId', 'allowlistKey', 'source',
+]);
+const UPDATED_KEYS = Object.freeze(['previous', 'current']);
+
+function hasExactlyOwnKeys(value, keys) {
+  if (!isPlainObject(value)) return false;
+  const ownKeys = Reflect.ownKeys(value);
+  return ownKeys.length === keys.length && keys.every((key) => hasOwn(value, key));
+}
 
 function normalizeOptions(options) {
   if (!isObject(options)) {
@@ -64,26 +87,38 @@ function normalizeOptions(options) {
 }
 
 function validTarget(target, source) {
-  if (!isObject(target) || target.version !== ACCOUNT_TARGET_DISCOVERY_VERSION
-    || target.source !== source || !isObject(target.accountContainer) || !isObject(target.link)
-    || !isObject(target.badgeContainer) || !isObject(target.identity)
-    || target.identity.source !== source
-    || typeof target.identity.allowlistKey !== 'string'
-    || !ALLOWLIST_KEY.test(target.identity.allowlistKey)) return false;
-  return true;
+  if (!hasExactlyOwnKeys(target, TARGET_KEYS)
+    || target.version !== ACCOUNT_TARGET_DISCOVERY_VERSION || target.source !== source
+    || !isObject(target.accountContainer) || !isObject(target.link)
+    || typeof target.link.tagName !== 'string' || target.link.tagName.toLowerCase() !== 'a'
+    || !isObject(target.link.ownerDocument) || typeof target.link.getAttribute !== 'function'
+    || !hasExactlyOwnKeys(target.identity, IDENTITY_KEYS)) return false;
+
+  const identity = target.identity;
+  let canonical;
+  try {
+    canonical = createAccountIdentity({
+      handle: identity.handle,
+      accountId: identity.accountId,
+      source: identity.source,
+    });
+    // This invokes the existing renderer's non-mutating container validation boundary.
+    findLocationBadge(target.badgeContainer);
+  } catch { return false; }
+  return identity.source === source && IDENTITY_KEYS.every((key) => identity[key] === canonical[key]);
 }
 
 function validAuxiliary(change, source) {
   if (!change.added.every((target) => validTarget(target, source))
     || !change.removed.every((target) => validTarget(target, source))) return false;
-  return change.updated.every((update) => isObject(update)
+  return change.updated.every((update) => hasExactlyOwnKeys(update, UPDATED_KEYS)
     && validTarget(update.previous, source) && validTarget(update.current, source));
 }
 
 function validateChange(change, source) {
   let valid = false;
   try {
-    valid = isObject(change) && change.version === ACCOUNT_TARGET_OBSERVER_VERSION
+    valid = isPlainObject(change) && change.version === ACCOUNT_TARGET_OBSERVER_VERSION
       && REASONS.has(change.reason) && change.source === source
       && Array.isArray(change.current) && Array.isArray(change.added)
       && Array.isArray(change.updated) && Array.isArray(change.removed)
