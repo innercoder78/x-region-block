@@ -27,7 +27,7 @@
           <div class="choice-section"><h2>Hide statuses</h2><div id="other-hide" class="choices"></div></div>
           <div class="choice-section"><h2>Highlight statuses</h2><div id="other-highlight" class="choices"></div></div>
         </fieldset>
-        <fieldset><legend>Allowlist</legend><label for="allowlist">Allowlist keys</label><p id="allowlist-help" class="help">Enter one key per line or separate keys with commas. Case is preserved. Matching entries override all hide rules.</p><textarea id="allowlist" rows="5" aria-describedby="allowlist-help"></textarea></fieldset>
+        <fieldset><legend>Allowlist</legend><label for="allowlist">Allowlist keys</label><p id="allowlist-help" class="help">Canonical account keys use lowercase @handles (for example, @openai). Separate entries by lines or commas. Case is preserved in storage, matching is exact, and matching entries override all hide rules.</p><textarea id="allowlist" rows="5" aria-describedby="allowlist-help"></textarea></fieldset>
         <div class="actions"><button type="submit" id="save-settings" class="primary">Save settings</button><button type="button" id="reset-settings">Reset to defaults</button></div>
         <p id="status" role="status" aria-live="polite"></p>
       </form>

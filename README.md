@@ -6,6 +6,11 @@ content-script runtime settings synchronization. X account lookup, location
 detection, country or region display, highlighting, and hiding or blocking X
 content are not yet implemented.
 
+The pure shared models include canonical X account-handle normalization and safe
+parsing of X and Twitter account references. Live X DOM account discovery,
+account lookup, location detection, country or region display, highlighting,
+and hiding or blocking X content remain unimplemented.
+
 ## Development
 
 Install dependencies with `npm ci`, then run the complete validation suite:
