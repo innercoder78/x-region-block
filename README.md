@@ -23,16 +23,22 @@ link and badge container. It safely removes stale owned badges for non-account
 links and preserves an existing badge when evaluation fails. The coordinator
 is not connected to live X pages and does not apply highlight or hide actions.
 
+A versioned, static X account-surface selector policy now supports isolated
+discovery of presentation targets within one explicitly supplied DOM root.
+Discovery uses conservative ambiguity handling, isolates nested tweets, and
+resolves canonical identities through the existing account-link reader. The
+conservative initial selectors have not been verified against every live X
+layout, and discovery is not connected to live content-script startup.
+
 The pure shared models include canonical X account-handle normalization and safe
 parsing of X and Twitter account references, a canonical immutable filter-subject
 model, and a pure subject-to-filter-action evaluation boundary. They also provide
 country flag-emoji generation, a canonical immutable location-display descriptor,
 and distinct presentation labels for hidden, missing, unavailable, and unknown
-locations. X account-container discovery, document or timeline scanning,
-mutation observation, automatic account-link reading or evaluation, live
-account presentation, account lookup, location lookup or detection, renderer startup on X, badge
-styling, applying highlight or hide actions, and blocking live X content remain
-unimplemented. The pure models also include a complete static ISO alpha-2
+locations. Automatic document scanning, mutation observation, automatic target
+processing, live account lookup, location lookup or detection, automatic
+account presentation, badge styling, applying highlight or hide actions, and
+blocking live X content remain unimplemented. The pure models also include a complete static ISO alpha-2
 registry, a versioned deterministic country-to-region policy, and automatic
 region enrichment for known country locations.
 
