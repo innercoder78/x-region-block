@@ -1,15 +1,24 @@
-:root {
-  color-scheme: light dark;
-  font-family: system-ui, sans-serif;
-  line-height: 1.5;
-}
-
-body {
-  margin: 0;
-}
-
-main {
-  margin: 0 auto;
-  max-width: 42rem;
-  padding: 2rem 1rem;
-}
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.5; }
+body { margin: 0; background: Canvas; color: CanvasText; }
+main { margin: 0 auto; max-width: 48rem; padding: 2rem 1rem 4rem; }
+header { margin-bottom: 2rem; }
+h1 { font-size: 2rem; margin: .15rem 0; }
+.eyebrow { color: #5b65d6; font-weight: 700; margin: 0; }
+fieldset { border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); border-radius: .75rem; margin: 0 0 1.25rem; padding: 1.25rem; }
+legend { font-size: 1.2rem; font-weight: 700; padding: 0 .4rem; }
+label { display: block; font-weight: 650; margin-top: 1rem; }
+textarea { box-sizing: border-box; display: block; font: inherit; margin-top: .35rem; padding: .6rem; resize: vertical; width: 100%; }
+.help { color: color-mix(in srgb, CanvasText 72%, transparent); margin: .25rem 0; }
+.choice-section h2 { font-size: 1rem; margin: 1rem 0 .35rem; }
+.choices { display: grid; gap: .4rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.choices label { align-items: flex-start; display: flex; font-weight: 400; gap: .5rem; margin: 0; }
+.choices input { margin-top: .3rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+button { border: 1px solid #5b65d6; border-radius: .4rem; cursor: pointer; font: inherit; font-weight: 650; padding: .65rem 1rem; }
+button.primary { background: #4d57c8; color: white; }
+button:disabled { cursor: wait; opacity: .55; }
+#status { border-radius: .4rem; font-weight: 650; min-height: 1.5rem; padding: .65rem; }
+#status:empty { padding: 0; }
+#status[data-kind="error"] { background: #f9d7da; color: #741c25; }
+#status[data-kind="success"] { background: #d7f1df; color: #145b2a; }
+@media (prefers-color-scheme: dark) { #status[data-kind="error"] { background: #591b22; color: #ffd9dc; } #status[data-kind="success"] { background: #164d27; color: #d7ffe1; } }
