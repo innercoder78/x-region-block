@@ -2,6 +2,17 @@ const HANDLE_PATTERN = /^[A-Za-z0-9_]{1,15}$/;
 const DECIMAL_ID_PATTERN = /^\d+$/;
 const SUPPORTED_HOSTS = new Set(['x.com', 'twitter.com']);
 
+/** Safe, non-sensitive contexts in which a future caller may observe an account. */
+export const ACCOUNT_IDENTITY_SOURCES = Object.freeze([
+  'profile',
+  'timeline',
+  'reply',
+  'search',
+  'notification',
+]);
+
+const accountIdentitySources = new Set(ACCOUNT_IDENTITY_SOURCES);
+
 /**
  * Application paths which must never be interpreted as account handles.
  * The frozen array is the single documented definition; the private Set only
@@ -51,15 +62,9 @@ function normalizeAccountId(value) {
 function normalizeSource(value) {
   if (value == null) return null;
   if (typeof value !== 'string') throw new TypeError('source must be a string or null');
-  const trimmed = value.trim();
-  const hasControlCharacter = Array.from(trimmed).some((character) => {
-    const code = character.charCodeAt(0);
-    return code <= 31 || code === 127;
-  });
-  if (trimmed === '' || hasControlCharacter || /(?:\w+:\/\/|www\.)/i.test(trimmed)) {
-    throw new TypeError('Invalid account source');
-  }
-  return trimmed;
+  const normalized = value.trim().toLowerCase();
+  if (!accountIdentitySources.has(normalized)) throw new TypeError('Invalid account source');
+  return normalized;
 }
 
 /** Creates a minimal value object and deliberately copies no unrelated input. */
@@ -140,6 +145,11 @@ export function parseXAccountReference(value, options = {}) {
 
   if (!looksLikeUrl) return createAccountIdentity({ ...identityOptions, handle: trimmed });
   if (trimmed.startsWith('//')) return null;
+  if (trimmed.includes('\\')) return null;
+
+  // URL() repairs several malformed spellings. Accept only the documented
+  // absolute syntax before asking it to parse and validate URL components.
+  if (!relative && !/^https:\/\/[A-Za-z0-9]/i.test(trimmed)) return null;
 
   let url;
   try {

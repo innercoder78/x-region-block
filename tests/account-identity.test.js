@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  ACCOUNT_IDENTITY_SOURCES,
   RESERVED_X_ROUTE_SEGMENTS,
   createAccountIdentity,
   normalizeXHandle,
@@ -44,7 +45,7 @@ describe('createAccountIdentity', () => {
     const input = {
       handle: '@OpenAI',
       accountId: ' 00090071992547409931234 ',
-      source: ' profile observation ',
+      source: ' PROFILE ',
       token: 'secret',
       avatarUrl: 'https://example.test/private.png',
       metadata: { cookie: 'secret' },
@@ -58,7 +59,7 @@ describe('createAccountIdentity', () => {
       profileUrl: 'https://x.com/openai',
       accountId: '00090071992547409931234',
       allowlistKey: '@openai',
-      source: 'profile observation',
+      source: 'profile',
     });
     expect(Object.keys(identity)).toEqual([
       'handle',
@@ -83,8 +84,32 @@ describe('createAccountIdentity', () => {
     expect(() => createAccountIdentity({ handle: 'x', accountId })).toThrow(TypeError);
   });
 
-  it.each(['', '   ', 4, 'https://example.test/source', 'line\nsource'])('rejects invalid sources', (source) => {
+  it.each([
+    '',
+    '   ',
+    4,
+    {},
+    [],
+    'Authorization: Bearer secret',
+    'cookie=session-secret',
+    'token=secret',
+    'request headers',
+    'account metadata',
+    'https://example.test/source',
+    'unknown',
+  ])('rejects invalid sources', (source) => {
     expect(() => createAccountIdentity({ handle: 'x', source })).toThrow(TypeError);
+  });
+
+  it('exports a frozen set of safe observation contexts', () => {
+    expect(Object.isFrozen(ACCOUNT_IDENTITY_SOURCES)).toBe(true);
+    expect(ACCOUNT_IDENTITY_SOURCES).toEqual([
+      'profile',
+      'timeline',
+      'reply',
+      'search',
+      'notification',
+    ]);
   });
 });
 
@@ -95,6 +120,7 @@ describe('parseXAccountReference', () => {
     ['https://x.com/OpenAI', undefined],
     ['https://twitter.com/OpenAI', undefined],
     ['https://X.COM/OpenAI/status/123', undefined],
+    ['HTTPS://X.COM/OpenAI', undefined],
     ['https://x.com/OpenAI/media', undefined],
     ['https://x.com/OpenAI/with_replies', undefined],
     ['https://twitter.com/OpenAI/status/123?utm_source=test#fragment', undefined],
@@ -134,6 +160,12 @@ describe('parseXAccountReference', () => {
     'https://x.com/%ZZ',
     'https://x.com/OpenAI/status/%ZZ',
     'https://x.com/open.ai',
+    'https:x.com/OpenAI',
+    'https:/x.com/OpenAI',
+    'https:////x.com/OpenAI',
+    'https:\\x.com\\OpenAI',
+    'https://x.com\\OpenAI',
+    '/OpenAI\\status/123',
   ])('returns null for unsupported or non-account URL %s', (reference) => {
     expect(parseXAccountReference(reference)).toBeNull();
   });
