@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "X Region Reveal & Block",
+  "version": "0.1.0",
+  "description": "Development foundation for a future X region reveal and block extension; user-facing features are not implemented yet.",
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
+      ],
+      "js": ["content/content-script.js"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html"
+  },
+  "options_page": "options/options.html"
+}
