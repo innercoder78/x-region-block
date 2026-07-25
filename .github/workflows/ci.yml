@@ -7,86 +7,35 @@ on:
       - main
 
 permissions:
-  # Temporary: allow this workflow to bootstrap the initial complete npm lockfile.
-  contents: write
+  contents: read
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out pull request branch
+      - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref }}
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
-      - name: Detect incomplete lockfile
-        id: lockfile
-        shell: bash
-        run: |
-          required_entries=(
-            '"node_modules/@eslint/js"'
-            '"node_modules/eslint"'
-            '"node_modules/globals"'
-            '"node_modules/rollup"'
-            '"node_modules/vitest"'
-          )
 
-          needs_bootstrap=false
-          for entry in "${required_entries[@]}"; do
-            if ! grep -qF "$entry" package-lock.json 2>/dev/null; then
-              needs_bootstrap=true
-              break
-            fi
-          done
-          echo "needs_bootstrap=$needs_bootstrap" >> "$GITHUB_OUTPUT"
-      - name: Generate complete npm lockfile
-        if: steps.lockfile.outputs.needs_bootstrap == 'true'
-        run: |
-          rm -f package-lock.json
-          npm install \
-            --package-lock-only \
-            --ignore-scripts \
-            --no-audit \
-            --no-fund \
-            --registry=https://registry.npmjs.org/
-      - name: Verify complete npm lockfile
-        run: |
-          test -f package-lock.json
-          test "$(wc -l < package-lock.json)" -gt 100
-          grep -q '"node_modules/@eslint/js"' package-lock.json
-          grep -q '"node_modules/eslint"' package-lock.json
-          grep -q '"node_modules/globals"' package-lock.json
-          grep -q '"node_modules/rollup"' package-lock.json
-          grep -q '"node_modules/vitest"' package-lock.json
-          grep -q '"integrity":' package-lock.json
-          grep -q '"resolved":' package-lock.json
-      - name: Commit generated npm lockfile
-        if: >
-          steps.lockfile.outputs.needs_bootstrap == 'true' &&
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository &&
-          github.event.pull_request.head.ref ==
-          'codex/build-initial-extension-scaffold-and-ci-foundation'
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
-          test "$(git diff --cached --name-only)" = "package-lock.json"
-          git diff --cached --check
-          if git diff --cached --quiet; then
-            echo "The complete lockfile is already committed."
-          else
-            git commit -m "Generate complete npm lockfile"
-            git push origin "HEAD:${GITHUB_HEAD_REF}"
-          fi
-      - name: Install dependencies from lockfile
-        run: |
-          rm -rf node_modules
-          npm ci --ignore-scripts --no-audit --no-fund
-      - name: Validate extension
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Build Chrome and Firefox extensions
+        run: npm run build
+
+      - name: Validate generated extensions
+        run: npm run validate:build
+
+      - name: Verify aggregate check
         run: npm run check
