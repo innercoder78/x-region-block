@@ -9,6 +9,7 @@ const difficultNames = {
   US: 'United States', GB: 'United Kingdom', KR: 'South Korea', KP: 'North Korea',
   RU: 'Russia', TR: 'Türkiye', CZ: 'Czechia', CI: 'Côte d’Ivoire', CV: 'Cabo Verde',
   SZ: 'Eswatini', TL: 'Timor-Leste', PS: 'Palestine', TW: 'Taiwan', HK: 'Hong Kong',
+  MF: 'Saint Martin (French part)',
   MO: 'Macao', CD: 'Democratic Republic of the Congo', CG: 'Republic of the Congo',
   FM: 'Micronesia', AQ: 'Antarctica',
 };
@@ -28,8 +29,8 @@ const requiredAliases = {
   'Taiwan, Province of China': 'TW', 'Hong Kong SAR China': 'HK', Macau: 'MO',
   'Macao SAR China': 'MO', 'The Bahamas': 'BS', 'The Gambia': 'GM',
   'Federated States of Micronesia': 'FM', 'Congo-Kinshasa': 'CD', 'DR Congo': 'CD',
-  'Congo-Brazzaville': 'CG', 'Saint Barthélemy': 'BL', 'St. Barthélemy': 'BL',
-  'Saint Martin (French part)': 'MF', 'Sint Maarten (Dutch part)': 'SX',
+  'Congo-Brazzaville': 'CG', 'Saint Barthélemy': 'BL',
+  'Sint Maarten (Dutch part)': 'SX',
 };
 
 describe('static country-name policy', () => {
@@ -71,7 +72,7 @@ describe('static country-name policy', () => {
       const canonicalCode = COUNTRY_CODES.find(
         (candidate) => normalizeCountryName(getCountryName(candidate)) === normalized,
       );
-      expect(canonicalCode === undefined || canonicalCode === code).toBe(true);
+      expect(canonicalCode).toBeUndefined();
     }
   });
 });
@@ -91,8 +92,18 @@ describe('country-name normalization and exact lookup', () => {
 
   it.each(['', '  ', 'Cote dIvoire', 'United State', 'United', 'United States App Store',
     '<United States>', 'US', 'GB', 'UK', 'KR', 'Congo', 'Korea', 'Virgin Islands',
-    'Saint Martin', 'Georgia, USA', 'America', 'Britain and Ireland', 'Turkiye',
+    'Saint Martin', 'St. Martin', 'St Martin', 'Georgia, USA', 'America', 'Britain and Ireland', 'Turkiye',
   ])('does not guess or interpret %j', (name) => expect(getCountryCodeByName(name)).toBeNull());
+
+  it('distinguishes the French and Dutch Saint Martin territories without guessing', () => {
+    expect(getCountryName('MF')).toBe('Saint Martin (French part)');
+    expect(getCountryCodeByName('Saint Martin (French part)')).toBe('MF');
+    expect(getCountryCodeByName('Sint Maarten (Dutch part)')).toBe('SX');
+    expect(getCountryCodeByName('Sint Maarten')).toBe('SX');
+    for (const ambiguous of ['Saint Martin', 'St. Martin', 'St Martin']) {
+      expect(getCountryCodeByName(ambiguous)).toBeNull();
+    }
+  });
 
   it('keeps diacritics significant and rejects unsupported country codes', () => {
     expect(getCountryCodeByName("Cote d'Ivoire")).toBe('CI');

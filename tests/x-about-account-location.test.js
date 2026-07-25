@@ -20,6 +20,8 @@ const known = [
   ['Palestine', 'PS', 'Palestine', 'MIDDLE_EAST'], ['Hong Kong', 'HK', 'Hong Kong', 'ASIA'],
   ['Australia', 'AU', 'Australia', 'OCEANIA'], ['Brazil', 'BR', 'Brazil', 'SOUTH_AMERICA'],
   ['Jamaica', 'JM', 'Jamaica', 'CARIBBEAN'], ['Costa Rica', 'CR', 'Costa Rica', 'CENTRAL_AMERICA'],
+  ['Saint Martin (French part)', 'MF', 'Saint Martin (French part)', 'CARIBBEAN'],
+  ['Sint Maarten', 'SX', 'Sint Maarten', 'CARIBBEAN'],
 ];
 
 it('exports the versioned parser contract', () => {
@@ -83,7 +85,7 @@ describe('status mapping', () => {
     expect(parseXAboutAccountLocationPayload(input).status).toBe('missing');
   });
 
-  it.each(['Unknown', 'Worldwide', 'Earth', 'Europe', 'Congo', 'US',
+  it.each(['Unknown', 'Worldwide', 'Earth', 'Europe', 'Congo', 'US', 'Saint Martin', 'St. Martin',
     'United States App Store', '<Example>', '"><img src=x onerror=alert(1)>',
     'United States extra', 'United', 'Deutschland',
   ])('preserves unknown value %s literally', (value) => {
