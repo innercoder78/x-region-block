@@ -30,15 +30,24 @@ resolves canonical identities through the existing account-link reader. The
 conservative initial selectors have not been verified against every live X
 layout, and discovery is not connected to live content-script startup.
 
+An isolated, mutation-driven account-target observer wraps that static boundary
+with an initial scan and coalesced mutation rescanning. It emits immutable
+added, updated, removed, and reordered target changes, preserves stable records
+for unchanged targets, and clears its transient in-memory target tracking when
+stopped. The observer requires an explicitly supplied observer factory and is
+not connected to content-script startup. It performs no location or account
+lookup, presentation, highlighting, hiding, or blocking. Its underlying
+selector policy has not yet been verified across every live X layout.
+
 The pure shared models include canonical X account-handle normalization and safe
 parsing of X and Twitter account references, a canonical immutable filter-subject
 model, and a pure subject-to-filter-action evaluation boundary. They also provide
 country flag-emoji generation, a canonical immutable location-display descriptor,
 and distinct presentation labels for hidden, missing, unavailable, and unknown
-locations. Automatic document scanning, mutation observation, automatic target
-processing, live account lookup, location lookup or detection, automatic
-account presentation, badge styling, applying highlight or hide actions, and
-blocking live X content remain unimplemented. The pure models also include a complete static ISO alpha-2
+locations. Automatic observer startup, route-aware observer selection, location
+lookup or detection, automatic account presentation, applying highlight or hide
+actions, badge styling, blocking live X content, and end-to-end browser
+verification remain unimplemented. The pure models also include a complete static ISO alpha-2
 registry, a versioned deterministic country-to-region policy, and automatic
 region enrichment for known country locations.
 
