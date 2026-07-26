@@ -148,6 +148,35 @@ describe('X About Account request transport requests', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it.each([
+    '/./i/api/graphql/private_id/UserByScreenName',
+    '/a/../i/api/graphql/private_id/UserByScreenName',
+    '/a/%2e%2e/i/api/graphql/private_id/UserByScreenName',
+    '/a/%2E%2e/i/api/graphql/private_id/UserByScreenName',
+    '/a/.%2E/i/api/graphql/private_id/UserByScreenName',
+    '/i/api/graphql/junk/../private_id/UserByScreenName',
+    '/i/api/graphql/%2e%2e/graphql/private_id/UserByScreenName',
+    '/i/api/graphql/private_id/./UserByScreenName',
+    '/i/api/graphql/private_id/%2E/UserByScreenName',
+  ])('rejects raw dot-segment repair before URL normalization: %s', async (pathname) => {
+    const supplied = `https://x.com${pathname}?variables=${encodeURIComponent(JSON.stringify({
+      screen_name: 'example', secret: 'private-variable',
+    }))}`;
+    const { transport, fetch } = setup({ createRequest: () => ({ url: supplied, headers: headers() }) });
+    const failure = await transport.loadPayload(identity(), context()).catch((error) => error);
+    expect(failure).toEqual(new TypeError('Invalid X About Account request descriptor'));
+    expect(failure.message).not.toMatch(/private_id|example|private-variable|Bearer|csrf|https/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(['#', '#private-fragment'])('rejects any fragment delimiter: %s', async (fragment) => {
+    const supplied = `${url()}${fragment}`;
+    const { transport, fetch } = setup({ createRequest: () => ({ url: supplied, headers: headers() }) });
+    await expect(transport.loadPayload(identity(), context()))
+      .rejects.toEqual(new TypeError('Invalid X About Account request descriptor'));
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('rejects mismatched variables, duplicates, malformed objects, and oversized IDs', async () => {
     const values = [
       url({ variables: { screen_name: 'other' } }),
@@ -254,6 +283,75 @@ describe('X About Account request transport response and cancellation boundaries
       ok: true, status: 200, json() { parsing.abort(); return { stale: true }; },
     }) });
     await expect(duringJson.transport.loadPayload(identity(), context(parsing.signal)))
+      .rejects.toMatchObject({ name: 'AbortError', message: 'The operation was aborted' });
+  });
+
+  it.each(['url', 'headers'])('gives abort precedence to a throwing descriptor %s getter', async (key) => {
+    const controller = createFakeAbortController();
+    const descriptor = { url: url(), headers: headers() };
+    Object.defineProperty(descriptor, key, { enumerable: true, get() {
+      controller.abort();
+      throw new Error('private descriptor failure');
+    } });
+    const current = setup({ createRequest: () => descriptor });
+    await expect(current.transport.loadPayload(identity(), context(controller.signal)))
+      .rejects.toEqual(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+    expect(current.fetch).not.toHaveBeenCalled();
+  });
+
+  it('gives abort precedence when request preparation throws', async () => {
+    const controller = createFakeAbortController();
+    const current = setup({ createRequest: () => {
+      controller.abort();
+      throw new Error('private preparation failure');
+    } });
+    await expect(current.transport.loadPayload(identity(), context(controller.signal)))
+      .rejects.toEqual(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+  });
+
+  it('gives abort precedence to a throwing header getter', async () => {
+    const controller = createFakeAbortController();
+    const suppliedHeaders = headers();
+    Object.defineProperty(suppliedHeaders, 'authorization', { enumerable: true, get() {
+      controller.abort();
+      throw new Error('private header failure');
+    } });
+    const current = setup({ createRequest: () => ({ url: url(), headers: suppliedHeaders }) });
+    await expect(current.transport.loadPayload(identity(), context(controller.signal)))
+      .rejects.toMatchObject({ name: 'AbortError', message: 'The operation was aborted' });
+  });
+
+  it.each(['ok', 'status', 'json'])('gives abort precedence to a throwing response %s getter', async (key) => {
+    const controller = createFakeAbortController();
+    const returned = { ok: true, status: 200, json() {} };
+    Object.defineProperty(returned, key, { get() {
+      controller.abort();
+      throw new Error('private response failure');
+    } });
+    const current = setup({ fetch: () => returned });
+    await expect(current.transport.loadPayload(identity(), context(controller.signal)))
+      .rejects.toMatchObject({ name: 'AbortError', message: 'The operation was aborted' });
+  });
+
+  it('gives abort precedence to non-OK, fetch rejection, and JSON rejection', async () => {
+    const nonOkController = createFakeAbortController();
+    const nonOk = { status: 503, json: vi.fn() };
+    Object.defineProperty(nonOk, 'ok', { get() { nonOkController.abort(); return false; } });
+    const nonOkSetup = setup({ fetch: () => nonOk });
+    await expect(nonOkSetup.transport.loadPayload(identity(), context(nonOkController.signal)))
+      .rejects.toMatchObject({ name: 'AbortError', message: 'The operation was aborted' });
+    expect(nonOk.json).not.toHaveBeenCalled();
+
+    const fetchController = createFakeAbortController();
+    const fetchSetup = setup({ fetch: () => Promise.reject().finally(() => fetchController.abort()) });
+    await expect(fetchSetup.transport.loadPayload(identity(), context(fetchController.signal)))
+      .rejects.toMatchObject({ name: 'AbortError', message: 'The operation was aborted' });
+
+    const jsonController = createFakeAbortController();
+    const jsonSetup = setup({ fetch: () => ({ ok: true, status: 200, json: () => (
+      Promise.reject().finally(() => jsonController.abort())
+    ) }) });
+    await expect(jsonSetup.transport.loadPayload(identity(), context(jsonController.signal)))
       .rejects.toMatchObject({ name: 'AbortError', message: 'The operation was aborted' });
   });
 });

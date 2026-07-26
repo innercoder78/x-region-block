@@ -96,6 +96,9 @@ redirects, and the broker's exact shared abort signal. Response and JSON failure
 normalized at privacy-safe boundaries, while successful JSON is returned unchanged
 for the existing parser; the transport performs no response interpretation, caching,
 or persistence.
+Endpoint validation examines the exact supplied pathname before URL normalization,
+rejecting fragments and literal, encoded, or mixed dot segments rather than accepting
+a pathname repaired by the platform URL parser.
 
 The transport is deliberately not wired into production and cannot make a usable
 production request until a later memory-only boundary supplies a valid current

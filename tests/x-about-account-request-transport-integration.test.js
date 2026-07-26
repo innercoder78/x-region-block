@@ -113,4 +113,34 @@ describe('request transport and payload broker integration', () => {
     expect(sharedControllers[2].signal.aborted).toBe(true);
     expect(broker.getInFlightCount()).toBe(0);
   });
+
+  it('delivers a transport rejection to all consumers and retries only on a later request', async () => {
+    const fetch = vi.fn()
+      .mockRejectedValueOnce(new Error('private network failure'))
+      .mockResolvedValueOnce({ ok: true, status: 200, json: () => ({ fresh: true }) });
+    const createRequest = vi.fn((account) => descriptor(account.handle));
+    const transport = createXAboutAccountRequestTransport({ fetch, createRequest });
+    const broker = createXAboutAccountPayloadBroker({
+      loadPayload: transport.loadPayload,
+      abortControllerFactory: () => createFakeAbortController(),
+      onError: vi.fn(),
+    }).start();
+    const first = broker.loadAboutAccountPayload(
+      consumerIdentity('profile'), consumerContext(createFakeAbortController()),
+    );
+    const second = broker.loadAboutAccountPayload(
+      consumerIdentity('timeline'), consumerContext(createFakeAbortController()),
+    );
+    await expect(first).rejects.toEqual(new Error('X About Account request failed'));
+    await expect(second).rejects.toEqual(new Error('X About Account request failed'));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const later = broker.loadAboutAccountPayload(
+      consumerIdentity('reply'), consumerContext(createFakeAbortController()),
+    );
+    await expect(later).resolves.toEqual({ fresh: true });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(createRequest).toHaveBeenCalledTimes(2);
+    expect(createRequest.mock.calls.every(([account]) => account.source === null)).toBe(true);
+    broker.stop();
+  });
 });

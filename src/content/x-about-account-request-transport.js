@@ -42,6 +42,10 @@ function abortError() {
   return error;
 }
 
+function isAborted(signal) {
+  try { return signal.aborted === true; } catch { return false; }
+}
+
 function validatePublicRequest(identity, context) {
   try {
     if (!hasExactKeys(identity, IDENTITY_KEYS) || !hasExactKeys(context, CONTEXT_KEYS)) return null;
@@ -81,23 +85,40 @@ function containsControl(value) {
 function canonicalizeUrl(value, handle) {
   if (typeof value !== 'string' || value.trim() !== value
     || containsControl(value) || value.includes('\\')
-    || !/^https:\/\/(?:x\.com|twitter\.com)\//.test(value)) {
+    || !/^https:\/\/(?:x\.com|twitter\.com)\//.test(value) || value.includes('#')) {
     throw new TypeError(DESCRIPTOR_ERROR);
   }
+  const supplied = /^https:\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?$/.exec(value);
+  if (!supplied) throw new TypeError(DESCRIPTOR_ERROR);
+  const [, authority, rawPathname, rawQuery] = supplied;
   let url;
   try { url = new URL(value); } catch { throw new TypeError(DESCRIPTOR_ERROR); }
   if ((url.hostname !== 'x.com' && url.hostname !== 'twitter.com')
     || url.protocol !== 'https:' || url.username !== '' || url.password !== ''
     || url.port !== '' || url.hash !== '') throw new TypeError(DESCRIPTOR_ERROR);
-  const pathMatch = /^\/i\/api\/graphql\/([A-Za-z0-9_-]{1,256})\/UserByScreenName$/.exec(url.pathname);
-  if (!pathMatch || /\/{2}|%2f|%5c|%2e/i.test(new URL(value).pathname)) {
+  if (authority !== url.host || rawPathname === '' || rawPathname.endsWith('/')
+    || rawPathname.includes('//')) throw new TypeError(DESCRIPTOR_ERROR);
+  const rawSegments = rawPathname.slice(1).split('/');
+  if (rawSegments.length !== 5) throw new TypeError(DESCRIPTOR_ERROR);
+  const segments = rawSegments.map((segment) => {
+    if (segment === '' || segment.includes('\\') || containsControl(segment)) {
+      throw new TypeError(DESCRIPTOR_ERROR);
+    }
+    let decoded;
+    try { decoded = decodeURIComponent(segment); } catch { throw new TypeError(DESCRIPTOR_ERROR); }
+    if (decoded.includes('/') || decoded.includes('\\') || containsControl(decoded)
+      || decoded === '.' || decoded === '..') throw new TypeError(DESCRIPTOR_ERROR);
+    return decoded;
+  });
+  const [first, second, third, queryId, operation] = segments;
+  if (first !== 'i' || second !== 'api' || third !== 'graphql'
+    || operation !== 'UserByScreenName' || !/^[A-Za-z0-9_-]{1,256}$/.test(queryId)) {
     throw new TypeError(DESCRIPTOR_ERROR);
   }
 
   const parameters = Object.create(null);
-  const query = value.slice(value.indexOf('?') + 1).split('#', 1)[0];
-  if (!value.includes('?') || query === '') throw new TypeError(DESCRIPTOR_ERROR);
-  for (const component of query.split('&')) {
+  if (rawQuery === undefined || rawQuery === '') throw new TypeError(DESCRIPTOR_ERROR);
+  for (const component of rawQuery.split('&')) {
     const separator = component.indexOf('=');
     const encodedName = separator < 0 ? component : component.slice(0, separator);
     const encodedValue = separator < 0 ? '' : component.slice(separator + 1);
@@ -120,7 +141,7 @@ function canonicalizeUrl(value, handle) {
   for (const name of ['variables', 'features', 'fieldToggles']) {
     if (hasOwn(parameters, name)) canonicalParameters.set(name, JSON.stringify(parameters[name]));
   }
-  return `${url.origin}/i/api/graphql/${pathMatch[1]}/UserByScreenName?${canonicalParameters}`;
+  return `${url.origin}/i/api/graphql/${queryId}/UserByScreenName?${canonicalParameters}`;
 }
 
 function canonicalizeHeaders(value) {
@@ -202,21 +223,22 @@ export function createXAboutAccountRequestTransport(options) {
   function loadPayload(identity, context) {
     const signal = validatePublicRequest(identity, context);
     if (signal === null) return Promise.reject(new TypeError(REQUEST_ERROR));
-    if (signal.aborted) return Promise.reject(abortError());
+    if (isAborted(signal)) return Promise.reject(abortError());
     let descriptor;
     try {
       descriptor = createRequest(identity, Object.freeze({
         version: X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION,
       }));
     } catch {
-      return Promise.reject(new Error('Unable to prepare X About Account request'));
+      return Promise.reject(isAborted(signal)
+        ? abortError() : new Error('Unable to prepare X About Account request'));
     }
     let prepared;
     try { prepared = prepareDescriptor(descriptor, identity.handle); } catch (error) {
-      return Promise.reject(error);
+      return Promise.reject(isAborted(signal) ? abortError() : error);
     }
     descriptor = null;
-    if (signal.aborted) return Promise.reject(abortError());
+    if (isAborted(signal)) return Promise.reject(abortError());
 
     let fetchResult;
     try {
@@ -229,28 +251,33 @@ export function createXAboutAccountRequestTransport(options) {
         signal,
       });
     } catch {
-      return Promise.reject(signal.aborted ? abortError() : new Error('X About Account request failed'));
+      return Promise.reject(isAborted(signal)
+        ? abortError() : new Error('X About Account request failed'));
     }
     prepared = null;
-    if (signal.aborted) return Promise.reject(abortError());
+    if (isAborted(signal)) return Promise.reject(abortError());
 
     return Promise.resolve(fetchResult).then(async (response) => {
-      if (signal.aborted) throw abortError();
-      const captured = captureResponse(response);
+      if (isAborted(signal)) throw abortError();
+      let captured;
+      try { captured = captureResponse(response); } catch (error) {
+        throw isAborted(signal) ? abortError() : error;
+      }
+      if (isAborted(signal)) throw abortError();
       if (!captured.ok) throw new Error('X About Account request failed');
-      if (signal.aborted) throw abortError();
+      if (isAborted(signal)) throw abortError();
       let jsonResult;
       try { jsonResult = captured.json.call(response); } catch {
-        throw signal.aborted ? abortError() : new Error('Unable to parse X About Account response');
+        throw isAborted(signal) ? abortError() : new Error('Unable to parse X About Account response');
       }
       let payload;
       try { payload = await jsonResult; } catch {
-        throw signal.aborted ? abortError() : new Error('Unable to parse X About Account response');
+        throw isAborted(signal) ? abortError() : new Error('Unable to parse X About Account response');
       }
-      if (signal.aborted) throw abortError();
+      if (isAborted(signal)) throw abortError();
       return payload;
     }, () => {
-      throw signal.aborted ? abortError() : new Error('X About Account request failed');
+      throw isAborted(signal) ? abortError() : new Error('X About Account request failed');
     });
   }
 

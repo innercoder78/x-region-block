@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { createXAccountTargetSession } from '../src/content/account-target-session.js';
 import { createXAboutAccountPayloadBroker } from '../src/content/x-about-account-payload-broker.js';
+import { createXAboutAccountRequestTransport } from '../src/content/x-about-account-request-transport.js';
 import { getAccountAction } from '../src/content/account-action-renderer.js';
 import { findLocationBadge } from '../src/content/location-badge-renderer.js';
 import { FakeDocument } from './helpers/fake-dom.js';
@@ -54,6 +55,18 @@ function session(root, source, broker, settings, consumerControllers) {
       return controller;
     },
     onError: vi.fn(),
+  });
+}
+
+function transportFor(fetch) {
+  return createXAboutAccountRequestTransport({
+    fetch,
+    createRequest: (identity) => ({
+      url: `https://x.com/i/api/graphql/Injected_Integration_Id/UserByScreenName?${new URLSearchParams({
+        variables: JSON.stringify({ screen_name: identity.handle }),
+      })}`,
+      headers: { authorization: 'test-only', 'x-csrf-token': 'test-only' },
+    }),
   });
 }
 
@@ -165,5 +178,70 @@ it('starts independent lookups for different accounts across sessions', () => {
   expect(broker.getInFlightCount()).toBe(2);
   profileSession.stop();
   timelineSession.stop();
+  broker.stop();
+});
+
+it('passes transport JSON through the real parser, settings evaluation, and presentation', async () => {
+  const responses = [
+    { data: { user_result_by_screen_name: { result: {
+      about_profile: { account_based_in: 'Canada' },
+    } } } },
+    { data: { user_result_by_screen_name: { result: { about_profile: {} } } } },
+    { unsupported: true },
+  ];
+  const fetch = vi.fn(async () => ({ ok: true, status: 200, json: () => responses.shift() }));
+  const transport = transportFor(fetch);
+  const broker = createXAboutAccountPayloadBroker({
+    loadPayload: transport.loadPayload,
+    abortControllerFactory: () => createFakeAbortController(),
+    onError: vi.fn(),
+  }).start();
+
+  for (const [expectedText, expectedAction] of [
+    ['🇨🇦 🌐 North America', 'hide'],
+    ['🌐 Location not provided', 'show'],
+    ['🌐 Location unavailable', 'show'],
+  ]) {
+    const profile = profileRoot('OpenAI');
+    const current = session(
+      profile.root, 'profile', broker, { country: { hide: ['CA'] } }, [],
+    );
+    current.start();
+    await settle();
+    await settle();
+    expect(findLocationBadge(profile.root).textContent).toBe(expectedText);
+    expect(getAccountAction(profile.root)).toBe(expectedAction);
+    current.stop();
+    expect(findLocationBadge(profile.root)).toBeNull();
+    expect(getAccountAction(profile.root)).toBe('show');
+  }
+  expect(fetch).toHaveBeenCalledTimes(3);
+  broker.stop();
+});
+
+it('cancels pending real transport work and never presents a stale response', async () => {
+  const lookup = deferred();
+  const sharedControllers = [];
+  const fetch = vi.fn(() => lookup.promise);
+  const transport = transportFor(fetch);
+  const broker = createXAboutAccountPayloadBroker({
+    loadPayload: transport.loadPayload,
+    abortControllerFactory: () => {
+      const controller = createFakeAbortController();
+      sharedControllers.push(controller);
+      return controller;
+    },
+    onError: vi.fn(),
+  }).start();
+  const profile = profileRoot('OpenAI');
+  const current = session(profile.root, 'profile', broker, {}, []);
+  current.start();
+  current.stop();
+  expect(sharedControllers[0].signal.aborted).toBe(true);
+  lookup.resolve({ ok: true, status: 200, json: () => payload });
+  await settle();
+  expect(findLocationBadge(profile.root)).toBeNull();
+  expect(getAccountAction(profile.root)).toBe('show');
+  expect(broker.getInFlightCount()).toBe(0);
   broker.stop();
 });
