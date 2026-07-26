@@ -109,13 +109,14 @@ export function createXAboutAccountPayloadBroker(options) {
     entry.live = false;
     const consumers = [...entry.consumers];
     entry.consumers.clear();
-    const sharedController = entry.controller;
+    const abortShared = entry.abort;
     entry.key = null;
     entry.generation = null;
     entry.controller = null;
+    entry.abort = null;
     entry.promise = null;
     entry.identity = null;
-    return { consumers, sharedController };
+    return { consumers, abortShared };
   }
 
   function stop() {
@@ -130,7 +131,7 @@ export function createXAboutAccountPayloadBroker(options) {
     }
     retired.clear();
     let failed = false;
-    for (const { consumers, sharedController } of cleanup) {
+    for (const { consumers, abortShared } of cleanup) {
       for (const consumer of consumers) {
         consumer.active = false;
         try { consumer.signal.removeEventListener('abort', consumer.listener); } catch { failed = true; }
@@ -140,7 +141,7 @@ export function createXAboutAccountPayloadBroker(options) {
         consumer.resolve = null;
         consumer.reject = null;
       }
-      try { sharedController.abort(); } catch { failed = true; }
+      try { abortShared(); } catch { failed = true; }
     }
     cleanup.length = 0;
     if (failed) report(new Error('Unable to stop X About Account payload broker'));
@@ -190,8 +191,8 @@ export function createXAboutAccountPayloadBroker(options) {
       consumer.reject = null;
       reject(abortError());
       if (entry.live && entry.consumers.size === 0) {
-        const { sharedController } = retireEntry(entry);
-        try { sharedController.abort(); } catch {
+        const { abortShared } = retireEntry(entry);
+        try { abortShared(); } catch {
           report(new Error('Unable to cancel shared About Account lookup'));
         }
       }
@@ -214,8 +215,8 @@ export function createXAboutAccountPayloadBroker(options) {
         consumer.reject = null;
         rejectPromise(error);
         if (entry.live && entry.consumers.size === 0) {
-          const { sharedController } = retireEntry(entry);
-          try { sharedController.abort(); } catch {
+          const { abortShared } = retireEntry(entry);
+          try { abortShared(); } catch {
             report(new Error('Unable to cancel shared About Account lookup'));
           }
         }
@@ -236,18 +237,28 @@ export function createXAboutAccountPayloadBroker(options) {
     let sharedController;
     try {
       sharedController = abortControllerFactory();
-      if (sharedController === null || typeof sharedController !== 'object'
-        || !hasOwn(sharedController, 'signal') || typeof sharedController.abort !== 'function') {
-        throw new TypeError('abortControllerFactory returned an invalid controller');
-      }
     } catch (error) {
       return Promise.reject(error);
+    }
+    let sharedSignal;
+    let sharedAbort;
+    try {
+      if (sharedController === null || typeof sharedController !== 'object'
+        || !hasOwn(sharedController, 'signal')) throw new TypeError();
+      sharedAbort = sharedController.abort;
+      if (typeof sharedAbort !== 'function') throw new TypeError();
+      sharedSignal = sharedController.signal;
+    } catch {
+      return Promise.reject(
+        new TypeError('abortControllerFactory returned an invalid controller'),
+      );
     }
     const entry = {
       key,
       generation,
       live: true,
       controller: sharedController,
+      abort: () => sharedAbort.call(sharedController),
       promise: null,
       identity: createAccountIdentity({
         handle: request.handle, accountId: request.accountId, source: null,
@@ -259,7 +270,7 @@ export function createXAboutAccountPayloadBroker(options) {
     if (!entry.live || entry.consumers.size === 0) return consumerPromise;
     const underlyingContext = Object.freeze({
       version: X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION,
-      signal: sharedController.signal,
+      signal: sharedSignal,
     });
     let result;
     try { result = loadPayload(entry.identity, underlyingContext); } catch (error) {

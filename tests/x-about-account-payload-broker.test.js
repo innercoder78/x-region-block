@@ -284,4 +284,104 @@ describe('X About Account payload broker', () => {
     nullId.catch(() => {});
     broker.stop();
   });
+
+  it.each([
+    ['a throwing signal getter', () => ({
+      abort() {},
+      get signal() { throw new Error('private signal failure'); },
+    })],
+    ['a throwing abort getter', () => ({
+      signal: {},
+      get abort() { throw new Error('private abort failure'); },
+    })],
+    ['an inherited signal', () => {
+      const controller = Object.create({ signal: {} });
+      controller.abort = () => {};
+      return controller;
+    }],
+    ['a non-callable abort', () => ({ signal: {}, abort: null })],
+  ])('atomically rejects a controller with %s and permits a later request', async (
+    _label, invalidFactory,
+  ) => {
+    const consumerSignal = createFakeAbortController();
+    const validController = createFakeAbortController();
+    let signalReads = 0;
+    const valid = {
+      abort: validController.abort,
+      get signal() {
+        signalReads += 1;
+        return validController.signal;
+      },
+    };
+    const controllers = [invalidFactory(), valid];
+    const loadPayload = vi.fn(() => 'payload');
+    const onError = vi.fn();
+    const broker = createXAboutAccountPayloadBroker({
+      loadPayload,
+      abortControllerFactory: () => controllers.shift(),
+      onError,
+    });
+    broker.start();
+    let request;
+    expect(() => {
+      request = broker.loadAboutAccountPayload(identity(), context(consumerSignal.signal));
+    }).not.toThrow();
+    expect(request).toBeInstanceOf(Promise);
+    await expect(request).rejects.toEqual(
+      new TypeError('abortControllerFactory returned an invalid controller'),
+    );
+    expect(consumerSignal.listenerCount).toBe(0);
+    expect(loadPayload).not.toHaveBeenCalled();
+    expect(broker.getInFlightCount()).toBe(0);
+    expect(onError).not.toHaveBeenCalled();
+
+    const laterSignal = createFakeAbortController();
+    await expect(broker.loadAboutAccountPayload(
+      identity('timeline'), context(laterSignal.signal),
+    )).resolves.toBe('payload');
+    expect(signalReads).toBe(1);
+    expect(loadPayload).toHaveBeenCalledTimes(1);
+    expect(laterSignal.listenerCount).toBe(0);
+  });
+
+  it('captures a valid shared signal exactly once and never joins failed initialization state', async () => {
+    let fragileReads = 0;
+    const fragileController = {
+      abort() {},
+      get signal() {
+        fragileReads += 1;
+        if (fragileReads > 1) throw new Error('signal read twice');
+        return createFakeAbortController().signal;
+      },
+    };
+    const pending = deferred();
+    const loadPayload = vi.fn(() => pending.promise);
+    const broker = createXAboutAccountPayloadBroker({
+      loadPayload,
+      abortControllerFactory: vi.fn()
+        .mockReturnValueOnce({
+          abort() {},
+          get signal() { throw new Error('invalid first controller'); },
+        })
+        .mockReturnValueOnce(fragileController),
+      onError: vi.fn(),
+    });
+    broker.start();
+    await expect(broker.loadAboutAccountPayload(
+      identity(), context(createFakeAbortController().signal),
+    )).rejects.toEqual(new TypeError('abortControllerFactory returned an invalid controller'));
+    const first = broker.loadAboutAccountPayload(
+      identity('profile'), context(createFakeAbortController().signal),
+    );
+    const second = broker.loadAboutAccountPayload(
+      identity('timeline'), context(createFakeAbortController().signal),
+    );
+    expect(first).not.toBe(second);
+    expect(loadPayload).toHaveBeenCalledTimes(1);
+    expect(fragileReads).toBe(1);
+    pending.resolve('shared');
+    await expect(first).resolves.toBe('shared');
+    await expect(second).resolves.toBe('shared');
+    expect(fragileReads).toBe(1);
+  });
 });

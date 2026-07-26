@@ -106,6 +106,46 @@ it('shares a source-neutral lookup across profile and timeline sessions', async 
   expect(broker.getInFlightCount()).toBe(0);
 });
 
+it('delivers one shared resolution to both active profile and timeline sessions', async () => {
+  const lookup = deferred();
+  const consumerControllers = [];
+  const loadPayload = vi.fn(() => lookup.promise);
+  const broker = createXAboutAccountPayloadBroker({
+    loadPayload,
+    abortControllerFactory: () => createFakeAbortController(),
+    onError: vi.fn(),
+  });
+  const profile = profileRoot('OpenAI');
+  const timeline = timelineRoot('openai');
+  const profileSession = session(
+    profile.root, 'profile', broker, { country: { highlight: ['JP'] } }, consumerControllers,
+  );
+  const timelineSession = session(
+    timeline.root, 'timeline', broker, { country: { hide: ['JP'] } }, consumerControllers,
+  );
+
+  broker.start();
+  profileSession.start();
+  timelineSession.start();
+  expect(loadPayload).toHaveBeenCalledTimes(1);
+  lookup.resolve(payload);
+  await settle();
+  expect(findLocationBadge(profile.root)).not.toBeNull();
+  expect(findLocationBadge(timeline.name)).not.toBeNull();
+  expect(getAccountAction(profile.root)).toBe('highlight');
+  expect(getAccountAction(timeline.article)).toBe('hide');
+  expect(loadPayload).toHaveBeenCalledTimes(1);
+
+  profileSession.stop();
+  timelineSession.stop();
+  expect(findLocationBadge(profile.root)).toBeNull();
+  expect(findLocationBadge(timeline.name)).toBeNull();
+  expect(getAccountAction(profile.root)).toBe('show');
+  expect(getAccountAction(timeline.article)).toBe('show');
+  broker.stop();
+  expect(broker.getInFlightCount()).toBe(0);
+});
+
 it('starts independent lookups for different accounts across sessions', () => {
   const consumerControllers = [];
   const loadPayload = vi.fn(() => new Promise(() => {}));
