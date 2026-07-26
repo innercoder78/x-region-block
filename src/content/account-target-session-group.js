@@ -111,6 +111,7 @@ export function createXAccountTargetSessionGroup(plans, options) {
   let generation = 0;
   let broker = null;
   let sessions = null;
+  let stopContext = null;
 
   const report = (error) => {
     try { dependencies.onError(error); } catch { /* The injected error boundary is silent. */ }
@@ -136,13 +137,17 @@ export function createXAccountTargetSessionGroup(plans, options) {
         loadPayload: dependencies.loadPayload,
         abortControllerFactory: dependencies.brokerAbortControllerFactory,
         onError: (error) => {
-          if (current(lifecycle, createdBroker)) report(error);
+          if (stopContext !== null && stopContext.lifecycle === lifecycle
+            && stopContext.broker === createdBroker) {
+            stopContext.failed = true;
+          } else if (current(lifecycle, createdBroker)) report(error);
         },
       });
       broker = createdBroker;
       sessions = createdSessions;
       createdBroker.start();
       for (const plan of canonicalPlans) {
+        let createdSession = null;
         const sessionOptions = {
           source: plan.source,
           settingsRuntime: dependencies.settingsRuntime,
@@ -150,13 +155,18 @@ export function createXAccountTargetSessionGroup(plans, options) {
           loadAboutAccountPayload: createdBroker.loadAboutAccountPayload,
           abortControllerFactory: dependencies.consumerAbortControllerFactory,
           onError: (error) => {
-            if (current(lifecycle, createdBroker)) report(error);
+            if (stopContext !== null && stopContext.lifecycle === lifecycle
+              && stopContext.broker === createdBroker
+              && stopContext.sessionSet.has(createdSession)
+              && stopContext.child === createdSession) {
+              stopContext.failed = true;
+            } else if (current(lifecycle, createdBroker)) report(error);
           },
         };
         if (plan.hasBaseUrl) sessionOptions.baseUrl = plan.baseUrl;
-        const session = createXAccountTargetSession(plan.root, sessionOptions);
-        createdSessions.push(session);
-        session.start();
+        createdSession = createXAccountTargetSession(plan.root, sessionOptions);
+        createdSessions.push(createdSession);
+        createdSession.start();
       }
       return getTargets();
     } catch (error) {
@@ -183,13 +193,25 @@ export function createXAccountTargetSessionGroup(plans, options) {
     generation += 1;
     broker = null;
     sessions = null;
-    let failed = false;
+    const cleanup = {
+      lifecycle: generation - 1,
+      broker: currentBroker,
+      sessionSet: new Set(currentSessions),
+      child: null,
+      failed: false,
+    };
+    stopContext = cleanup;
     for (let index = currentSessions.length - 1; index >= 0; index -= 1) {
-      try { currentSessions[index].stop(); } catch { failed = true; }
+      cleanup.child = currentSessions[index];
+      try { currentSessions[index].stop(); } catch { cleanup.failed = true; }
     }
-    try { currentBroker.stop(); } catch { failed = true; }
+    cleanup.child = currentBroker;
+    try { currentBroker.stop(); } catch { cleanup.failed = true; }
+    cleanup.child = null;
+    stopContext = null;
+    cleanup.sessionSet.clear();
     currentSessions.length = 0;
-    if (failed) report(new Error('Unable to stop account target session group'));
+    if (cleanup.failed) report(new Error('Unable to stop account target session group'));
   };
 
   const rescan = () => {

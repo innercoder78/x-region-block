@@ -63,6 +63,7 @@ export function createXAccountTargetSession(root, options) {
   let processor = null;
   let observer = null;
   let unsubscribe = null;
+  let stopContext = null;
 
   const report = (error) => {
     try { normalized.onError(error); } catch { /* The injected error boundary is intentionally silent. */ }
@@ -89,7 +90,10 @@ export function createXAccountTargetSession(root, options) {
         loadAboutAccountPayload: normalized.loadAboutAccountPayload,
         abortControllerFactory: normalized.abortControllerFactory,
         onError: (error) => {
-          if (current(lifecycle, createdProcessor)) report(error);
+          if (stopContext !== null && stopContext.lifecycle === lifecycle
+            && stopContext.processor === createdProcessor) {
+            stopContext.failed = true;
+          } else if (current(lifecycle, createdProcessor)) report(error);
         },
       };
       if (normalized.hasBaseUrl) processorOptions.baseUrl = normalized.baseUrl;
@@ -152,11 +156,13 @@ export function createXAccountTargetSession(root, options) {
     observer = null;
     unsubscribe = null;
     processor = null;
-    let failed = false;
-    try { currentObserver.stop(); } catch { failed = true; }
-    try { currentUnsubscribe(); } catch { failed = true; }
-    try { currentProcessor.stop(); } catch { failed = true; }
-    if (failed) report(new Error('Unable to stop account target session'));
+    const cleanup = { lifecycle: generation - 1, processor: currentProcessor, failed: false };
+    stopContext = cleanup;
+    try { currentObserver.stop(); } catch { cleanup.failed = true; }
+    try { currentUnsubscribe(); } catch { cleanup.failed = true; }
+    try { currentProcessor.stop(); } catch { cleanup.failed = true; }
+    stopContext = null;
+    if (cleanup.failed) report(new Error('Unable to stop account target session'));
   };
   const rescan = () => {
     if (!active) throw new TypeError('account target session is not active');

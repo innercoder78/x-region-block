@@ -5,6 +5,7 @@ import {
 } from '../src/content/account-target-session.js';
 import { FakeDocument } from './helpers/fake-dom.js';
 import { createFakeObserverFactory } from './helpers/fake-mutation-observer.js';
+import { createFakeAbortController } from './helpers/fake-abort-controller.js';
 import { findLocationBadge } from '../src/content/location-badge-renderer.js';
 import {
   ACCOUNT_ACTION_ATTRIBUTE,
@@ -210,6 +211,24 @@ describe('account target session lifecycle', () => {
       new Error('Unable to stop account target session'),
     );
     expect(session.isActive()).toBe(false);
+  });
+
+  it('converts a synchronous processor cleanup report into one session stop error', () => {
+    const { options } = dependencies({
+      loadAboutAccountPayload: vi.fn(() => new Promise(() => {})),
+      abortControllerFactory: vi.fn(() => createFakeAbortController({ failAbort: true })),
+    });
+    const root = new FakeDocument();
+    appendTimelineTarget(root, 'openai');
+    const session = createXAccountTargetSession(root, options);
+    session.start();
+    session.stop();
+    expect(options.onError).toHaveBeenCalledTimes(1);
+    expect(options.onError).toHaveBeenCalledWith(
+      new Error('Unable to stop account target session'),
+    );
+    session.stop();
+    expect(options.onError).toHaveBeenCalledTimes(1);
   });
 
   it('rejects rescanning while inactive', () => {

@@ -184,4 +184,69 @@ describe('account target session group lifecycle', () => {
     expect(() => group.rescan())
       .toThrow(new TypeError('account target session group is not active'));
   });
+
+  it.each(['observer', 'unsubscribe', 'consumer', 'broker'])(
+    'converts a synchronous %s cleanup failure into one group stop error',
+    (failureKind) => {
+      const events = [];
+      const onError = vi.fn(() => {
+        events.push('group-error');
+        throw new Error('ignored error-boundary failure');
+      });
+      const observerFactory = (callback) => ({
+        observe() {},
+        disconnect() {
+          events.push('observer-stop');
+          if (failureKind === 'observer') throw new Error('private observer failure');
+        },
+        callback,
+      });
+      const settingsRuntime = {
+        getSettings: () => ({}),
+        subscribe: () => () => {
+          events.push('unsubscribe');
+          if (failureKind === 'unsubscribe') throw new Error('private settings failure');
+        },
+      };
+      const group = createXAccountTargetSessionGroup(
+        [{ root: timeline('openai').root, source: 'timeline' }],
+        {
+          settingsRuntime,
+          observerFactory,
+          loadPayload: () => new Promise(() => {}),
+          brokerAbortControllerFactory: () => {
+            const controller = createFakeAbortController({ failAbort: failureKind === 'broker' });
+            return {
+              signal: controller.signal,
+              abort() { events.push('broker-stop'); controller.abort(); },
+            };
+          },
+          consumerAbortControllerFactory: () => {
+            const controller = createFakeAbortController({ failAbort: failureKind === 'consumer' });
+            return {
+              signal: controller.signal,
+              abort() { events.push('consumer-stop'); controller.abort(); },
+            };
+          },
+          onError,
+        },
+      );
+      group.start();
+      expect(() => group.stop()).not.toThrow();
+      expect(group.isActive()).toBe(false);
+      expect(group.getTargets()).toBe(group.getTargets());
+      expect(group.getInFlightCount()).toBe(0);
+      expect(events.indexOf('observer-stop')).toBeLessThan(events.indexOf('unsubscribe'));
+      if (events.includes('consumer-stop')) {
+        expect(events.indexOf('unsubscribe')).toBeLessThan(events.indexOf('consumer-stop'));
+      }
+      expect(events.at(-1)).toBe('group-error');
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(
+        new Error('Unable to stop account target session group'),
+      );
+      group.stop();
+      expect(onError).toHaveBeenCalledTimes(1);
+    },
+  );
 });
