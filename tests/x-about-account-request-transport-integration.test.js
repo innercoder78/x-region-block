@@ -143,4 +143,38 @@ describe('request transport and payload broker integration', () => {
     expect(createRequest.mock.calls.every(([account]) => account.source === null)).toBe(true);
     broker.stop();
   });
+
+  it('retires a synchronously aborted shared request without waiting for fetch settlement', async () => {
+    const sharedControllers = [];
+    const createRequest = vi.fn((account) => descriptor(account.handle));
+    const fetch = vi.fn(() => {
+      sharedControllers.at(-1).abort();
+      return new Promise(() => {});
+    });
+    const transport = createXAboutAccountRequestTransport({ fetch, createRequest });
+    const broker = createXAboutAccountPayloadBroker({
+      loadPayload: transport.loadPayload,
+      abortControllerFactory() {
+        const controller = createFakeAbortController();
+        sharedControllers.push(controller);
+        return controller;
+      },
+      onError: vi.fn(),
+    }).start();
+    const first = broker.loadAboutAccountPayload(
+      consumerIdentity('profile'), consumerContext(createFakeAbortController()),
+    );
+    await expect(first).rejects.toMatchObject({
+      name: 'AbortError', message: 'The operation was aborted',
+    });
+    expect(broker.getInFlightCount()).toBe(0);
+    const later = broker.loadAboutAccountPayload(
+      consumerIdentity('timeline'), consumerContext(createFakeAbortController()),
+    );
+    await expect(later).rejects.toMatchObject({ name: 'AbortError' });
+    expect(createRequest).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(broker.getInFlightCount()).toBe(0);
+    broker.stop();
+  });
 });

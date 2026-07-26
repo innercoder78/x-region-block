@@ -407,13 +407,27 @@ describe('X About Account request transport response and cancellation boundaries
     });
     const current = setup({ fetch });
     const result = current.transport.loadPayload(identity(), context(controller.signal));
-    if (outcome === 'reject') pending.reject(new Error('private late network failure'));
-    else pending.resolve(returned);
     await expect(result).rejects.toMatchObject({
       name: 'AbortError', message: 'The operation was aborted',
     });
+    if (outcome === 'reject') pending.reject(new Error('private late network failure'));
+    else pending.resolve(returned);
+    await Promise.resolve();
+    await Promise.resolve();
     expect(responseGetter).not.toHaveBeenCalled();
     expect(returned.json).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects immediately when a synchronously aborting fetch never settles', async () => {
+    const controller = createFakeAbortController();
+    const fetch = vi.fn(() => {
+      controller.abort();
+      return new Promise(() => {});
+    });
+    const current = setup({ fetch });
+    await expect(current.transport.loadPayload(identity(), context(controller.signal)))
+      .rejects.toEqual(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 

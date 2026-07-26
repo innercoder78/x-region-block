@@ -276,7 +276,10 @@ export function createXAboutAccountRequestTransport(options) {
     prepared = null;
     fetchResult = null;
     if (isAborted(signal)) {
-      return ownedFetch.then(() => { throw abortError(); });
+      // Observation remains independently attached to discard either eventual
+      // outcome, but cancellation delivery cannot depend on fetch settlement.
+      void ownedFetch;
+      return Promise.reject(abortError());
     }
 
     return ownedFetch.then(async (settlement) => {
