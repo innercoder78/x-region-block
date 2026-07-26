@@ -1,4 +1,5 @@
 import { readXAccountIdentityFromLink } from './account-link-reader.js';
+import { applyAccountAction, removeAccountAction } from './account-action-renderer.js';
 import { presentXAccountLink } from './account-presentation.js';
 import { ACCOUNT_TARGET_DISCOVERY_VERSION } from './account-target-discovery.js';
 import { ACCOUNT_TARGET_OBSERVER_VERSION } from './account-target-observer.js';
@@ -155,6 +156,7 @@ export function createXAccountTargetProcessor(options) {
     ? { source: normalized.source, baseUrl: normalized.baseUrl }
     : { source: normalized.source });
   const removeBadge = (target) => removeLocationBadge(target.badgeContainer);
+  const removeAction = (target) => removeAccountAction(target.accountContainer);
 
   const present = (target, location) => {
     let identity;
@@ -164,12 +166,18 @@ export function createXAccountTargetProcessor(options) {
     if (identity === null || identity.source !== target.identity.source
       || identity.allowlistKey !== target.identity.allowlistKey) {
       try { removeBadge(target); } catch { /* Link drift cleanup is best effort. */ }
+      try { removeAction(target); } catch { /* Link drift cleanup is best effort. */ }
       return;
     }
     const observation = normalized.hasBaseUrl
       ? { source: normalized.source, location, baseUrl: normalized.baseUrl }
       : { source: normalized.source, location };
-    try { presentXAccountLink(target.link, target.badgeContainer, observation, settings); } catch {
+    try {
+      const evaluation = presentXAccountLink(target.link, target.badgeContainer, observation, settings);
+      if (evaluation === null) removeAction(target);
+      else applyAccountAction(target.accountContainer, evaluation.action);
+    } catch {
+      try { removeAction(target); } catch { /* Presentation cleanup is best effort. */ }
       report(new Error('Unable to present account location'));
     }
   };
@@ -260,6 +268,7 @@ export function createXAccountTargetProcessor(options) {
     }
     for (const target of targets) {
       try { removeBadge(target); } catch { failed = true; }
+      try { removeAction(target); } catch { failed = true; }
     }
     accounts.clear();
     targetByContainer.clear();
@@ -276,12 +285,14 @@ export function createXAccountTargetProcessor(options) {
     const nextTargets = change.current.length === 0 ? EMPTY : Object.freeze([...change.current]);
     const nextByContainer = new Map(nextTargets.map((target) => [target.accountContainer, target]));
     let cleanupFailed = false;
+    let actionCleanupFailed = false;
     for (const previous of targets) {
       const next = nextByContainer.get(previous.accountContainer);
       if (next === previous) continue;
       const entry = accounts.get(previous.identity.allowlistKey);
       if (entry) entry.targets.delete(previous);
       try { removeBadge(previous); } catch { cleanupFailed = true; }
+      try { removeAction(previous); } catch { actionCleanupFailed = true; }
     }
 
     targets = nextTargets;
@@ -313,6 +324,7 @@ export function createXAccountTargetProcessor(options) {
       if (isCurrent(entry) && entry.pending === null && entry.location === null) startLookup(entry);
     }
     if (cleanupFailed) report(new Error('Unable to remove account location badge'));
+    if (actionCleanupFailed) report(new Error('Unable to remove account filter action'));
     return targets;
   };
   const setSettings = (value) => {

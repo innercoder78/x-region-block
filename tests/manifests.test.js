@@ -23,6 +23,9 @@ describe.each(browsers)('%s manifest', (browser) => {
 
     expect(matches).toEqual(expectedMatches);
     expect(manifest.host_permissions).toBeUndefined();
+    expect(manifest.content_scripts).toHaveLength(1);
+    expect(manifest.content_scripts[0].js).toEqual(['content/content-script.js']);
+    expect(manifest.content_scripts[0].css).toEqual(['content/account-actions.css']);
     expect(JSON.stringify(manifest)).not.toMatch(/cloud|cache/i);
   });
 

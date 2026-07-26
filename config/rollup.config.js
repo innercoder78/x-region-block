@@ -15,6 +15,7 @@ export const browserOutputDirectories = {
 };
 
 const staticFiles = [
+  ['src/content/account-actions.css', 'content/account-actions.css'],
   ['src/popup/popup.html', 'popup/popup.html'],
   ['src/popup/popup.css', 'popup/popup.css'],
   ['src/options/options.html', 'options/options.html'],
