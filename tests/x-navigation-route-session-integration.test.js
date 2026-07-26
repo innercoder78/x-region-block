@@ -1,6 +1,12 @@
 import { expect, it, vi } from 'vitest';
 import { installXNavigationSignal } from '../src/page/x-navigation-signal.js';
 import { createXNavigationObserver } from '../src/content/x-navigation-observer.js';
+import { createXAccountTargetRouteSessionController } from '../src/content/account-target-route-session-controller.js';
+import { findLocationBadge } from '../src/content/location-badge-renderer.js';
+import { getAccountAction } from '../src/content/account-action-renderer.js';
+import { FakeDocument } from './helpers/fake-dom.js';
+import { createFakeObserverFactory } from './helpers/fake-mutation-observer.js';
+import { createFakeAbortController } from './helpers/fake-abort-controller.js';
 
 it('connects an explicitly installed page signal to explicit content observation', () => {
   const listeners = new Map();
@@ -27,4 +33,87 @@ it('connects an explicitly installed page signal to explicit content observation
   expect(onNavigate).toHaveBeenCalledWith('https://x.com/alice/with_replies');
   observer.stop();
   signal.stop();
+});
+
+it('runs real navigation, routing, brokerage, sessions, parsing, and presentation', async () => {
+  const listeners = new Map();
+  const eventDocument = {
+    addEventListener: (type, listener) => listeners.set(`document:${type}`, listener),
+    removeEventListener: (type, listener) => {
+      if (listeners.get(`document:${type}`) === listener) listeners.delete(`document:${type}`);
+    },
+    dispatchEvent: (event) => listeners.get(`document:${event.type}`)?.(event),
+  };
+  const global = {
+    location: { href: 'https://x.com/openai' }, document: eventDocument,
+    history: {
+      pushState(state, title, url) { global.location.href = new URL(url, global.location.href).href; },
+      replaceState(state, title, url) { global.location.href = new URL(url, global.location.href).href; },
+    },
+    Event: class Event { constructor(type) { this.type = type; } },
+    addEventListener: (type, listener) => listeners.set(`global:${type}`, listener),
+    removeEventListener: (type, listener) => {
+      if (listeners.get(`global:${type}`) === listener) listeners.delete(`global:${type}`);
+    },
+  };
+  const root = new FakeDocument();
+  const profile = root.createElement('div');
+  profile.setAttribute('data-testid', 'UserName');
+  const profileLink = root.createElement('a');
+  profileLink.setAttribute('href', '/openai');
+  profile.appendChild(profileLink);
+  root.appendChild(profile);
+  const tweet = root.createElement('article');
+  tweet.setAttribute('data-testid', 'tweet');
+  const tweetName = root.createElement('div');
+  tweetName.setAttribute('data-testid', 'User-Name');
+  const tweetLink = root.createElement('a');
+  tweetLink.setAttribute('href', '/openai');
+  tweetName.appendChild(tweetLink);
+  tweet.appendChild(tweetName);
+  root.appendChild(tweet);
+  const mutation = createFakeObserverFactory();
+  const loadPayload = vi.fn(async () => ({
+    data: { user_result_by_screen_name: { result: { about_profile: { account_based_in: 'Japan' } } } },
+  }));
+  const runtime = { getSettings: () => ({}), subscribe: () => () => {} };
+  const controller = createXAccountTargetRouteSessionController(root, {
+    settingsRuntime: runtime,
+    observerFactory: mutation.factory,
+    loadPayload,
+    brokerAbortControllerFactory: createFakeAbortController,
+    consumerAbortControllerFactory: createFakeAbortController,
+    navigationObserverFactory: ({ onNavigate, onError }) => createXNavigationObserver(
+      global, { onNavigate, onError },
+    ),
+    onError: vi.fn(),
+  });
+  const signal = installXNavigationSignal(global);
+  expect(controller.start()).toHaveLength(2);
+  expect(controller.getPlans().map(({ source }) => source)).toEqual(['profile', 'timeline']);
+  expect(loadPayload).toHaveBeenCalledTimes(1);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(findLocationBadge(profile)).not.toBeNull();
+  expect(findLocationBadge(tweetName)).not.toBeNull();
+
+  global.history.pushState({}, '', '/openai/with_replies');
+  expect(controller.getPlans().map(({ source }) => source)).toEqual(['profile', 'reply']);
+  expect(loadPayload).toHaveBeenCalledTimes(2);
+  global.history.replaceState({}, '', '/i/bookmarks');
+  expect(controller.getRoute().type).toBe('unsupported');
+  expect(controller.getTargets()).toEqual([]);
+  expect(findLocationBadge(profile)).toBeNull();
+  expect(findLocationBadge(tweetName)).toBeNull();
+  expect(getAccountAction(profile)).toBe('show');
+  expect(getAccountAction(tweet)).toBe('show');
+
+  global.location.href = 'https://x.com/home';
+  listeners.get('global:popstate')();
+  expect(controller.getPlans().map(({ source }) => source)).toEqual(['timeline']);
+  expect(loadPayload).toHaveBeenCalledTimes(3);
+  controller.stop();
+  signal.stop();
+  global.history.pushState({}, '', '/openai');
+  expect(controller.getRoute()).toBeNull();
 });

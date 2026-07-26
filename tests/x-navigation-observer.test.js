@@ -69,4 +69,70 @@ describe('X navigation observer', () => {
     observer.start();
     expect(observer.isActive()).toBe(true);
   });
+
+  it('accepts null-prototype options and captures callbacks exactly once', () => {
+    const global = facade();
+    const navigate = vi.fn();
+    const error = vi.fn();
+    const reads = { navigate: 0, error: 0 };
+    const options = Object.create(null);
+    Object.defineProperties(options, {
+      onNavigate: { enumerable: true, get() { reads.navigate += 1; return navigate; } },
+      onError: { enumerable: true, get() { reads.error += 1; return error; } },
+    });
+    const observer = createXNavigationObserver(global, options);
+    observer.start();
+    global.listeners.get('popstate')();
+    expect(reads).toEqual({ navigate: 1, error: 1 });
+    expect(navigate).toHaveBeenCalledOnce();
+  });
+
+  it('normalizes throwing callback accessors and ignores inherited callbacks', () => {
+    const global = facade();
+    const throwing = { onError() {} };
+    Object.defineProperty(throwing, 'onNavigate', { get() { throw new Error('private'); } });
+    expect(() => createXNavigationObserver(global, throwing)).toThrowError(
+      new TypeError('Invalid X navigation observer options'),
+    );
+    Object.defineProperties(Object.prototype, {
+      onNavigate: { configurable: true, value() {} },
+      onError: { configurable: true, value() {} },
+    });
+    try {
+      expect(() => createXNavigationObserver(global, {})).toThrowError(
+        new TypeError('Invalid X navigation observer options'),
+      );
+    } finally {
+      delete Object.prototype.onNavigate;
+      delete Object.prototype.onError;
+    }
+  });
+
+  it('requires a live string on repeated start and reports one stop failure', () => {
+    const global = facade();
+    const onError = vi.fn(() => { throw new Error('boundary'); });
+    const observer = createXNavigationObserver(global, { onNavigate: vi.fn(), onError });
+    observer.start();
+    global.location.href = null;
+    expect(() => observer.start()).toThrowError(
+      new TypeError('Invalid X navigation observer global scope'),
+    );
+    global.document.removeEventListener = () => { throw new Error('document'); };
+    global.removeEventListener = () => { throw new Error('global'); };
+    expect(() => observer.stop()).not.toThrow();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(new Error('Unable to stop X navigation observer'));
+  });
+
+  it('rolls back only successfully registered listeners', () => {
+    const global = facade();
+    const removeDocument = vi.spyOn(global.document, 'removeEventListener');
+    const removeGlobal = vi.spyOn(global, 'removeEventListener');
+    global.addEventListener = () => { throw new Error('registration'); };
+    const observer = createXNavigationObserver(global, { onNavigate: vi.fn(), onError: vi.fn() });
+    expect(() => observer.start()).toThrowError(new Error('registration'));
+    expect(removeDocument).toHaveBeenCalledOnce();
+    expect(removeGlobal).not.toHaveBeenCalled();
+    expect(observer.isActive()).toBe(false);
+  });
 });

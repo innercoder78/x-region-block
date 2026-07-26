@@ -29,17 +29,26 @@ export function createXNavigationObserver(globalScope, options) {
     || !hasOwn(options, 'onNavigate') || !hasOwn(options, 'onError')) {
     throw new TypeError('Invalid X navigation observer options');
   }
-  if (typeof options.onNavigate !== 'function') throw new TypeError('onNavigate must be a function');
-  if (typeof options.onError !== 'function') throw new TypeError('onError must be a function');
-  const onNavigate = options.onNavigate;
-  const onError = options.onError;
+  let onNavigate;
+  let onError;
+  try {
+    onNavigate = options.onNavigate;
+    onError = options.onError;
+  } catch { throw new TypeError('Invalid X navigation observer options'); }
+  if (typeof onNavigate !== 'function') throw new TypeError('onNavigate must be a function');
+  if (typeof onError !== 'function') throw new TypeError('onError must be a function');
   let active = false;
   let generation = 0;
   let documentListener = null;
   let popstateListener = null;
   const report = (error) => { try { onError(error); } catch { /* silent boundary */ } };
+  const readStartUrl = () => {
+    const href = location.href;
+    if (typeof href !== 'string') throw new TypeError('Invalid X navigation observer global scope');
+    return href;
+  };
   const start = () => {
-    if (active) return location.href;
+    if (active) return readStartUrl();
     const lifecycle = generation + 1;
     const deliver = () => {
       if (!active || generation !== lifecycle) return;
@@ -53,17 +62,17 @@ export function createXNavigationObserver(globalScope, options) {
     documentListener = deliver;
     popstateListener = deliver;
     let documentAdded = false;
+    let globalAdded = false;
     try {
       document.addEventListener(X_NAVIGATION_EVENT_TYPE, deliver);
       documentAdded = true;
       globalScope.addEventListener('popstate', deliver);
-      const href = location.href;
-      if (typeof href !== 'string') throw new TypeError('Invalid X navigation observer global scope');
-      return href;
+      globalAdded = true;
+      return readStartUrl();
     } catch (error) {
       active = false; generation += 1;
       if (documentAdded) { try { document.removeEventListener(X_NAVIGATION_EVENT_TYPE, deliver); } catch { /* preserve */ } }
-      try { globalScope.removeEventListener('popstate', deliver); } catch { /* preserve */ }
+      if (globalAdded) { try { globalScope.removeEventListener('popstate', deliver); } catch { /* preserve */ } }
       documentListener = null; popstateListener = null;
       throw error;
     }

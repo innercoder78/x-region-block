@@ -18,15 +18,20 @@ function plain(value) {
 
 function normalizeOptions(options) {
   if (!plain(options)) throw new TypeError('account target route session options must be a plain object');
-  if (hasOwn(options, 'accountId')) {
-    throw new TypeError('accountId is not supported by account target route sessions');
-  }
   let keys;
   try { keys = Reflect.ownKeys(options); } catch { throw new TypeError('Invalid account target route session options'); }
+  if (keys.includes('accountId')) {
+    throw new TypeError('accountId is not supported by account target route sessions');
+  }
   if (keys.some((key) => typeof key !== 'string' || !OPTION_KEYS.has(key))) {
     throw new TypeError('Invalid account target route session options');
   }
-  const settingsRuntime = hasOwn(options, 'settingsRuntime') ? options.settingsRuntime : null;
+  const values = {};
+  const hasBaseUrl = keys.includes('baseUrl');
+  try {
+    for (const key of keys) values[key] = options[key];
+  } catch { throw new TypeError('Invalid account target route session options'); }
+  const settingsRuntime = keys.includes('settingsRuntime') ? values.settingsRuntime : null;
   if (settingsRuntime === null || typeof settingsRuntime !== 'object'
     || typeof settingsRuntime.getSettings !== 'function' || typeof settingsRuntime.subscribe !== 'function') {
     throw new TypeError('settingsRuntime must provide getSettings and subscribe');
@@ -38,14 +43,16 @@ function normalizeOptions(options) {
     ['consumerAbortControllerFactory', 'consumerAbortControllerFactory must be a function'],
     ['navigationObserverFactory', 'navigationObserverFactory must be a function'],
     ['onError', 'onError must be a function'],
-  ]) if (!hasOwn(options, key) || typeof options[key] !== 'function') throw new TypeError(message);
-  return {
-    settingsRuntime, observerFactory: options.observerFactory, loadPayload: options.loadPayload,
-    brokerAbortControllerFactory: options.brokerAbortControllerFactory,
-    consumerAbortControllerFactory: options.consumerAbortControllerFactory,
-    navigationObserverFactory: options.navigationObserverFactory, onError: options.onError,
-    hasBaseUrl: hasOwn(options, 'baseUrl'), baseUrl: options.baseUrl,
+  ]) if (!keys.includes(key) || typeof values[key] !== 'function') throw new TypeError(message);
+  const normalized = {
+    settingsRuntime, observerFactory: values.observerFactory, loadPayload: values.loadPayload,
+    brokerAbortControllerFactory: values.brokerAbortControllerFactory,
+    consumerAbortControllerFactory: values.consumerAbortControllerFactory,
+    navigationObserverFactory: values.navigationObserverFactory, onError: values.onError,
+    hasBaseUrl,
   };
+  if (hasBaseUrl) normalized.baseUrl = values.baseUrl;
+  return normalized;
 }
 
 function samePlan(left, right) {
@@ -67,12 +74,15 @@ export function createXAccountTargetRouteSessionController(root, options) {
   let generation = 0;
   let broker = null;
   let navigationObserver = null;
+  let navigationMethods = null;
   let route = null;
   let plans = EMPTY;
   let records = null;
+  let candidates = null;
   let reconciling = false;
   let pendingUrl = null;
   let cleanupContext = null;
+  let deferredStop = null;
 
   const report = (error) => { try { dependencies.onError(error); } catch { /* silent boundary */ } };
   const current = (lifecycle) => active && generation === lifecycle;
@@ -85,20 +95,43 @@ export function createXAccountTargetRouteSessionController(root, options) {
 
   const createRecord = (plan, lifecycle, expectedBroker) => {
     let session = null;
-    const sessionOptions = {
+    const sessionOptions = Object.assign(Object.create(null), {
       source: plan.source,
       settingsRuntime: dependencies.settingsRuntime,
       observerFactory: dependencies.observerFactory,
       loadAboutAccountPayload: expectedBroker.loadAboutAccountPayload,
       abortControllerFactory: dependencies.consumerAbortControllerFactory,
       onError: (error) => {
-        if (cleanupContext !== null && cleanupContext.sessions.has(session)) cleanupContext.failed = true;
-        else if (current(lifecycle) && broker === expectedBroker) report(error);
+        if (cleanupContext !== null && cleanupContext.records.has(record)) cleanupContext.failed = true;
+        else if (record.state === 'starting') record.pendingErrors.push(error);
+        else if (current(lifecycle) && broker === expectedBroker
+          && (record.state === 'candidate' || record.state === 'committed')) report(error);
       },
-    };
+    });
     if (hasOwn(plan, 'baseUrl')) sessionOptions.baseUrl = plan.baseUrl;
+    const record = { plan, session: null, state: 'candidate', pendingErrors: [] };
     session = createXAccountTargetSession(plan.root, sessionOptions);
-    return { plan, session };
+    record.session = session;
+    candidates.add(record);
+    return record;
+  };
+
+  const cleanRecords = (cleanupRecords) => {
+    const owned = cleanupRecords.filter((record) => !['retired', 'final-stop'].includes(record.state));
+    const context = { records: new Set(owned), failed: false };
+    cleanupContext = context;
+    for (let index = owned.length - 1; index >= 0; index -= 1) {
+      const record = owned[index];
+      if (record.state === 'retired') continue;
+      record.state = 'retiring';
+      try { record.session.stop(); } catch { context.failed = true; }
+      record.state = 'retired';
+      record.pendingErrors.length = 0;
+      candidates?.delete(record);
+    }
+    cleanupContext = null;
+    context.records.clear();
+    return context.failed;
   };
 
   const applyUrl = (url, lifecycle, startup = false) => {
@@ -107,52 +140,58 @@ export function createXAccountTargetRouteSessionController(root, options) {
     const previous = records ?? [];
     const unused = new Set(previous);
     const desired = [];
-    const candidates = [];
+    const added = [];
     try {
       for (const plan of nextPlans) {
         const reusable = previous.find((record) => unused.has(record) && samePlan(record.plan, plan));
         if (reusable !== undefined) {
           unused.delete(reusable);
-          desired.push({ plan, session: reusable.session });
+          desired.push(reusable);
         } else {
           const candidate = createRecord(plan, lifecycle, broker);
-          candidates.push(candidate);
+          added.push(candidate);
           desired.push(candidate);
-          candidate.session.start();
+          candidate.state = 'starting';
+          try {
+            candidate.session.start();
+          } catch (error) {
+            candidate.pendingErrors.length = 0;
+            if (candidate.state === 'starting') candidate.state = 'candidate';
+            throw error;
+          }
+          if (candidate.state === 'starting') {
+            candidate.state = 'candidate';
+            const pendingErrors = candidate.pendingErrors.splice(0);
+            for (const error of pendingErrors) {
+              if (current(lifecycle)) report(error);
+            }
+          } else {
+            candidate.pendingErrors.length = 0;
+          }
         }
       }
     } catch (error) {
-      const context = { sessions: new Set(candidates.map(({ session }) => session)), failed: false };
-      cleanupContext = context;
-      for (let index = candidates.length - 1; index >= 0; index -= 1) {
-        try { candidates[index].session.stop(); } catch { context.failed = true; }
-      }
-      cleanupContext = null;
+      cleanRecords(added);
       if (startup) throw error;
       report(new Error('Unable to reconcile X account target route'));
       return false;
     }
     if (!current(lifecycle)) {
-      const context = { sessions: new Set(candidates.map(({ session }) => session)), failed: false };
-      cleanupContext = context;
-      for (let index = candidates.length - 1; index >= 0; index -= 1) {
-        try { candidates[index].session.stop(); } catch { context.failed = true; }
-      }
-      cleanupContext = null;
+      cleanRecords(added);
       return false;
+    }
+    for (let index = 0; index < desired.length; index += 1) {
+      const record = desired[index];
+      record.plan = nextPlans[index];
+      record.state = 'committed';
+      candidates.delete(record);
     }
     route = nextRoute;
     plans = nextPlans;
     records = desired;
-    const obsolete = [...unused];
-    const context = { sessions: new Set(obsolete.map(({ session }) => session)), failed: false };
-    cleanupContext = context;
-    for (let index = previous.length - 1; index >= 0; index -= 1) {
-      if (!unused.has(previous[index])) continue;
-      try { previous[index].session.stop(); } catch { context.failed = true; }
-    }
-    cleanupContext = null;
-    if (context.failed && !startup) report(new Error('Unable to reconcile X account target route'));
+    const obsolete = previous.filter((record) => unused.has(record));
+    const failed = cleanRecords(obsolete);
+    if (failed && !startup) report(new Error('Unable to reconcile X account target route'));
     return true;
   };
 
@@ -170,7 +209,15 @@ export function createXAccountTargetRouteSessionController(root, options) {
         next = pendingUrl;
         startup = false;
       }
-    } finally { pendingUrl = null; reconciling = false; }
+    } finally {
+      pendingUrl = null;
+      reconciling = false;
+      if (deferredStop !== null) {
+        const cleanup = deferredStop;
+        deferredStop = null;
+        cleanup.finish();
+      }
+    }
   };
 
   const start = () => {
@@ -178,7 +225,8 @@ export function createXAccountTargetRouteSessionController(root, options) {
     const lifecycle = generation + 1;
     let createdBroker = null;
     let createdNavigation = null;
-    active = true; generation = lifecycle; records = [];
+    let createdNavigationMethods = null;
+    active = true; generation = lifecycle; records = []; candidates = new Set();
     try {
       createdBroker = createXAboutAccountPayloadBroker({
         loadPayload: dependencies.loadPayload,
@@ -199,25 +247,44 @@ export function createXAccountTargetRouteSessionController(root, options) {
         },
       });
       createdNavigation = dependencies.navigationObserverFactory(observerOptions);
-      if (createdNavigation === null || typeof createdNavigation !== 'object'
-        || ['start', 'stop', 'getCurrentUrl', 'isActive'].some((key) => typeof createdNavigation[key] !== 'function')) {
+      try {
+        if (createdNavigation === null || typeof createdNavigation !== 'object') throw new Error();
+        const methodKeys = ['start', 'stop', 'getCurrentUrl', 'isActive'];
+        if (methodKeys.some((key) => !hasOwn(createdNavigation, key))) throw new Error();
+        createdNavigationMethods = Object.fromEntries(
+          methodKeys.map((key) => [key, createdNavigation[key]]),
+        );
+        if (methodKeys.some((key) => typeof createdNavigationMethods[key] !== 'function')) {
+          throw new Error();
+        }
+      } catch {
         throw new TypeError('navigationObserverFactory returned an invalid observer');
       }
       navigationObserver = createdNavigation;
-      const initialUrl = createdNavigation.start();
+      navigationMethods = createdNavigationMethods;
+      const initialUrl = Reflect.apply(createdNavigationMethods.start, createdNavigation, []);
       processUrl(initialUrl, lifecycle, true);
       return getTargets();
     } catch (error) {
       active = false; generation += 1;
-      const createdRecords = records ?? [];
-      broker = null; navigationObserver = null; route = null; plans = EMPTY; records = null;
+      const createdRecords = [...(records ?? []), ...(candidates ?? [])];
+      broker = null; navigationObserver = null; navigationMethods = null;
+      route = null; plans = EMPTY; records = null;
+      candidates = null;
       pendingUrl = null; reconciling = false;
-      const context = { sessions: new Set(createdRecords.map(({ session }) => session)), failed: false };
+      const context = { records: new Set(createdRecords), failed: false };
       cleanupContext = context;
       for (let index = createdRecords.length - 1; index >= 0; index -= 1) {
-        try { createdRecords[index].session.stop(); } catch { /* preserve */ }
+        const record = createdRecords[index];
+        if (record.state === 'retired') continue;
+        record.state = 'retiring';
+        try { record.session.stop(); } catch { /* preserve */ }
+        record.state = 'retired';
+        record.pendingErrors.length = 0;
       }
-      if (createdNavigation !== null) { try { createdNavigation.stop(); } catch { /* preserve */ } }
+      if (createdNavigationMethods !== null) {
+        try { Reflect.apply(createdNavigationMethods.stop, createdNavigation, []); } catch { /* preserve */ }
+      }
       if (createdBroker !== null) { try { createdBroker.stop(); } catch { /* preserve */ } }
       cleanupContext = null;
       throw error;
@@ -226,27 +293,47 @@ export function createXAccountTargetRouteSessionController(root, options) {
 
   const stop = () => {
     if (!active) return;
+    const wasReconciling = reconciling;
     const oldNavigation = navigationObserver;
+    const oldNavigationMethods = navigationMethods;
     const oldBroker = broker;
     const oldRecords = records;
+    const oldCandidates = [...candidates];
     active = false; generation += 1;
-    navigationObserver = null; broker = null; route = null; plans = EMPTY; records = null;
-    pendingUrl = null; reconciling = false;
-    const context = { sessions: new Set(oldRecords.map(({ session }) => session)), failed: false };
+    navigationObserver = null; navigationMethods = null;
+    broker = null; route = null; plans = EMPTY; records = null;
+    candidates = null;
+    pendingUrl = null;
+    const cleanupRecords = [...oldRecords, ...oldCandidates]
+      .filter((record, index, all) => all.indexOf(record) === index && record.state !== 'retired');
+    for (const record of cleanupRecords) record.state = 'final-stop';
+    const context = { records: new Set(cleanupRecords), failed: false };
     cleanupContext = context;
-    try { oldNavigation.stop(); } catch { context.failed = true; }
-    for (let index = oldRecords.length - 1; index >= 0; index -= 1) {
-      try { oldRecords[index].session.stop(); } catch { context.failed = true; }
-    }
-    try { oldBroker.stop(); } catch { context.failed = true; }
+    try { Reflect.apply(oldNavigationMethods.stop, oldNavigation, []); } catch { context.failed = true; }
     cleanupContext = null;
-    if (context.failed) report(new Error('Unable to stop X account target route session controller'));
+    const finish = () => {
+      cleanupContext = context;
+      for (let index = cleanupRecords.length - 1; index >= 0; index -= 1) {
+        const record = cleanupRecords[index];
+        if (record.state === 'retired') continue;
+        record.state = 'retiring';
+        try { record.session.stop(); } catch { context.failed = true; }
+        record.state = 'retired';
+        record.pendingErrors.length = 0;
+      }
+      try { oldBroker.stop(); } catch { context.failed = true; }
+      cleanupContext = null;
+      context.records.clear();
+      if (context.failed) report(new Error('Unable to stop X account target route session controller'));
+    };
+    if (wasReconciling) deferredStop = { finish };
+    else finish();
   };
   const reconcile = () => {
     if (!active) throw new TypeError('account target route session controller is not active');
     const lifecycle = generation;
     try {
-      const url = navigationObserver.getCurrentUrl();
+      const url = Reflect.apply(navigationMethods.getCurrentUrl, navigationObserver, []);
       processUrl(url, lifecycle);
     } catch { report(new Error('Unable to reconcile X account target route')); }
     return getTargets();

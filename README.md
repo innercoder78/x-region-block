@@ -174,7 +174,9 @@ Live X layout compatibility and end-to-end browser behavior remain unverified. T
 Version 1 page-world navigation signaling can be installed explicitly to wrap
 `history.pushState` and `history.replaceState`. Each successful call dispatches the
 single `x-region-block:navigation` DOM event with no detail. The installer owns and
-conditionally restores only its exact wrappers. Version 1 content-world navigation
+conditionally restores only its exact wrappers. Installation is transactional, and a
+wrapper retained behind a newer page wrapper remains a safe original-method delegate
+after stop while signaling stays disabled. Version 1 content-world navigation
 observation listens for that event and native `popstate`, reads the live URL for each
 signal, and retains no raw URL after synchronous delivery.
 
@@ -186,7 +188,10 @@ obsolete sessions stop so compatible in-flight consumers can transfer without an
 avoidable shared-request abort. Unsupported routes remove every session while leaving
 the broker and navigation observer ready for a later supported route. Reentrant signals
 retain only the latest navigation while synchronous reconciliation is in progress. No
-resolved payload or parsed location cache is introduced.
+resolved payload or parsed location cache is introduced. Starting candidates are owned
+before their startup call, final stop still cleans them before the broker, and explicit
+record states prevent callbacks from rolled-back or retired sessions reaching a later
+route or lifecycle.
 
 These boundaries remain isolated: the page entrypoint does not install the signal, the
 page script is not injected, and the content script starts neither the observer nor the

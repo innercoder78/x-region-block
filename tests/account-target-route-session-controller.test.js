@@ -71,4 +71,86 @@ describe('dynamic account-target route sessions', () => {
     })).toThrowError(new TypeError('Invalid account target route session options'));
     expect(fixture.options.navigationObserverFactory).not.toHaveBeenCalled();
   });
+
+  it('ignores inherited base URLs without reading inherited getters', () => {
+    const root = new FakeDocument();
+    const fixture = setup('https://x.com/home');
+    const inherited = vi.fn(() => { throw new Error('must not read'); });
+    Object.defineProperty(Object.prototype, 'baseUrl', { configurable: true, get: inherited });
+    try {
+      const controller = createXAccountTargetRouteSessionController(root, fixture.options);
+      expect(inherited).not.toHaveBeenCalled();
+      expect(controller.getPlans()).toEqual([]);
+    } finally { delete Object.prototype.baseUrl; }
+  });
+
+  it.each([undefined, null, Object.freeze({ identity: true })])(
+    'reads and preserves one own baseUrl value %s',
+    (baseUrl) => {
+      const fixture = setup('https://x.com/home');
+      let reads = 0;
+      const options = { ...fixture.options };
+      Object.defineProperty(options, 'baseUrl', {
+        enumerable: true,
+        get() { reads += 1; return baseUrl; },
+      });
+      const controller = createXAccountTargetRouteSessionController(new FakeDocument(), options);
+      expect(reads).toBe(1);
+      controller.start();
+      expect(controller.getPlans()[0].baseUrl).toBe(baseUrl);
+      expect(reads).toBe(1);
+      controller.stop();
+    },
+  );
+
+  it('normalizes a throwing own baseUrl getter', () => {
+    const fixture = setup();
+    const options = { ...fixture.options };
+    Object.defineProperty(options, 'baseUrl', { get() { throw new Error('private'); } });
+    expect(() => createXAccountTargetRouteSessionController(new FakeDocument(), options))
+      .toThrowError(new TypeError('Invalid account target route session options'));
+  });
+
+  it('normalizes reflective navigation-observer method failures and retries cleanly', () => {
+    const fixture = setup();
+    const invalid = {};
+    for (const key of ['start', 'stop', 'getCurrentUrl', 'isActive']) {
+      Object.defineProperty(invalid, key, {
+        enumerable: true,
+        get() { if (key === 'getCurrentUrl') throw new Error('private'); return vi.fn(); },
+      });
+    }
+    fixture.options.navigationObserverFactory
+      .mockReturnValueOnce(invalid)
+      .mockImplementationOnce(() => fixture.navigation);
+    const controller = createXAccountTargetRouteSessionController(
+      new FakeDocument(), fixture.options,
+    );
+    expect(() => controller.start()).toThrowError(
+      new TypeError('navigationObserverFactory returned an invalid observer'),
+    );
+    expect(controller.isActive()).toBe(false);
+    expect(controller.start()).toEqual([]);
+    controller.stop();
+  });
+
+  it('owns a candidate before start and completes broker-last cleanup after reentrant stop', () => {
+    const fixture = setup('https://x.com/i/bookmarks');
+    const controller = createXAccountTargetRouteSessionController(
+      new FakeDocument(), fixture.options,
+    );
+    controller.start();
+    fixture.options.settingsRuntime.getSettings.mockImplementationOnce(() => {
+      controller.stop();
+      return {};
+    });
+    fixture.getObserverOptions().onNavigate('https://x.com/home');
+    expect(controller.isActive()).toBe(false);
+    expect(fixture.navigation.stop).toHaveBeenCalledOnce();
+    expect(fixture.options.settingsRuntime.subscribe).toHaveBeenCalledOnce();
+    expect(fixture.options.settingsRuntime.subscribe.mock.results[0].value).toHaveBeenCalledOnce();
+    expect(fixture.options.brokerAbortControllerFactory).not.toHaveBeenCalled();
+    expect(controller.getRoute()).toBeNull();
+    expect(controller.getPlans()).toEqual([]);
+  });
 });
