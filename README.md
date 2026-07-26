@@ -107,20 +107,20 @@ and one explicit caller-supplied root into immutable account-target session
 plans. Profile plans are ordered first; status pages receive only one reply plan
 to avoid duplicate scanning of the timeline/reply shared tweet selector.
 
-The classifier does not observe navigation, and root acquisition and selection
+The classifier itself does not observe navigation, and root acquisition and selection
 remain caller responsibilities. The classifier and planner are not connected to
-content-script startup, and dynamic route reconciliation is not implemented.
+content-script startup; isolated dynamic route reconciliation is documented below.
 Neither module retains a route, root, account, payload, or location cache. The
 conservative route and selector policies have not been verified against every
 live X layout, and live browser behavior remains unverified.
 
-Navigation observation, dynamic route reconciliation, automatic root
-acquisition, and session startup remain caller concerns and are not implemented. The
+Production navigation wiring, automatic root acquisition, and session startup remain
+caller concerns and are not implemented. The
 group is not connected to content-script startup. No real X request, query ID,
 authentication handling, or persistent account data exists, and live X layout
 and end-to-end browser behavior remain unverified. Real About Account transport,
 query-ID discovery, memory-only authorization handling, live content-script
-startup, navigation observation, dynamic route reconciliation, automatic root
+startup, production navigation wiring, automatic root
 acquisition, badge styling, and end-to-end browser verification all remain
 unimplemented; this repository is not production-ready.
 
@@ -168,3 +168,51 @@ written to `dist/chrome` and `dist/firefox`; each generated directory contains
 its own root `manifest.json`.
 
 Live X layout compatibility and end-to-end browser behavior remain unverified. This repository is not production-ready. No real About Account transport, query-ID discovery, memory-only authorization handling, live content-script session startup, route-aware root and source orchestration, broker-to-session production wiring, badge styling, or end-to-end browser verification is implemented. No authentication handling or persistent account/location storage exists.
+
+## Isolated navigation and dynamic route sessions
+
+Version 1 page-world navigation signaling can be installed explicitly to wrap
+`history.pushState` and `history.replaceState`. Each successful call dispatches the
+single `x-region-block:navigation` DOM event with no detail. The installer owns and
+conditionally restores only its exact wrappers. Installation is transactional, and a
+wrapper retained behind a newer page wrapper remains a safe original-method delegate
+after stop while signaling stays disabled. If current history ownership cannot be read,
+the installer performs no restoration write rather than risk replacing a page-owned
+accessor. Version 1 content-world navigation
+observation listens for that event and native `popstate`, reads the live URL for each
+signal, and retains no raw URL after synchronous delivery. Registration-time lifecycle
+invalidation rolls back every listener that may have been installed before a clean retry.
+
+Version 1 of the dynamic account-target route-session controller classifies each
+explicit navigation URL and applies the existing route planner to an explicitly
+supplied root. One broker remains active across route changes. Sessions are reused by
+canonical plan identity and reordered into planner order; added sessions start before
+obsolete sessions stop so compatible in-flight consumers can transfer without an
+avoidable shared-request abort. Unsupported routes remove every session while leaving
+the broker and navigation observer ready for a later supported route. Reentrant signals
+retain only the latest navigation while synchronous reconciliation is in progress. No
+resolved payload or parsed location cache is introduced. Starting candidates are owned
+before their startup call, final stop still cleans them before the broker, and explicit
+record states prevent callbacks from rolled-back or retired sessions reaching a later
+route or lifecycle. Candidate errors remain buffered across the complete route transaction
+and are forwarded only after every addition succeeds and the desired route commits.
+Each reconciliation retains its own candidate ownership until the synchronous transaction
+unwinds, so reentrant final stop prevents later candidates and adopts in-progress cleanup.
+Record-scoped cleanup attribution preserves nested cleanup failures while navigation stops
+first, every session stops exactly once, and the broker stops last. Pending compatible
+consumers can therefore transfer between route sessions without aborting the shared request.
+Navigation-observer creation has its own startup transaction: factory and reflective-method
+work is lifecycle-checked, navigation and error callbacks remain buffered until the observer
+starts and the initial route commits, and only the latest startup navigation is then applied.
+Reentrant final stop claims this startup work, adopts any safely stoppable returned observer,
+discards buffered callbacks, stops the observer before the broker, and starts no route session.
+
+These boundaries remain isolated: the page entrypoint does not install the signal, the
+page script is not injected, and the content script starts neither the observer nor the
+route controller. A root must still be supplied explicitly; automatic root acquisition,
+real About Account transport, query-ID discovery, memory-only authorization handling,
+production page-signal injection, production content route-controller startup, badge
+styling and live-layout compatibility fixes, and end-to-end Chrome and Firefox
+verification remain MVP work. Route and selector compatibility has not been verified
+against every live X layout, end-to-end browser behavior remains unverified, and the
+extension is not production-ready.
