@@ -95,15 +95,31 @@ generations to reject stale callbacks. It retains no resolved payload or
 location cache. The settings runtime must already be started and the group
 never starts or stops it; the underlying transport remains dependency-injected.
 
-Plans, route classification, root selection, and navigation-driven dynamic
-session reconciliation remain caller concerns and are not implemented. The
+An isolated version 1 X route classifier now accepts only an explicitly supplied,
+conservatively validated absolute HTTPS X or Twitter URL. It returns a minimal
+immutable descriptor for home, explore, profile sections (including replies),
+status, search, or notifications, and retains no raw URL, query, or hash data.
+An isolated version 1 route planner deterministically converts that descriptor
+and one explicit caller-supplied root into immutable account-target session
+plans. Profile plans are ordered first; status pages receive only one reply plan
+to avoid duplicate scanning of the timeline/reply shared tweet selector.
+
+The classifier does not observe navigation, and root acquisition and selection
+remain caller responsibilities. The classifier and planner are not connected to
+content-script startup, and dynamic route reconciliation is not implemented.
+Neither module retains a route, root, account, payload, or location cache. The
+conservative route and selector policies have not been verified against every
+live X layout, and live browser behavior remains unverified.
+
+Navigation observation, dynamic route reconciliation, automatic root
+acquisition, and session startup remain caller concerns and are not implemented. The
 group is not connected to content-script startup. No real X request, query ID,
 authentication handling, or persistent account data exists, and live X layout
 and end-to-end browser behavior remain unverified. Real About Account transport,
 query-ID discovery, memory-only authorization handling, live content-script
-startup, route classification, route-aware root/source planning,
-navigation-driven session reconciliation, badge styling, and end-to-end browser
-verification all remain unimplemented; this repository is not production-ready.
+startup, navigation observation, dynamic route reconciliation, automatic root
+acquisition, badge styling, and end-to-end browser verification all remain
+unimplemented; this repository is not production-ready.
 
 The pure shared models include canonical X account-handle normalization and safe
 parsing of X and Twitter account references, a canonical immutable filter-subject
