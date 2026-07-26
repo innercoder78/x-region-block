@@ -86,6 +86,25 @@ content-script startup, route-aware root/source orchestration, broker-to-session
 production wiring, badge styling, and end-to-end browser verification remain
 unimplemented. Live X behavior remains unverified.
 
+An isolated version 1 account-target session group now composes one shared
+broker with several caller-supplied explicit root/source session plans. It
+starts the broker before sessions, stops sessions in reverse order before the
+broker, shares in-flight lookups across roots and sources, supports manual
+rescanning and clean restart, rolls back partial startup, and uses lifecycle
+generations to reject stale callbacks. It retains no resolved payload or
+location cache. The settings runtime must already be started and the group
+never starts or stops it; the underlying transport remains dependency-injected.
+
+Plans, route classification, root selection, and navigation-driven dynamic
+session reconciliation remain caller concerns and are not implemented. The
+group is not connected to content-script startup. No real X request, query ID,
+authentication handling, or persistent account data exists, and live X layout
+and end-to-end browser behavior remain unverified. Real About Account transport,
+query-ID discovery, memory-only authorization handling, live content-script
+startup, route classification, route-aware root/source planning,
+navigation-driven session reconciliation, badge styling, and end-to-end browser
+verification all remain unimplemented; this repository is not production-ready.
+
 The pure shared models include canonical X account-handle normalization and safe
 parsing of X and Twitter account references, a canonical immutable filter-subject
 model, and a pure subject-to-filter-action evaluation boundary. They also provide
