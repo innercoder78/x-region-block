@@ -27,13 +27,27 @@ function descriptor(type, handle = null, profileSection = null, statusId = null)
 }
 
 const UNSUPPORTED = descriptor('unsupported');
+const hasAsciiControl = (value) => [...value].some((character) => {
+  const code = character.charCodeAt(0);
+  return code <= 31 || code === 127;
+});
 
 function parseSegments(value) {
+  if (hasAsciiControl(value)) return null;
   const trimmed = value.trim();
   // URL repairs malformed slash and backslash spellings, so reject them first.
   if (!/^https:\/\/[A-Za-z0-9]/i.test(trimmed) || trimmed.includes('\\')) return null;
-  const authority = trimmed.slice(trimmed.indexOf('//') + 2).split(/[/?#]/, 1)[0];
+  const afterScheme = trimmed.slice(trimmed.indexOf('//') + 2);
+  const authorityEnd = afterScheme.search(/[/?#]/);
+  const authority = authorityEnd < 0 ? afterScheme : afterScheme.slice(0, authorityEnd);
   if (authority.includes(':') || authority.includes('@')) return null;
+
+  let rawPathname = '/';
+  if (authorityEnd >= 0 && afterScheme[authorityEnd] === '/') {
+    const pathAndSuffix = afterScheme.slice(authorityEnd);
+    const suffixStart = pathAndSuffix.search(/[?#]/);
+    rawPathname = suffixStart < 0 ? pathAndSuffix : pathAndSuffix.slice(0, suffixStart);
+  }
 
   let url;
   try {
@@ -44,12 +58,14 @@ function parseSegments(value) {
   if (url.protocol !== 'https:' || !supportedHostnames.has(url.hostname.toLowerCase())
     || url.username !== '' || url.password !== '' || url.port !== '') return null;
 
-  const encoded = url.pathname.split('/').slice(1);
+  const encoded = rawPathname.split('/').slice(1);
   if (encoded.at(-1) === '') encoded.pop();
   if (encoded.some((segment) => segment === '')) return null;
   try {
     const segments = encoded.map((segment) => decodeURIComponent(segment));
-    return segments.some((segment) => segment.includes('/') || segment.includes('\\'))
+    return segments.some((segment) => segment === '.' || segment === '..'
+      || segment.includes('/') || segment.includes('\\')
+      || hasAsciiControl(segment))
       ? null : segments;
   } catch {
     return null;
@@ -57,10 +73,9 @@ function parseSegments(value) {
 }
 
 function canonicalHandle(segment) {
-  if (reservedSegments.has(segment.toLowerCase())) return null;
   try {
     const handle = normalizeXHandle(segment);
-    return handle === segment.trim().replace(/^@/, '').toLowerCase() ? handle : null;
+    return segment.toLowerCase() === handle && !reservedSegments.has(handle) ? handle : null;
   } catch {
     return null;
   }

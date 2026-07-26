@@ -73,6 +73,53 @@ describe('account target route planner', () => {
     expect(Object.isFrozen(plans)).toBe(true);
   });
 
+  it('accepts every representative supported descriptor produced by the classifier', () => {
+    const root = { querySelectorAll: vi.fn(() => []) };
+    const cases = [
+      ['https://x.com/', ['timeline']],
+      ['https://x.com/home/', ['timeline']],
+      ['https://x.com/explore/tabs/recommended', ['timeline']],
+      ['https://x.com/search?q=value', ['search']],
+      ['https://x.com/notifications/mentions', ['notification']],
+      ['https://x.com/OpenAI', ['profile', 'timeline']],
+      ['https://x.com/OpenAI/with_replies', ['profile', 'reply']],
+      ['https://x.com/OpenAI/media', ['profile', 'timeline']],
+      ['https://x.com/OpenAI/likes', ['profile', 'timeline']],
+      ['https://x.com/OpenAI/highlights', ['profile', 'timeline']],
+      ['https://x.com/OpenAI/articles', ['profile', 'timeline']],
+      ['https://x.com/OpenAI/status/001', ['reply']],
+      ['https://x.com/OpenAI/status/001/photo/1', ['reply']],
+      ['https://x.com/OpenAI/status/001/video/2', ['reply']],
+    ];
+    for (const [url, sources] of cases) {
+      const classified = classifyXRoute(url);
+      expect(classified.type).not.toBe('unsupported');
+      expect(() => createXAccountTargetSessionPlans(root, classified)).not.toThrow();
+      expect(createXAccountTargetSessionPlans(root, classified).map(({ source }) => source))
+        .toEqual(sources);
+    }
+    expect(root.querySelectorAll).not.toHaveBeenCalled();
+  });
+
+  it('composes adversarial normalized paths into one shared empty result without querying', () => {
+    const root = { querySelectorAll: vi.fn(() => []) };
+    const urls = [
+      'https://x.com/a/../home', 'https://x.com/a/%2e%2e/home',
+      'https://x.com/a/./status/1', 'https://x.com/@home',
+      'https://x.com/%40search/status/1', 'https://x.com/%20notifications%20/media',
+    ];
+    let empty;
+    for (const url of urls) {
+      const classified = classifyXRoute(url);
+      expect(classified.type).toBe('unsupported');
+      const plans = createXAccountTargetSessionPlans(root, classified);
+      empty ??= plans;
+      expect(plans).toBe(empty);
+      expect(Object.isFrozen(plans)).toBe(true);
+    }
+    expect(root.querySelectorAll).not.toHaveBeenCalled();
+  });
+
   it('returns one shared frozen empty result for unsupported routes', () => {
     const root = new FakeDocument();
     const first = createXAccountTargetSessionPlans(root, route('unsupported'));

@@ -99,6 +99,9 @@ An isolated version 1 X route classifier now accepts only an explicitly supplied
 conservatively validated absolute HTTPS X or Twitter URL. It returns a minimal
 immutable descriptor for home, explore, profile sections (including replies),
 status, search, or notifications, and retains no raw URL, query, or hash data.
+Classification uses the conservatively validated supplied path spelling rather
+than a URL parser's repaired or dot-segment-normalized pathname.
+
 An isolated version 1 route planner deterministically converts that descriptor
 and one explicit caller-supplied root into immutable account-target session
 plans. Profile plans are ordered first; status pages receive only one reply plan

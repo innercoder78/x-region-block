@@ -66,6 +66,18 @@ describe('X route classifier', () => {
     'https://x.com/a/status/1/photo/0', 'https://x.com/a/status/1/video/no',
     'https://x.com/a/status/1/photo/1/more', 'https://x.com/invalid-handle',
     'https://x.com/abcdefghijklmnop',
+    'https://x.com/./home', 'https://x.com/a/../home',
+    'https://x.com/a/./status/1', 'https://x.com/a/status/1/../2',
+    'https://x.com/%2e/home', 'https://x.com/%2E/home',
+    'https://x.com/a/%2e%2e/home', 'https://x.com/a/.%2e/home',
+    'https://x.com/a/%2e./home', 'https://x.com/a/status/%2e/1',
+    'https://x.com/ho\tme', 'https://x.com/op\renai',
+    'https://x.com/a/status/\n1', 'https://x.com/explore/tabs/for\tyou',
+    'https://x.\ncom/home', 'https://x.com/ho\u0001me', 'https://x.com/a\u007f',
+    'https://x.com/ho%0Ame', 'https://x.com/open%09ai',
+    'https://x.com/explore/tabs/%00',
+    'https://x.com/explore/tabs/%0A', 'https://x.com/explore/tabs/%09',
+    'https://x.com/%00', 'https://x.com/a/status/%0D',
   ])('rejects unsafe or unsupported URL %s', (url) => {
     expect(classifyXRoute(url)).toEqual(fields('unsupported'));
   });
@@ -78,6 +90,26 @@ describe('X route classifier', () => {
       const route = classifyXRoute(`https://x.com/${segment}`);
       expect(route.type).toBe(expectedTypes.get(segment) ?? 'unsupported');
       expect(route.handle).toBeNull();
+
+      for (const unsafeHandle of [
+        `@${segment}`, `%40${segment}`, `%20${segment}`, `${segment}%20`,
+      ]) {
+        expect(classifyXRoute(`https://x.com/${unsafeHandle}`).type).toBe('unsupported');
+        expect(classifyXRoute(`https://x.com/${unsafeHandle}/media`).type).toBe('unsupported');
+        expect(classifyXRoute(`https://x.com/${unsafeHandle}/status/1`).type)
+          .toBe('unsupported');
+      }
+      expect(classifyXRoute(`https://x.com/${segment}/media`).type).toBe('unsupported');
+      expect(classifyXRoute(`https://x.com/${segment}/status/1`).type).toBe('unsupported');
     }
+  });
+
+  it('continues accepting mixed-case bare handles only', () => {
+    expect(classifyXRoute('https://x.com/MiXeD_CaSe')).toEqual(
+      fields('profile', 'mixed_case', 'posts'),
+    );
+    expect(classifyXRoute('https://x.com/MiXeD_CaSe/status/007')).toEqual(
+      fields('status', 'mixed_case', null, '007'),
+    );
   });
 });

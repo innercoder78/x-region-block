@@ -101,6 +101,26 @@ describe('route planning through the real session group', () => {
     expect(group.getTargets()).toEqual([]);
   });
 
+  it('plans profile replies in profile-then-reply order', () => {
+    const plans = createXAccountTargetSessionPlans(
+      new FakeDocument(), classifyXRoute('https://x.com/openai/with_replies'),
+    );
+    expect(plans.map(({ source }) => source)).toEqual(['profile', 'reply']);
+  });
+
+  it.each([
+    'https://x.com/openai/../home/status/1',
+    'https://x.com/%40home/status/1',
+  ])('does not start a group or lookup for malformed route %s', (url) => {
+    const root = { querySelectorAll: vi.fn(() => []) };
+    const loadPayload = vi.fn();
+    const plans = createXAccountTargetSessionPlans(root, classifyXRoute(url));
+    expect(plans).toEqual([]);
+    // Empty plans are deliberately not passed to the session-group constructor.
+    expect(root.querySelectorAll).not.toHaveBeenCalled();
+    expect(loadPayload).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['https://x.com/home', ['timeline']],
     ['https://x.com/search', ['search']],
