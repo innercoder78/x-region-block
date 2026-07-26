@@ -154,6 +154,66 @@ describe('dynamic account-target route sessions', () => {
     expect(controller.getPlans()).toEqual([]);
   });
 
+  it('does not construct a second initial-profile candidate after reentrant final stop', () => {
+    const fixture = setup('https://x.com/openai');
+    let controller;
+    fixture.options.settingsRuntime.getSettings.mockImplementationOnce(() => {
+      controller.stop();
+      return {};
+    });
+    controller = createXAccountTargetRouteSessionController(new FakeDocument(), fixture.options);
+    expect(controller.start()).toEqual([]);
+    expect(controller.isActive()).toBe(false);
+    expect(fixture.options.settingsRuntime.getSettings).toHaveBeenCalledTimes(1);
+    expect(fixture.options.settingsRuntime.subscribe).toHaveBeenCalledTimes(1);
+    expect(fixture.options.onError).not.toHaveBeenCalled();
+    expect(controller.getRoute()).toBeNull();
+    expect(controller.getPlans()).toEqual([]);
+    controller.stop();
+    expect(fixture.navigation.stop).toHaveBeenCalledTimes(1);
+
+    fixture.setUrl('https://x.com/home');
+    fixture.options.settingsRuntime.getSettings.mockReturnValue({});
+    expect(controller.start()).toEqual([]);
+    expect(controller.isActive()).toBe(true);
+    expect(controller.getPlans().map(({ source }) => source)).toEqual(['timeline']);
+    expect(fixture.options.navigationObserverFactory).toHaveBeenCalledTimes(2);
+    controller.stop();
+  });
+
+  it.each(['subscription', 'observer construction'])(
+    'prevents the second profile candidate after stop during first-candidate %s',
+    (stage) => {
+      const fixture = setup('https://x.com/openai');
+      let controller;
+      if (stage === 'subscription') {
+        fixture.options.settingsRuntime.subscribe.mockImplementation(() => {
+          controller.stop();
+          return vi.fn();
+        });
+      } else {
+        fixture.options.observerFactory = vi.fn(() => {
+          controller.stop();
+          return { observe: vi.fn(), disconnect: vi.fn() };
+        });
+      }
+      controller = createXAccountTargetRouteSessionController(new FakeDocument(), fixture.options);
+      expect(controller.start()).toEqual([]);
+      expect(controller.isActive()).toBe(false);
+      expect(fixture.options.settingsRuntime.getSettings).toHaveBeenCalledTimes(1);
+      expect(fixture.options.settingsRuntime.subscribe).toHaveBeenCalledTimes(1);
+      if (stage === 'observer construction') {
+        expect(fixture.options.observerFactory).toHaveBeenCalledTimes(1);
+      }
+      expect(fixture.options.onError).not.toHaveBeenCalled();
+      expect(controller.getRoute()).toBeNull();
+      expect(controller.getPlans()).toEqual([]);
+      expect(fixture.navigation.stop).toHaveBeenCalledTimes(1);
+      controller.stop();
+      expect(fixture.navigation.stop).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('discards transaction-wide candidate errors when a later initial candidate fails', () => {
     const fixture = setup('https://x.com/openai');
     let settingsReads = 0;

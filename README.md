@@ -196,6 +196,11 @@ before their startup call, final stop still cleans them before the broker, and e
 record states prevent callbacks from rolled-back or retired sessions reaching a later
 route or lifecycle. Candidate errors remain buffered across the complete route transaction
 and are forwarded only after every addition succeeds and the desired route commits.
+Each reconciliation retains its own candidate ownership until the synchronous transaction
+unwinds, so reentrant final stop prevents later candidates and adopts in-progress cleanup.
+Record-scoped cleanup attribution preserves nested cleanup failures while navigation stops
+first, every session stops exactly once, and the broker stops last. Pending compatible
+consumers can therefore transfer between route sessions without aborting the shared request.
 
 These boundaries remain isolated: the page entrypoint does not install the signal, the
 page script is not injected, and the content script starts neither the observer nor the

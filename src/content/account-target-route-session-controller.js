@@ -78,11 +78,10 @@ export function createXAccountTargetRouteSessionController(root, options) {
   let route = null;
   let plans = EMPTY;
   let records = null;
-  let candidates = null;
   let reconciling = false;
   let pendingUrl = null;
-  let cleanupContext = null;
-  let deferredStop = null;
+  let transaction = null;
+  let finalStop = null;
 
   const report = (error) => { try { dependencies.onError(error); } catch { /* silent boundary */ } };
   const current = (lifecycle) => active && generation === lifecycle;
@@ -93,45 +92,55 @@ export function createXAccountTargetRouteSessionController(root, options) {
   };
   const plannerOptions = () => (dependencies.hasBaseUrl ? { baseUrl: dependencies.baseUrl } : {});
 
-  const createRecord = (plan, lifecycle, expectedBroker) => {
+  const transactionCurrent = (candidate) => current(candidate.lifecycle)
+    && transaction === candidate && !candidate.claimed && broker === candidate.broker;
+
+  const createRecord = (plan, candidateTransaction) => {
     let session = null;
+    const record = {
+      plan, session: null, state: 'constructing', pendingErrors: [], cleanup: null,
+    };
+    candidateTransaction.owned.add(record);
+    candidateTransaction.added.push(record);
     const sessionOptions = Object.assign(Object.create(null), {
       source: plan.source,
       settingsRuntime: dependencies.settingsRuntime,
       observerFactory: dependencies.observerFactory,
-      loadAboutAccountPayload: expectedBroker.loadAboutAccountPayload,
+      loadAboutAccountPayload: candidateTransaction.broker.loadAboutAccountPayload,
       abortControllerFactory: dependencies.consumerAbortControllerFactory,
       onError: (error) => {
-        if (cleanupContext !== null && cleanupContext.records.has(record)) cleanupContext.failed = true;
+        if (record.cleanup !== null) record.cleanup.failed = true;
         else if (record.state === 'starting' || record.state === 'candidate') {
           record.pendingErrors.push(error);
-        } else if (current(lifecycle) && broker === expectedBroker
+        } else if (current(candidateTransaction.lifecycle)
+          && broker === candidateTransaction.broker
           && record.state === 'committed' && records?.includes(record)) report(error);
       },
     });
     if (hasOwn(plan, 'baseUrl')) sessionOptions.baseUrl = plan.baseUrl;
-    const record = { plan, session: null, state: 'candidate', pendingErrors: [] };
     session = createXAccountTargetSession(plan.root, sessionOptions);
     record.session = session;
-    candidates.add(record);
+    if (record.state === 'constructing') record.state = 'candidate';
     return record;
   };
 
   const cleanRecords = (cleanupRecords) => {
-    const owned = cleanupRecords.filter((record) => !['retired', 'final-stop'].includes(record.state));
-    const context = { records: new Set(owned), failed: false };
-    cleanupContext = context;
+    const owned = cleanupRecords.filter((record) => record.state !== 'retired');
+    const context = { failed: false };
     for (let index = owned.length - 1; index >= 0; index -= 1) {
       const record = owned[index];
-      if (record.state === 'retired') continue;
+      if (record.state === 'retired' || record.state === 'final-stop') continue;
+      if (record.state === 'retiring') continue;
       record.state = 'retiring';
-      try { record.session.stop(); } catch { context.failed = true; }
+      record.cleanup = context;
+      if (record.session !== null) {
+        try { record.session.stop(); } catch { context.failed = true; }
+      }
+      record.cleanup = null;
       record.state = 'retired';
       record.pendingErrors.length = 0;
-      candidates?.delete(record);
     }
-    cleanupContext = null;
-    context.records.clear();
+    if (finalStop !== null) finalStop.failed ||= context.failed;
     return context.failed;
   };
 
@@ -140,18 +149,26 @@ export function createXAccountTargetRouteSessionController(root, options) {
     const nextRoute = classifyXRoute(url);
     const nextPlans = createXAccountTargetSessionPlans(root, nextRoute, plannerOptions());
     const previous = records ?? [];
+    const candidateTransaction = {
+      lifecycle,
+      broker: transactionBroker,
+      claimed: false,
+      added: [],
+      owned: new Set(previous),
+    };
+    transaction = candidateTransaction;
     const unused = new Set(previous);
     const desired = [];
-    const added = [];
     try {
       for (const plan of nextPlans) {
+        if (!transactionCurrent(candidateTransaction)) return false;
         const reusable = previous.find((record) => unused.has(record) && samePlan(record.plan, plan));
         if (reusable !== undefined) {
           unused.delete(reusable);
           desired.push(reusable);
         } else {
-          const candidate = createRecord(plan, lifecycle, transactionBroker);
-          added.push(candidate);
+          const candidate = createRecord(plan, candidateTransaction);
+          if (!transactionCurrent(candidateTransaction)) return false;
           desired.push(candidate);
           candidate.state = 'starting';
           try {
@@ -166,33 +183,34 @@ export function createXAccountTargetRouteSessionController(root, options) {
           } else {
             candidate.pendingErrors.length = 0;
           }
+          if (!transactionCurrent(candidateTransaction)) return false;
         }
       }
     } catch (error) {
-      cleanRecords(added);
+      if (candidateTransaction.claimed || !current(lifecycle)) return false;
+      cleanRecords(candidateTransaction.added);
+      if (!transactionCurrent(candidateTransaction)) return false;
       if (startup) throw error;
       report(new Error('Unable to reconcile X account target route'));
       return false;
     }
-    if (!current(lifecycle)) {
-      cleanRecords(added);
-      return false;
-    }
+    if (!transactionCurrent(candidateTransaction)) return false;
     for (let index = 0; index < desired.length; index += 1) {
       const record = desired[index];
       record.plan = nextPlans[index];
       record.state = 'committed';
-      candidates.delete(record);
     }
     route = nextRoute;
     plans = nextPlans;
     records = desired;
     const obsolete = previous.filter((record) => unused.has(record));
     const failed = cleanRecords(obsolete);
-    if (failed && !startup) report(new Error('Unable to reconcile X account target route'));
+    if (failed && !startup && transactionCurrent(candidateTransaction)) {
+      report(new Error('Unable to reconcile X account target route'));
+    }
     const mayForwardCandidateErrors = !failed && pendingUrl === null
-      && current(lifecycle) && broker === transactionBroker;
-    for (const record of added) {
+      && transactionCurrent(candidateTransaction);
+    for (const record of candidateTransaction.added) {
       const buffered = record.pendingErrors.splice(0);
       if (!mayForwardCandidateErrors || record.state !== 'committed'
         || !records.includes(record)) continue;
@@ -205,6 +223,14 @@ export function createXAccountTargetRouteSessionController(root, options) {
     return true;
   };
 
+  const releaseTransaction = () => {
+    if (transaction !== null && !transaction.claimed) {
+      transaction.added.length = 0;
+      transaction.owned.clear();
+    }
+    transaction = null;
+  };
+
   const processUrl = (url, lifecycle, startup = false) => {
     if (reconciling) { pendingUrl = url; return; }
     reconciling = true;
@@ -212,9 +238,15 @@ export function createXAccountTargetRouteSessionController(root, options) {
     try {
       while (current(lifecycle) && next !== null) {
         pendingUrl = null;
-        if (startup) applyUrl(next, lifecycle, true);
-        else {
-          try { applyUrl(next, lifecycle); } catch { report(new Error('Unable to reconcile X account target route')); }
+        try {
+          if (startup) applyUrl(next, lifecycle, true);
+          else {
+            try { applyUrl(next, lifecycle); } catch {
+              if (current(lifecycle)) report(new Error('Unable to reconcile X account target route'));
+            }
+          }
+        } finally {
+          releaseTransaction();
         }
         next = pendingUrl;
         startup = false;
@@ -222,10 +254,8 @@ export function createXAccountTargetRouteSessionController(root, options) {
     } finally {
       pendingUrl = null;
       reconciling = false;
-      if (deferredStop !== null) {
-        const cleanup = deferredStop;
-        deferredStop = null;
-        cleanup.finish();
+      if (finalStop !== null && !finalStop.finished) {
+        finalStop.finish();
       }
     }
   };
@@ -236,13 +266,13 @@ export function createXAccountTargetRouteSessionController(root, options) {
     let createdBroker = null;
     let createdNavigation = null;
     let createdNavigationMethods = null;
-    active = true; generation = lifecycle; records = []; candidates = new Set();
+    active = true; generation = lifecycle; records = [];
     try {
       createdBroker = createXAboutAccountPayloadBroker({
         loadPayload: dependencies.loadPayload,
         abortControllerFactory: dependencies.brokerAbortControllerFactory,
         onError: (error) => {
-          if (cleanupContext !== null) cleanupContext.failed = true;
+          if (finalStop !== null && finalStop.broker === createdBroker) finalStop.failed = true;
           else if (current(lifecycle) && broker === createdBroker) report(error);
         },
       });
@@ -252,7 +282,9 @@ export function createXAccountTargetRouteSessionController(root, options) {
         version: ACCOUNT_TARGET_ROUTE_SESSION_CONTROLLER_VERSION,
         onNavigate: (url) => { if (current(lifecycle)) processUrl(url, lifecycle); },
         onError: (error) => {
-          if (cleanupContext !== null) cleanupContext.failed = true;
+          if (finalStop !== null && finalStop.navigation === createdNavigation) {
+            finalStop.failed = true;
+          }
           else if (current(lifecycle)) report(error);
         },
       });
@@ -277,26 +309,15 @@ export function createXAccountTargetRouteSessionController(root, options) {
       return getTargets();
     } catch (error) {
       active = false; generation += 1;
-      const createdRecords = [...(records ?? []), ...(candidates ?? [])];
+      const createdRecords = records ?? [];
       broker = null; navigationObserver = null; navigationMethods = null;
       route = null; plans = EMPTY; records = null;
-      candidates = null;
       pendingUrl = null; reconciling = false;
-      const context = { records: new Set(createdRecords), failed: false };
-      cleanupContext = context;
-      for (let index = createdRecords.length - 1; index >= 0; index -= 1) {
-        const record = createdRecords[index];
-        if (record.state === 'retired') continue;
-        record.state = 'retiring';
-        try { record.session.stop(); } catch { /* preserve */ }
-        record.state = 'retired';
-        record.pendingErrors.length = 0;
-      }
+      cleanRecords(createdRecords);
       if (createdNavigationMethods !== null) {
         try { Reflect.apply(createdNavigationMethods.stop, createdNavigation, []); } catch { /* preserve */ }
       }
       if (createdBroker !== null) { try { createdBroker.stop(); } catch { /* preserve */ } }
-      cleanupContext = null;
       throw error;
     }
   };
@@ -308,36 +329,56 @@ export function createXAccountTargetRouteSessionController(root, options) {
     const oldNavigationMethods = navigationMethods;
     const oldBroker = broker;
     const oldRecords = records;
-    const oldCandidates = [...candidates];
+    const claimedTransaction = transaction;
+    if (claimedTransaction !== null) claimedTransaction.claimed = true;
+    const cleanupRecords = [...oldRecords];
+    if (claimedTransaction !== null) {
+      for (const record of claimedTransaction.owned) {
+        if (!cleanupRecords.includes(record)) cleanupRecords.push(record);
+      }
+    }
     active = false; generation += 1;
     navigationObserver = null; navigationMethods = null;
     broker = null; route = null; plans = EMPTY; records = null;
-    candidates = null;
     pendingUrl = null;
-    const cleanupRecords = [...oldRecords, ...oldCandidates]
-      .filter((record, index, all) => all.indexOf(record) === index && record.state !== 'retired');
-    for (const record of cleanupRecords) record.state = 'final-stop';
-    const context = { records: new Set(cleanupRecords), failed: false };
-    cleanupContext = context;
+    const context = {
+      broker: oldBroker,
+      navigation: oldNavigation,
+      failed: false,
+      finished: false,
+      finish: null,
+    };
+    finalStop = context;
+    for (const record of cleanupRecords) {
+      if (!['retiring', 'retired'].includes(record.state)) record.state = 'final-stop';
+      record.pendingErrors.length = 0;
+    }
     try { Reflect.apply(oldNavigationMethods.stop, oldNavigation, []); } catch { context.failed = true; }
-    cleanupContext = null;
-    const finish = () => {
-      cleanupContext = context;
+    context.finish = () => {
+      if (context.finished) return;
+      context.finished = true;
       for (let index = cleanupRecords.length - 1; index >= 0; index -= 1) {
         const record = cleanupRecords[index];
-        if (record.state === 'retired') continue;
+        if (record.state === 'retired' || record.state === 'retiring') continue;
         record.state = 'retiring';
-        try { record.session.stop(); } catch { context.failed = true; }
+        record.cleanup = context;
+        if (record.session !== null) {
+          try { record.session.stop(); } catch { context.failed = true; }
+        }
+        record.cleanup = null;
         record.state = 'retired';
         record.pendingErrors.length = 0;
       }
       try { oldBroker.stop(); } catch { context.failed = true; }
-      cleanupContext = null;
-      context.records.clear();
+      if (claimedTransaction !== null) {
+        claimedTransaction.added.length = 0;
+        claimedTransaction.owned.clear();
+      }
+      cleanupRecords.length = 0;
+      finalStop = null;
       if (context.failed) report(new Error('Unable to stop X account target route session controller'));
     };
-    if (wasReconciling) deferredStop = { finish };
-    else finish();
+    if (!wasReconciling) context.finish();
   };
   const reconcile = () => {
     if (!active) throw new TypeError('account target route session controller is not active');

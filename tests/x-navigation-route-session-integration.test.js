@@ -8,6 +8,12 @@ import { FakeDocument } from './helpers/fake-dom.js';
 import { createFakeObserverFactory } from './helpers/fake-mutation-observer.js';
 import { createFakeAbortController } from './helpers/fake-abort-controller.js';
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((accept) => { resolve = accept; });
+  return { promise, resolve };
+}
+
 it('connects an explicitly installed page signal to explicit content observation', () => {
   const listeners = new Map();
   const document = {
@@ -122,4 +128,80 @@ it('runs real navigation, routing, brokerage, sessions, parsing, and presentatio
   global.history.pushState({}, '', '/openai');
   stalePopstate();
   expect(controller.getRoute()).toBeNull();
+});
+
+it('transfers one real pending broker request before retiring the old route consumer', async () => {
+  const listeners = new Map();
+  const eventDocument = {
+    addEventListener: (type, listener) => listeners.set(`document:${type}`, listener),
+    removeEventListener: (type, listener) => {
+      if (listeners.get(`document:${type}`) === listener) listeners.delete(`document:${type}`);
+    },
+    dispatchEvent: (event) => listeners.get(`document:${event.type}`)?.(event),
+  };
+  const global = {
+    location: { href: 'https://x.com/openai/status/1' }, document: eventDocument,
+    history: {
+      pushState(state, title, url) { global.location.href = new URL(url, global.location.href).href; },
+      replaceState(state, title, url) { global.location.href = new URL(url, global.location.href).href; },
+    },
+    Event: class Event { constructor(type) { this.type = type; } },
+    addEventListener: (type, listener) => listeners.set(`global:${type}`, listener),
+    removeEventListener: (type, listener) => {
+      if (listeners.get(`global:${type}`) === listener) listeners.delete(`global:${type}`);
+    },
+  };
+  const root = new FakeDocument();
+  const tweet = root.createElement('article');
+  tweet.setAttribute('data-testid', 'tweet');
+  const name = root.createElement('div');
+  name.setAttribute('data-testid', 'User-Name');
+  const link = root.createElement('a');
+  link.setAttribute('href', '/openai');
+  name.appendChild(link);
+  tweet.appendChild(name);
+  root.appendChild(tweet);
+  const lookup = deferred();
+  const sharedControllers = [];
+  const consumerControllers = [];
+  const loadPayload = vi.fn(() => lookup.promise);
+  const controller = createXAccountTargetRouteSessionController(root, {
+    settingsRuntime: { getSettings: () => ({}), subscribe: () => () => {} },
+    observerFactory: createFakeObserverFactory().factory,
+    loadPayload,
+    brokerAbortControllerFactory: () => {
+      const value = createFakeAbortController();
+      sharedControllers.push(value);
+      return value;
+    },
+    consumerAbortControllerFactory: () => {
+      const value = createFakeAbortController();
+      consumerControllers.push(value);
+      return value;
+    },
+    navigationObserverFactory: ({ onNavigate, onError }) => createXNavigationObserver(
+      global, { onNavigate, onError },
+    ),
+    onError: vi.fn(),
+  });
+  const signal = installXNavigationSignal(global);
+  controller.start();
+  expect(controller.getPlans().map(({ source }) => source)).toEqual(['reply']);
+  expect(loadPayload).toHaveBeenCalledTimes(1);
+  expect(consumerControllers).toHaveLength(1);
+  global.history.pushState({}, '', '/home');
+  expect(controller.getPlans().map(({ source }) => source)).toEqual(['timeline']);
+  expect(loadPayload).toHaveBeenCalledTimes(1);
+  expect(consumerControllers).toHaveLength(2);
+  expect(consumerControllers[0].signal).not.toBe(consumerControllers[1].signal);
+  expect(sharedControllers[0].abortCount).toBe(0);
+  lookup.resolve({
+    data: { user_result_by_screen_name: { result: { about_profile: { account_based_in: 'Japan' } } } },
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(findLocationBadge(name)).not.toBeNull();
+  controller.stop();
+  signal.stop();
+  expect(findLocationBadge(name)).toBeNull();
 });
