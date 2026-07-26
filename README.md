@@ -50,11 +50,24 @@ request, and DOM state is cleared when processing stops.
 
 The processor now uses an ownership-safe version 1 account-action renderer to apply and clean up reversible `show`, `highlight`, and `hide` decisions on explicitly supplied account containers. A single `data-x-region-block-account-action` attribute represents highlight or hide, while show is represented by its absence. Minimal manifest-loaded CSS highlights with a non-layout-changing outline and hides only through the exact owned attribute selector; it has no effect until the processor applies a recognized value. Location badges continue to render for every action. Profile actions currently apply only to the profile surface container returned by the existing selector policy.
 
-The coordinator has no real X transport or hardcoded query ID, reads no
-authentication data, and is not connected to content-script startup. About Account request transport, query-ID discovery,
-memory-only authorization handling, live processor startup, route-aware
-surface orchestration, badge styling, blocking
+An isolated version 1 account-target session now composes one explicitly chosen
+root and one canonical source with an already-started settings runtime, the
+observer, the processor, and dependency-injected location loading. It
+coordinates initial scanning, mutation processing, settings reevaluation,
+manual rescanning, cleanup, and restart, with lifecycle-generation guards that
+ignore stale callbacks. The session never starts or stops the settings runtime
+and is not connected to content-script startup. The caller must choose the root
+and source; route detection and root selection remain unimplemented. Timeline
+and reply intentionally continue to share the fixed tweet selector.
+
+The coordinator and session have no real X transport or hardcoded query ID, read no
+authentication data, and are not connected to content-script startup. About Account request transport, query-ID discovery,
+memory-only authorization handling, live content-script session startup,
+route-aware root and source orchestration, cross-session request deduplication,
+badge styling, blocking
 live X content, and end-to-end browser verification remain unimplemented.
+There is no cross-session cache. Live X layout compatibility and end-to-end
+browser behavior remain unverified.
 
 The pure shared models include canonical X account-handle normalization and safe
 parsing of X and Twitter account references, a canonical immutable filter-subject
@@ -99,4 +112,4 @@ Individual commands are available for linting (`npm run lint`), testing
 written to `dist/chrome` and `dist/firefox`; each generated directory contains
 its own root `manifest.json`.
 
-Live X layout compatibility and end-to-end browser behavior remain unverified. This repository is not production-ready. No real About Account transport, query-ID discovery, memory-only authorization handling, live observer and processor startup, route-aware surface orchestration, badge styling, or end-to-end browser verification is implemented. No authentication handling or persistent account/location storage exists.
+Live X layout compatibility and end-to-end browser behavior remain unverified. This repository is not production-ready. No real About Account transport, query-ID discovery, memory-only authorization handling, live content-script session startup, route-aware root and source orchestration, cross-session request deduplication, badge styling, or end-to-end browser verification is implemented. No authentication handling or persistent account/location storage exists.
