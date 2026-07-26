@@ -63,11 +63,28 @@ and reply intentionally continue to share the fixed tweet selector.
 The coordinator and session have no real X transport or hardcoded query ID, read no
 authentication data, and are not connected to content-script startup. About Account request transport, query-ID discovery,
 memory-only authorization handling, live content-script session startup,
-route-aware root and source orchestration, cross-session request deduplication,
+route-aware root and source orchestration, broker-to-session production wiring,
 badge styling, blocking
 live X content, and end-to-end browser verification remain unimplemented.
 There is no cross-session cache. Live X layout compatibility and end-to-end
 browser behavior remain unverified.
+
+An isolated version 1 X About Account payload broker now provides active-only
+cross-session deduplication by canonical handle and account ID. It gives each
+consumer an independent promise and cancellation path, uses a source-neutral
+identity for the dependency-injected underlying request, and cancels that shared
+request only after its final consumer leaves. Entries are removed immediately on
+resolution, rejection, final cancellation, or stop; no resolved payload or parsed
+location cache is retained. Future orchestration must start one broker, pass its
+loader to sessions, stop all sessions, and stop the broker last.
+
+The broker performs no X request, hardcodes no query ID, and reads no authentication
+data. It is not connected to content-script startup, sessions are not automatically
+connected to it, and route/root orchestration remains unimplemented. The real About
+Account transport, query-ID discovery, memory-only authorization handling, live
+content-script startup, route-aware root/source orchestration, broker-to-session
+production wiring, badge styling, and end-to-end browser verification remain
+unimplemented. Live X behavior remains unverified.
 
 The pure shared models include canonical X account-handle normalization and safe
 parsing of X and Twitter account references, a canonical immutable filter-subject
@@ -112,4 +129,4 @@ Individual commands are available for linting (`npm run lint`), testing
 written to `dist/chrome` and `dist/firefox`; each generated directory contains
 its own root `manifest.json`.
 
-Live X layout compatibility and end-to-end browser behavior remain unverified. This repository is not production-ready. No real About Account transport, query-ID discovery, memory-only authorization handling, live content-script session startup, route-aware root and source orchestration, cross-session request deduplication, badge styling, or end-to-end browser verification is implemented. No authentication handling or persistent account/location storage exists.
+Live X layout compatibility and end-to-end browser behavior remain unverified. This repository is not production-ready. No real About Account transport, query-ID discovery, memory-only authorization handling, live content-script session startup, route-aware root and source orchestration, broker-to-session production wiring, badge styling, or end-to-end browser verification is implemented. No authentication handling or persistent account/location storage exists.
