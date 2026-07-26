@@ -4,8 +4,18 @@ export function createFakeAbortController(options = {}) {
   const signal = {
     aborted: false,
     addEventListener(type, listener, listenerOptions) {
-      if (options.failAdd) throw new Error('fake listener registration failure');
+      if (options.failAddBefore) throw new Error('fake listener registration failure');
       if (type === 'abort') listeners.set(listener, Boolean(listenerOptions?.once));
+      if (options.abortDuringAdd) {
+        signal.aborted = true;
+        if (options.notifyDuringAdd !== false) {
+          if (listeners.get(listener)) listeners.delete(listener);
+          listener.call(signal, { type: 'abort', target: signal });
+        }
+      }
+      if (options.failAdd || options.failAddAfter) {
+        throw new Error('fake listener registration failure');
+      }
     },
     removeEventListener(type, listener) {
       if (options.failRemove) throw new Error('fake listener removal failure');

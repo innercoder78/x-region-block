@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAccountIdentity } from '../src/shared/account-identity.js';
+import { ACCOUNT_IDENTITY_SOURCES } from '../src/shared/account-identity.js';
 import { ACCOUNT_TARGET_PROCESSOR_VERSION } from '../src/content/account-target-processor.js';
 import {
   createXAboutAccountPayloadBroker,
@@ -153,5 +154,134 @@ describe('X About Account payload broker', () => {
     await expect(factory.broker.loadAboutAccountPayload(
       identity(), context(createFakeAbortController().signal),
     )).rejects.toBe(factoryError);
+  });
+
+  it.each([
+    ['notifies synchronously', { abortDuringAdd: true }],
+    ['changes aborted without notification', { abortDuringAdd: true, notifyDuringAdd: false }],
+  ])('handles a signal that %s during listener registration', async (_label, signalOptions) => {
+    const { broker, loadPayload, controllers } = setup();
+    broker.start();
+    const signal = createFakeAbortController(signalOptions);
+    const consumer = broker.loadAboutAccountPayload(identity(), context(signal.signal));
+    await expect(consumer).rejects.toMatchObject({
+      name: 'AbortError', message: 'The operation was aborted',
+    });
+    expect(loadPayload).not.toHaveBeenCalled();
+    expect(signal.listenerCount).toBe(0);
+    expect(controllers[0].abortCount).toBe(1);
+    expect(broker.getInFlightCount()).toBe(0);
+  });
+
+  it.each([
+    ['before retaining a listener', { failAddBefore: true }],
+    ['after retaining a listener', { failAddAfter: true }],
+  ])('fully retires a first consumer when registration throws %s', async (_label, signalOptions) => {
+    const { broker, loadPayload, controllers } = setup();
+    broker.start();
+    const signal = createFakeAbortController(signalOptions);
+    const consumer = broker.loadAboutAccountPayload(identity(), context(signal.signal));
+    await expect(consumer).rejects.toThrow('fake listener registration failure');
+    expect(loadPayload).not.toHaveBeenCalled();
+    expect(signal.listenerCount).toBe(0);
+    expect(controllers[0].abortCount).toBe(1);
+    expect(broker.getInFlightCount()).toBe(0);
+  });
+
+  it('keeps an existing lookup alive when a joining consumer aborts during registration', async () => {
+    const { broker, loadPayload, pending, controllers } = setup();
+    broker.start();
+    const firstSignal = createFakeAbortController();
+    const first = broker.loadAboutAccountPayload(identity('profile'), context(firstSignal.signal));
+    const joiningSignal = createFakeAbortController({ abortDuringAdd: true });
+    const joining = broker.loadAboutAccountPayload(
+      identity('timeline'), context(joiningSignal.signal),
+    );
+    await expect(joining).rejects.toMatchObject({ name: 'AbortError' });
+    expect(loadPayload).toHaveBeenCalledTimes(1);
+    expect(controllers[0].abortCount).toBe(0);
+    expect(broker.getInFlightCount()).toBe(1);
+    pending.resolve('current');
+    await expect(first).resolves.toBe('current');
+    expect(firstSignal.listenerCount).toBe(0);
+  });
+
+  it('ignores stale completion after registration-time final cancellation', async () => {
+    const old = deferred();
+    const loadPayload = vi.fn(() => old.promise);
+    const { broker, controllers } = setup({ loadPayload });
+    broker.start();
+    const activeSignal = createFakeAbortController();
+    const active = broker.loadAboutAccountPayload(identity(), context(activeSignal.signal));
+    activeSignal.abort();
+    await expect(active).rejects.toMatchObject({ name: 'AbortError' });
+    old.resolve('stale');
+    await Promise.resolve();
+    expect(controllers[0].abortCount).toBe(1);
+    expect(broker.getInFlightCount()).toBe(0);
+  });
+
+  it('sanitizes several stopped entries and ignores their work after same-key restart', async () => {
+    const oldFirst = deferred();
+    const oldSecond = deferred();
+    const fresh = deferred();
+    const loadPayload = vi.fn()
+      .mockReturnValueOnce(oldFirst.promise)
+      .mockReturnValueOnce(oldSecond.promise)
+      .mockReturnValueOnce(fresh.promise);
+    const { broker, controllers } = setup({ loadPayload });
+    broker.start();
+    const oldSignalA = createFakeAbortController();
+    const oldSignalB = createFakeAbortController();
+    const stoppedA = broker.loadAboutAccountPayload(
+      identity('profile', 'first', '1'), context(oldSignalA.signal),
+    );
+    const stoppedB = broker.loadAboutAccountPayload(
+      identity('timeline', 'second', '2'), context(oldSignalB.signal),
+    );
+    broker.stop();
+    await expect(stoppedA).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(stoppedB).rejects.toMatchObject({ name: 'AbortError' });
+    expect(oldSignalA.listenerCount).toBe(0);
+    expect(oldSignalB.listenerCount).toBe(0);
+    expect(controllers.slice(0, 2).map(({ abortCount }) => abortCount)).toEqual([1, 1]);
+    expect(broker.getInFlightCount()).toBe(0);
+
+    broker.start();
+    const freshSignal = createFakeAbortController();
+    const current = broker.loadAboutAccountPayload(
+      identity('notification', 'first', '1'), context(freshSignal.signal),
+    );
+    oldFirst.resolve('old payload');
+    oldSecond.reject(new Error('old error'));
+    await Promise.resolve();
+    expect(broker.getInFlightCount()).toBe(1);
+    fresh.resolve('fresh payload');
+    await expect(current).resolves.toBe('fresh payload');
+    expect(loadPayload).toHaveBeenCalledTimes(3);
+    expect(controllers[2].abortCount).toBe(0);
+    expect(freshSignal.listenerCount).toBe(0);
+  });
+
+  it('shares every supported source but separates exact account IDs including null', () => {
+    const loadPayload = vi.fn(() => new Promise(() => {}));
+    const { broker } = setup({ loadPayload });
+    broker.start();
+    const consumers = ACCOUNT_IDENTITY_SOURCES.map((source) => broker.loadAboutAccountPayload(
+      identity(source, 'same', '10'), context(createFakeAbortController().signal),
+    ));
+    const differentId = broker.loadAboutAccountPayload(
+      identity('profile', 'same', '11'), context(createFakeAbortController().signal),
+    );
+    const nullId = broker.loadAboutAccountPayload(
+      identity('timeline', 'same', null), context(createFakeAbortController().signal),
+    );
+    expect(new Set(consumers).size).toBe(ACCOUNT_IDENTITY_SOURCES.length);
+    expect(loadPayload).toHaveBeenCalledTimes(3);
+    expect(broker.getInFlightCount()).toBe(3);
+    for (const consumer of consumers) consumer.catch(() => {});
+    differentId.catch(() => {});
+    nullId.catch(() => {});
+    broker.stop();
   });
 });

@@ -104,21 +104,33 @@ export function createXAboutAccountPayloadBroker(options) {
     return controller;
   }
 
+  function retireEntry(entry) {
+    if (entry.key !== null && entries.get(entry.key) === entry) entries.delete(entry.key);
+    entry.live = false;
+    const consumers = [...entry.consumers];
+    entry.consumers.clear();
+    const sharedController = entry.controller;
+    entry.key = null;
+    entry.generation = null;
+    entry.controller = null;
+    entry.promise = null;
+    entry.identity = null;
+    return { consumers, sharedController };
+  }
+
   function stop() {
     if (!active) return controller;
     active = false;
     generation += 1;
     const retired = entries;
     entries = new Map();
-    let failed = false;
+    const cleanup = [];
     for (const entry of retired.values()) {
-      entry.live = false;
-      const consumers = [...entry.consumers];
-      entry.consumers.clear();
-      const sharedController = entry.controller;
-      entry.controller = null;
-      entry.promise = null;
-      entry.identity = null;
+      cleanup.push(retireEntry(entry));
+    }
+    retired.clear();
+    let failed = false;
+    for (const { consumers, sharedController } of cleanup) {
       for (const consumer of consumers) {
         consumer.active = false;
         try { consumer.signal.removeEventListener('abort', consumer.listener); } catch { failed = true; }
@@ -130,7 +142,7 @@ export function createXAboutAccountPayloadBroker(options) {
       }
       try { sharedController.abort(); } catch { failed = true; }
     }
-    retired.clear();
+    cleanup.length = 0;
     if (failed) report(new Error('Unable to stop X About Account payload broker'));
     return controller;
   }
@@ -138,14 +150,7 @@ export function createXAboutAccountPayloadBroker(options) {
   function settle(entry, completingPromise, succeeded, value) {
     if (!active || entry.generation !== generation || !entry.live
       || entries.get(entry.key) !== entry || entry.promise !== completingPromise) return;
-    entries.delete(entry.key);
-    entry.live = false;
-    const consumers = [...entry.consumers];
-    entry.consumers.clear();
-    entry.controller = null;
-    entry.promise = null;
-    entry.identity = null;
-    entry.key = null;
+    const { consumers } = retireEntry(entry);
     let failed = false;
     for (const consumer of consumers) {
       if (!consumer.active) continue;
@@ -171,7 +176,7 @@ export function createXAboutAccountPayloadBroker(options) {
     const consumer = {
       active: true, signal, listener: null, resolve: resolvePromise, reject: rejectPromise,
     };
-    consumer.listener = () => {
+    function cancelConsumer() {
       if (!consumer.active) return;
       consumer.active = false;
       entry.consumers.delete(consumer);
@@ -185,26 +190,36 @@ export function createXAboutAccountPayloadBroker(options) {
       consumer.reject = null;
       reject(abortError());
       if (entry.live && entry.consumers.size === 0) {
-        entry.live = false;
-        if (entries.get(entry.key) === entry) entries.delete(entry.key);
-        const sharedController = entry.controller;
-        entry.controller = null;
-        entry.promise = null;
-        entry.identity = null;
-        entry.key = null;
+        const { sharedController } = retireEntry(entry);
         try { sharedController.abort(); } catch {
           report(new Error('Unable to cancel shared About Account lookup'));
         }
       }
-    };
+    }
+    consumer.listener = cancelConsumer;
+    entry.consumers.add(consumer);
     try {
       signal.addEventListener('abort', consumer.listener, { once: true });
-      entry.consumers.add(consumer);
+      if (consumer.active && signal.aborted) cancelConsumer();
     } catch (error) {
-      consumer.active = false;
-      consumer.signal = null;
-      consumer.listener = null;
-      rejectPromise(error);
+      if (consumer.active) {
+        consumer.active = false;
+        entry.consumers.delete(consumer);
+        try { signal.removeEventListener('abort', consumer.listener); } catch {
+          // Registration failure cleanup is best-effort and exposes no signal details.
+        }
+        consumer.signal = null;
+        consumer.listener = null;
+        consumer.resolve = null;
+        consumer.reject = null;
+        rejectPromise(error);
+        if (entry.live && entry.consumers.size === 0) {
+          const { sharedController } = retireEntry(entry);
+          try { sharedController.abort(); } catch {
+            report(new Error('Unable to cancel shared About Account lookup'));
+          }
+        }
+      }
     }
     return promise;
   }
@@ -241,16 +256,7 @@ export function createXAboutAccountPayloadBroker(options) {
     };
     entries.set(key, entry);
     const consumerPromise = addConsumer(entry, request.signal);
-    if (entry.consumers.size === 0) {
-      entries.delete(key);
-      entry.live = false;
-      entry.controller = null;
-      entry.identity = null;
-      try { sharedController.abort(); } catch {
-        report(new Error('Unable to cancel shared About Account lookup'));
-      }
-      return consumerPromise;
-    }
+    if (!entry.live || entry.consumers.size === 0) return consumerPromise;
     const underlyingContext = Object.freeze({
       version: X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION,
       signal: sharedController.signal,
