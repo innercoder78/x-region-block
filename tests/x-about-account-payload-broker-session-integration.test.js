@@ -43,7 +43,7 @@ function timelineRoot(handle) {
   document.appendChild(article);
   return { root: document, article, name };
 }
-function session(root, source, broker, settings, consumerControllers) {
+function session(root, source, broker, settings, consumerControllers, onError = vi.fn()) {
   return createXAccountTargetSession(root, {
     source,
     settingsRuntime: runtime(settings),
@@ -54,7 +54,7 @@ function session(root, source, broker, settings, consumerControllers) {
       consumerControllers.push(controller);
       return controller;
     },
-    onError: vi.fn(),
+    onError,
   });
 }
 
@@ -243,5 +243,43 @@ it('cancels pending real transport work and never presents a stale response', as
   expect(findLocationBadge(profile.root)).toBeNull();
   expect(getAccountAction(profile.root)).toBe('show');
   expect(broker.getInFlightCount()).toBe(0);
+  broker.stop();
+});
+
+it('normalizes a real transport failure through processor presentation and retries fresh', async () => {
+  const fetch = vi.fn(() => Promise.reject(new Error('private network detail')));
+  const createRequest = vi.fn((identity) => ({
+    url: `https://x.com/i/api/graphql/Injected_Failure_Id/UserByScreenName?${new URLSearchParams({
+      variables: JSON.stringify({ screen_name: identity.handle }),
+    })}`,
+    headers: { authorization: 'private auth', 'x-csrf-token': 'private csrf' },
+  }));
+  const transport = createXAboutAccountRequestTransport({ fetch, createRequest });
+  const broker = createXAboutAccountPayloadBroker({
+    loadPayload: transport.loadPayload,
+    abortControllerFactory: () => createFakeAbortController(),
+    onError: vi.fn(),
+  }).start();
+  const errors = [];
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const profile = profileRoot('OpenAI');
+    const current = session(profile.root, 'profile', broker, {}, [], (error) => {
+      errors.push(error.message);
+    });
+    current.start();
+    await settle();
+    await settle();
+    expect(findLocationBadge(profile.root).textContent).toBe('🌐 Location unavailable');
+    expect(getAccountAction(profile.root)).toBe('show');
+    expect(broker.getInFlightCount()).toBe(0);
+    current.stop();
+    expect(findLocationBadge(profile.root)).toBeNull();
+    expect(getAccountAction(profile.root)).toBe('show');
+  }
+  expect(errors).toEqual(['Unable to load account location', 'Unable to load account location']);
+  expect(JSON.stringify(errors)).not.toMatch(/private|auth|csrf|Injected/);
+  expect(createRequest).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(2);
   broker.stop();
 });

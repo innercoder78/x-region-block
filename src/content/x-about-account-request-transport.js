@@ -179,6 +179,18 @@ function prepareDescriptor(descriptor, handle) {
   }
 }
 
+function ownInvalidThenable(value) {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return false;
+  let then;
+  try { then = value.then; } catch { throw new TypeError(DESCRIPTOR_ERROR); }
+  if (typeof then !== 'function') return false;
+  const discard = () => undefined;
+  try { then.call(value, discard, discard); } catch { /* Invalid metadata stays private. */ }
+  // Reading and invoking `then` here owns both outcomes without ever accepting
+  // asynchronous metadata; repeated callback attempts are harmless discards.
+  return true;
+}
+
 function captureResponse(response) {
   try {
     if (response === null || typeof response !== 'object') throw new TypeError();
@@ -234,7 +246,10 @@ export function createXAboutAccountRequestTransport(options) {
         ? abortError() : new Error('Unable to prepare X About Account request'));
     }
     let prepared;
-    try { prepared = prepareDescriptor(descriptor, identity.handle); } catch (error) {
+    try {
+      if (ownInvalidThenable(descriptor)) throw new TypeError(DESCRIPTOR_ERROR);
+      prepared = prepareDescriptor(descriptor, identity.handle);
+    } catch (error) {
       return Promise.reject(isAborted(signal) ? abortError() : error);
     }
     descriptor = null;
@@ -254,10 +269,21 @@ export function createXAboutAccountRequestTransport(options) {
       return Promise.reject(isAborted(signal)
         ? abortError() : new Error('X About Account request failed'));
     }
+    const ownedFetch = Promise.resolve(fetchResult).then(
+      (response) => ({ succeeded: true, response }),
+      () => ({ succeeded: false }),
+    );
     prepared = null;
-    if (isAborted(signal)) return Promise.reject(abortError());
+    fetchResult = null;
+    if (isAborted(signal)) {
+      return ownedFetch.then(() => { throw abortError(); });
+    }
 
-    return Promise.resolve(fetchResult).then(async (response) => {
+    return ownedFetch.then(async (settlement) => {
+      if (!settlement.succeeded) {
+        throw isAborted(signal) ? abortError() : new Error('X About Account request failed');
+      }
+      const { response } = settlement;
       if (isAborted(signal)) throw abortError();
       let captured;
       try { captured = captureResponse(response); } catch (error) {
@@ -276,8 +302,6 @@ export function createXAboutAccountRequestTransport(options) {
       }
       if (isAborted(signal)) throw abortError();
       return payload;
-    }, () => {
-      throw isAborted(signal) ? abortError() : new Error('X About Account request failed');
     });
   }
 

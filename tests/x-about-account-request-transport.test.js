@@ -21,6 +21,12 @@ const setup = (overrides = {}) => {
   const createRequest = overrides.createRequest ?? vi.fn(() => ({ url: url(), headers: headers() }));
   return { fetch, createRequest, transport: createXAboutAccountRequestTransport({ fetch, createRequest }) };
 };
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+};
 
 describe('X About Account request transport API', () => {
   it('is versioned, frozen, exact, and lazy', () => {
@@ -66,6 +72,40 @@ describe('X About Account request transport API', () => {
 });
 
 describe('X About Account request transport requests', () => {
+  it('owns and rejects asynchronous descriptors without using eventual metadata', async () => {
+    const valid = { url: url(), headers: headers() };
+    const privateFailure = new Error('private descriptor failure');
+    const cases = [
+      () => Promise.resolve(valid),
+      () => Promise.reject(privateFailure),
+      () => ({ then(resolve) { resolve(valid); } }),
+      () => ({ then(resolve, reject) { reject(privateFailure); } }),
+      () => ({ then(resolve, reject) { resolve(valid); reject(privateFailure); } }),
+    ];
+    for (const makeDescriptor of cases) {
+      const current = setup({ createRequest: makeDescriptor });
+      const failure = await current.transport.loadPayload(identity(), context()).catch((error) => error);
+      expect(failure).toEqual(new TypeError('Invalid X About Account request descriptor'));
+      expect(failure.message).not.toContain('private descriptor failure');
+      expect(current.fetch).not.toHaveBeenCalled();
+    }
+    await Promise.resolve();
+  });
+
+  it('reads a descriptor then property once and normalizes a throwing getter', async () => {
+    let reads = 0;
+    const descriptor = Object.create(null);
+    Object.defineProperty(descriptor, 'then', { get() {
+      reads += 1;
+      throw new Error('private then failure');
+    } });
+    const current = setup({ createRequest: () => descriptor });
+    await expect(current.transport.loadPayload(identity(), context()))
+      .rejects.toEqual(new TypeError('Invalid X About Account request descriptor'));
+    expect(reads).toBe(1);
+    expect(current.fetch).not.toHaveBeenCalled();
+  });
+
   it('validates the public broker contract before dependencies', async () => {
     const { transport, fetch, createRequest } = setup();
     for (const invalidIdentity of [
@@ -352,6 +392,51 @@ describe('X About Account request transport response and cancellation boundaries
       Promise.reject().finally(() => jsonController.abort())
     ) }) });
     await expect(jsonSetup.transport.loadPayload(identity(), context(jsonController.signal)))
+      .rejects.toMatchObject({ name: 'AbortError', message: 'The operation was aborted' });
+  });
+
+  it.each(['reject', 'resolve'])('owns a fetch that aborts synchronously and later %ss', async (outcome) => {
+    const controller = createFakeAbortController();
+    const pending = deferred();
+    const responseGetter = vi.fn(() => true);
+    const returned = { status: 200, json: vi.fn() };
+    Object.defineProperty(returned, 'ok', { get: responseGetter });
+    const fetch = vi.fn(() => {
+      controller.abort();
+      return pending.promise;
+    });
+    const current = setup({ fetch });
+    const result = current.transport.loadPayload(identity(), context(controller.signal));
+    if (outcome === 'reject') pending.reject(new Error('private late network failure'));
+    else pending.resolve(returned);
+    await expect(result).rejects.toMatchObject({
+      name: 'AbortError', message: 'The operation was aborted',
+    });
+    expect(responseGetter).not.toHaveBeenCalled();
+    expect(returned.json).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('owns a rejected fetch returned during synchronous abort', async () => {
+    const controller = createFakeAbortController();
+    const fetch = vi.fn(() => {
+      controller.abort();
+      return Promise.reject(new Error('private immediate network failure'));
+    });
+    const current = setup({ fetch });
+    const failure = await current.transport.loadPayload(identity(), context(controller.signal))
+      .catch((error) => error);
+    expect(failure).toMatchObject({ name: 'AbortError', message: 'The operation was aborted' });
+    expect(failure.message).not.toContain('private');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('owns a throwing fetch thenable during synchronous abort', async () => {
+    const controller = createFakeAbortController();
+    const thenable = Object.create(null);
+    Object.defineProperty(thenable, 'then', { get() { throw new Error('private then failure'); } });
+    const current = setup({ fetch: () => { controller.abort(); return thenable; } });
+    await expect(current.transport.loadPayload(identity(), context(controller.signal)))
       .rejects.toMatchObject({ name: 'AbortError', message: 'The operation was aborted' });
   });
 });
