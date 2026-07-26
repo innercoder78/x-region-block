@@ -108,6 +108,7 @@ describe('X navigation signal', () => {
       const values = { ...originals };
       let assignedWrapper = false;
       let throwRead = false;
+      let originalWrites = 0;
       let failureEnabled = true;
       for (const property of ['pushState', 'replaceState']) {
         Object.defineProperty(global.history, property, {
@@ -122,8 +123,7 @@ describe('X navigation signal', () => {
               assignedWrapper = true;
               if (property === failingProperty && failureEnabled) throwRead = true;
             } else if (property === failingProperty) {
-              throwRead = false;
-              failureEnabled = false;
+              originalWrites += 1;
             }
           },
         });
@@ -132,11 +132,15 @@ describe('X navigation signal', () => {
         new Error('Unable to install X navigation signal'),
       );
       expect(assignedWrapper).toBe(true);
-      expect(global.history.pushState).toBe(originals.pushState);
-      expect(global.history.replaceState).toBe(originals.replaceState);
-      expect(global.history.pushState('safe')).toEqual({
+      expect(originalWrites).toBe(0);
+      expect(() => global.history[failingProperty]).toThrowError(new Error('readback'));
+      expect(Reflect.apply(values[failingProperty], global.history, ['safe'])).toEqual({
         receiver: global.history, args: ['safe'],
       });
+      expect(global.events).toHaveLength(0);
+      failureEnabled = false;
+      throwRead = false;
+      values[failingProperty] = originals[failingProperty];
       expect(installXNavigationSignal(global).isActive()).toBe(true);
     },
   );
@@ -151,5 +155,57 @@ describe('X navigation signal', () => {
       new Error('Unable to install X navigation signal'),
     );
     expect(global.history.pushState).toBe(original);
+  });
+
+  it.each(['pushState', 'replaceState'])(
+    'does not write an unverifiable page-owned %s accessor during stop',
+    (property) => {
+      const global = facade();
+      const other = property === 'pushState' ? 'replaceState' : 'pushState';
+      const originalOther = global.history[other];
+      const controller = installXNavigationSignal(global);
+      const retained = global.history[property];
+      let writes = 0;
+      Object.defineProperty(global.history, property, {
+        configurable: true,
+        get() { throw new Error('page getter'); },
+        set() { writes += 1; },
+      });
+      controller.stop();
+      expect(writes).toBe(0);
+      expect(() => global.history[property]).toThrowError(new Error('page getter'));
+      expect(global.history[other]).toBe(originalOther);
+      expect(Reflect.apply(retained, global.history, ['state', 'title'])).toEqual({
+        receiver: global.history, args: ['state', 'title'],
+      });
+      expect(global.events).toHaveLength(0);
+    },
+  );
+
+  it('continues rollback when the second assignment and first restoration fail', () => {
+    const global = facade();
+    const originalPush = global.history.pushState;
+    const originalReplace = global.history.replaceState;
+    let pushValue = originalPush;
+    Object.defineProperty(global.history, 'pushState', {
+      configurable: true,
+      get: () => pushValue,
+      set(value) {
+        if (value === originalPush) throw new Error('restore');
+        pushValue = value;
+      },
+    });
+    Object.defineProperty(global.history, 'replaceState', {
+      configurable: true,
+      get: () => originalReplace,
+      set() { throw new Error('install'); },
+    });
+    expect(() => installXNavigationSignal(global)).toThrowError(
+      new Error('Unable to install X navigation signal'),
+    );
+    expect(Reflect.apply(pushValue, global.history, ['safe'])).toEqual({
+      receiver: global.history, args: ['safe'],
+    });
+    expect(global.events).toHaveLength(0);
   });
 });

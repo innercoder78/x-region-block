@@ -14,9 +14,7 @@ function restore(history, property, wrapper, original, attempted) {
   try {
     current = history[property];
   } catch {
-    // A write-only or temporarily failing facade cannot be compared. Since this
-    // transaction assigned the property, make a best-effort rollback.
-    try { history[property] = original; } catch { /* continue rollback */ }
+    // Ownership cannot be proven, so an accessor-backed page method must not be written.
     return;
   }
   if (current === wrapper) {

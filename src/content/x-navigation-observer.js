@@ -41,6 +41,7 @@ export function createXNavigationObserver(globalScope, options) {
   let generation = 0;
   let documentListener = null;
   let popstateListener = null;
+  let registration = null;
   const report = (error) => { try { onError(error); } catch { /* silent boundary */ } };
   const readStartUrl = () => {
     const href = location.href;
@@ -61,18 +62,50 @@ export function createXNavigationObserver(globalScope, options) {
     generation = lifecycle;
     documentListener = deliver;
     popstateListener = deliver;
-    let documentAdded = false;
-    let globalAdded = false;
+    const currentRegistration = {
+      lifecycle,
+      documentMayBeRegistered: false,
+      globalMayBeRegistered: false,
+      documentRemoved: false,
+      globalRemoved: false,
+      complete: false,
+    };
+    registration = currentRegistration;
+    const stillCurrent = () => active && generation === lifecycle
+      && registration === currentRegistration;
+    const removeRegistered = () => {
+      if (currentRegistration.documentMayBeRegistered
+        && !currentRegistration.documentRemoved) {
+        currentRegistration.documentRemoved = true;
+        try { document.removeEventListener(X_NAVIGATION_EVENT_TYPE, deliver); } catch { /* rollback */ }
+      }
+      if (currentRegistration.globalMayBeRegistered && !currentRegistration.globalRemoved) {
+        currentRegistration.globalRemoved = true;
+        try { globalScope.removeEventListener('popstate', deliver); } catch { /* rollback */ }
+      }
+    };
+    const interrupted = () => {
+      removeRegistered();
+      if (registration === currentRegistration) registration = null;
+      documentListener = null;
+      popstateListener = null;
+      throw new Error('X navigation observer start was interrupted');
+    };
     try {
+      currentRegistration.documentMayBeRegistered = true;
       document.addEventListener(X_NAVIGATION_EVENT_TYPE, deliver);
-      documentAdded = true;
+      if (!stillCurrent()) interrupted();
+      currentRegistration.globalMayBeRegistered = true;
       globalScope.addEventListener('popstate', deliver);
-      globalAdded = true;
-      return readStartUrl();
+      if (!stillCurrent()) interrupted();
+      const href = readStartUrl();
+      if (!stillCurrent()) interrupted();
+      currentRegistration.complete = true;
+      return href;
     } catch (error) {
-      active = false; generation += 1;
-      if (documentAdded) { try { document.removeEventListener(X_NAVIGATION_EVENT_TYPE, deliver); } catch { /* preserve */ } }
-      if (globalAdded) { try { globalScope.removeEventListener('popstate', deliver); } catch { /* preserve */ } }
+      if (stillCurrent()) { active = false; generation += 1; }
+      removeRegistered();
+      if (registration === currentRegistration) registration = null;
       documentListener = null; popstateListener = null;
       throw error;
     }
@@ -82,11 +115,23 @@ export function createXNavigationObserver(globalScope, options) {
     active = false; generation += 1;
     const oldDocument = documentListener;
     const oldPopstate = popstateListener;
+    const currentRegistration = registration;
     documentListener = null; popstateListener = null;
+    registration = null;
     let failed = false;
-    try { document.removeEventListener(X_NAVIGATION_EVENT_TYPE, oldDocument); } catch { failed = true; }
-    try { globalScope.removeEventListener('popstate', oldPopstate); } catch { failed = true; }
-    if (failed) report(new Error('Unable to stop X navigation observer'));
+    if (currentRegistration === null || (currentRegistration.documentMayBeRegistered
+      && !currentRegistration.documentRemoved)) {
+      if (currentRegistration !== null) currentRegistration.documentRemoved = true;
+      try { document.removeEventListener(X_NAVIGATION_EVENT_TYPE, oldDocument); } catch { failed = true; }
+    }
+    if (currentRegistration === null || (currentRegistration.globalMayBeRegistered
+      && !currentRegistration.globalRemoved)) {
+      if (currentRegistration !== null) currentRegistration.globalRemoved = true;
+      try { globalScope.removeEventListener('popstate', oldPopstate); } catch { failed = true; }
+    }
+    if (failed && (currentRegistration === null || currentRegistration.complete)) {
+      report(new Error('Unable to stop X navigation observer'));
+    }
   };
   const getCurrentUrl = () => {
     if (!active) throw new TypeError('X navigation observer is not active');

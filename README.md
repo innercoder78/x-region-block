@@ -176,9 +176,12 @@ Version 1 page-world navigation signaling can be installed explicitly to wrap
 single `x-region-block:navigation` DOM event with no detail. The installer owns and
 conditionally restores only its exact wrappers. Installation is transactional, and a
 wrapper retained behind a newer page wrapper remains a safe original-method delegate
-after stop while signaling stays disabled. Version 1 content-world navigation
+after stop while signaling stays disabled. If current history ownership cannot be read,
+the installer performs no restoration write rather than risk replacing a page-owned
+accessor. Version 1 content-world navigation
 observation listens for that event and native `popstate`, reads the live URL for each
-signal, and retains no raw URL after synchronous delivery.
+signal, and retains no raw URL after synchronous delivery. Registration-time lifecycle
+invalidation rolls back every listener that may have been installed before a clean retry.
 
 Version 1 of the dynamic account-target route-session controller classifies each
 explicit navigation URL and applies the existing route planner to an explicitly
@@ -191,7 +194,8 @@ retain only the latest navigation while synchronous reconciliation is in progres
 resolved payload or parsed location cache is introduced. Starting candidates are owned
 before their startup call, final stop still cleans them before the broker, and explicit
 record states prevent callbacks from rolled-back or retired sessions reaching a later
-route or lifecycle.
+route or lifecycle. Candidate errors remain buffered across the complete route transaction
+and are forwarded only after every addition succeeds and the desired route commits.
 
 These boundaries remain isolated: the page entrypoint does not install the signal, the
 page script is not injected, and the content script starts neither the observer nor the

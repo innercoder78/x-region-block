@@ -103,9 +103,10 @@ export function createXAccountTargetRouteSessionController(root, options) {
       abortControllerFactory: dependencies.consumerAbortControllerFactory,
       onError: (error) => {
         if (cleanupContext !== null && cleanupContext.records.has(record)) cleanupContext.failed = true;
-        else if (record.state === 'starting') record.pendingErrors.push(error);
-        else if (current(lifecycle) && broker === expectedBroker
-          && (record.state === 'candidate' || record.state === 'committed')) report(error);
+        else if (record.state === 'starting' || record.state === 'candidate') {
+          record.pendingErrors.push(error);
+        } else if (current(lifecycle) && broker === expectedBroker
+          && record.state === 'committed' && records?.includes(record)) report(error);
       },
     });
     if (hasOwn(plan, 'baseUrl')) sessionOptions.baseUrl = plan.baseUrl;
@@ -135,6 +136,7 @@ export function createXAccountTargetRouteSessionController(root, options) {
   };
 
   const applyUrl = (url, lifecycle, startup = false) => {
+    const transactionBroker = broker;
     const nextRoute = classifyXRoute(url);
     const nextPlans = createXAccountTargetSessionPlans(root, nextRoute, plannerOptions());
     const previous = records ?? [];
@@ -148,7 +150,7 @@ export function createXAccountTargetRouteSessionController(root, options) {
           unused.delete(reusable);
           desired.push(reusable);
         } else {
-          const candidate = createRecord(plan, lifecycle, broker);
+          const candidate = createRecord(plan, lifecycle, transactionBroker);
           added.push(candidate);
           desired.push(candidate);
           candidate.state = 'starting';
@@ -161,10 +163,6 @@ export function createXAccountTargetRouteSessionController(root, options) {
           }
           if (candidate.state === 'starting') {
             candidate.state = 'candidate';
-            const pendingErrors = candidate.pendingErrors.splice(0);
-            for (const error of pendingErrors) {
-              if (current(lifecycle)) report(error);
-            }
           } else {
             candidate.pendingErrors.length = 0;
           }
@@ -192,6 +190,18 @@ export function createXAccountTargetRouteSessionController(root, options) {
     const obsolete = previous.filter((record) => unused.has(record));
     const failed = cleanRecords(obsolete);
     if (failed && !startup) report(new Error('Unable to reconcile X account target route'));
+    const mayForwardCandidateErrors = !failed && pendingUrl === null
+      && current(lifecycle) && broker === transactionBroker;
+    for (const record of added) {
+      const buffered = record.pendingErrors.splice(0);
+      if (!mayForwardCandidateErrors || record.state !== 'committed'
+        || !records.includes(record)) continue;
+      for (const error of buffered) {
+        if (!current(lifecycle) || record.state !== 'committed'
+          || broker !== transactionBroker || !records.includes(record)) break;
+        report(error);
+      }
+    }
     return true;
   };
 

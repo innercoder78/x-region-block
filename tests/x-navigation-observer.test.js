@@ -132,7 +132,73 @@ describe('X navigation observer', () => {
     const observer = createXNavigationObserver(global, { onNavigate: vi.fn(), onError: vi.fn() });
     expect(() => observer.start()).toThrowError(new Error('registration'));
     expect(removeDocument).toHaveBeenCalledOnce();
-    expect(removeGlobal).not.toHaveBeenCalled();
+    expect(removeGlobal).toHaveBeenCalledOnce();
     expect(observer.isActive()).toBe(false);
+  });
+
+  it('rolls back when document registration synchronously stops the lifecycle', () => {
+    const global = facade();
+    let invokeDuringRegistration = true;
+    const addDocument = global.document.addEventListener;
+    global.document.addEventListener = function (type, listener) {
+      addDocument.call(this, type, listener);
+      if (invokeDuringRegistration) listener();
+    };
+    let observer;
+    observer = createXNavigationObserver(global, {
+      onNavigate: () => observer.stop(), onError: vi.fn(),
+    });
+    expect(() => observer.start()).toThrowError(
+      new Error('X navigation observer start was interrupted'),
+    );
+    expect(observer.isActive()).toBe(false);
+    expect(global.document.listeners.size).toBe(0);
+    expect(global.listeners.size).toBe(0);
+    invokeDuringRegistration = false;
+    expect(observer.start()).toBe(global.location.href);
+    expect(observer.isActive()).toBe(true);
+    observer.stop();
+  });
+
+  it('rolls back both listeners when popstate registration synchronously stops', () => {
+    const global = facade();
+    let invokeDuringRegistration = true;
+    const addGlobal = global.addEventListener;
+    global.addEventListener = function (type, listener) {
+      addGlobal.call(this, type, listener);
+      if (invokeDuringRegistration) listener();
+    };
+    let observer;
+    observer = createXNavigationObserver(global, {
+      onNavigate: () => observer.stop(), onError: vi.fn(),
+    });
+    expect(() => observer.start()).toThrowError(
+      new Error('X navigation observer start was interrupted'),
+    );
+    expect(global.document.listeners.size).toBe(0);
+    expect(global.listeners.size).toBe(0);
+    invokeDuringRegistration = false;
+    expect(observer.start()).toBe(global.location.href);
+    observer.stop();
+  });
+
+  it('contains synchronous delivery and error-boundary failures during registration', () => {
+    const global = facade();
+    const addDocument = global.document.addEventListener;
+    global.document.addEventListener = function (type, listener) {
+      addDocument.call(this, type, listener);
+      listener();
+    };
+    let observer;
+    observer = createXNavigationObserver(global, {
+      onNavigate: () => { throw new Error('delivery'); },
+      onError: () => { observer.stop(); throw new Error('boundary'); },
+    });
+    expect(() => observer.start()).toThrowError(
+      new Error('X navigation observer start was interrupted'),
+    );
+    expect(observer.isActive()).toBe(false);
+    expect(global.document.listeners.size).toBe(0);
+    expect(global.listeners.size).toBe(0);
   });
 });

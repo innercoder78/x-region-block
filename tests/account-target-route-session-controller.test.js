@@ -153,4 +153,120 @@ describe('dynamic account-target route sessions', () => {
     expect(controller.getRoute()).toBeNull();
     expect(controller.getPlans()).toEqual([]);
   });
+
+  it('discards transaction-wide candidate errors when a later initial candidate fails', () => {
+    const fixture = setup('https://x.com/openai');
+    let settingsReads = 0;
+    fixture.options.settingsRuntime.getSettings.mockImplementation(() => {
+      settingsReads += 1;
+      if (settingsReads === 2) throw new Error('private startup failure');
+      return {};
+    });
+    fixture.options.settingsRuntime.subscribe.mockImplementation((listener) => {
+      listener(null);
+      return vi.fn();
+    });
+    const controller = createXAccountTargetRouteSessionController(
+      new FakeDocument(), fixture.options,
+    );
+    expect(() => controller.start()).toThrowError(new Error('private startup failure'));
+    expect(fixture.options.onError).not.toHaveBeenCalled();
+    expect(controller.isActive()).toBe(false);
+    expect(controller.getRoute()).toBeNull();
+    expect(controller.getPlans()).toEqual([]);
+  });
+
+  it('reports only one generic error when a later active candidate fails', () => {
+    const fixture = setup('https://x.com/i/bookmarks');
+    const controller = createXAccountTargetRouteSessionController(
+      new FakeDocument(), fixture.options,
+    );
+    controller.start();
+    let settingsReads = 0;
+    fixture.options.settingsRuntime.getSettings.mockImplementation(() => {
+      settingsReads += 1;
+      if (settingsReads === 2) throw new Error('private reconciliation failure');
+      return {};
+    });
+    fixture.options.settingsRuntime.subscribe.mockImplementation((listener) => {
+      listener(null);
+      return vi.fn();
+    });
+    fixture.getObserverOptions().onNavigate('https://x.com/openai');
+    expect(fixture.options.onError).toHaveBeenCalledTimes(1);
+    expect(fixture.options.onError).toHaveBeenCalledWith(
+      new Error('Unable to reconcile X account target route'),
+    );
+    expect(controller.getRoute().type).toBe('unsupported');
+    expect(controller.getPlans()).toEqual([]);
+    expect(controller.isActive()).toBe(true);
+    fixture.options.settingsRuntime.getSettings.mockReturnValue({});
+    fixture.options.settingsRuntime.subscribe.mockImplementation(() => vi.fn());
+    fixture.setUrl('https://x.com/openai');
+    controller.reconcile();
+    expect(controller.getPlans().map(({ source }) => source)).toEqual(['profile', 'timeline']);
+    controller.stop();
+  });
+
+  it('reuses canonical sessions through the required multi-route transition sequence', () => {
+    const fixture = setup('https://x.com/home');
+    const controller = createXAccountTargetRouteSessionController(
+      new FakeDocument(), fixture.options,
+    );
+    controller.start();
+    expect(fixture.options.settingsRuntime.subscribe).toHaveBeenCalledTimes(1);
+    fixture.getObserverOptions().onNavigate('https://x.com/openai');
+    expect(controller.getPlans().map(({ source }) => source)).toEqual(['profile', 'timeline']);
+    expect(fixture.options.settingsRuntime.subscribe).toHaveBeenCalledTimes(2);
+    fixture.getObserverOptions().onNavigate('https://x.com/openai/with_replies');
+    expect(controller.getPlans().map(({ source }) => source)).toEqual(['profile', 'reply']);
+    expect(fixture.options.settingsRuntime.subscribe).toHaveBeenCalledTimes(3);
+    fixture.getObserverOptions().onNavigate('https://x.com/openai/status/1');
+    expect(controller.getPlans().map(({ source }) => source)).toEqual(['reply']);
+    expect(fixture.options.settingsRuntime.subscribe).toHaveBeenCalledTimes(3);
+    fixture.getObserverOptions().onNavigate('https://x.com/home');
+    expect(controller.getPlans().map(({ source }) => source)).toEqual(['timeline']);
+    expect(fixture.options.settingsRuntime.subscribe).toHaveBeenCalledTimes(4);
+    expect(fixture.options.navigationObserverFactory).toHaveBeenCalledTimes(1);
+    controller.stop();
+  });
+
+  it.each([
+    ['https://x.com/openai', 'https://x.com/anthropic'],
+    ['https://x.com/openai', 'https://x.com/openai/media'],
+    ['https://x.com/openai/status/1', 'https://x.com/openai/status/2'],
+    ['https://x.com/explore/tabs/news', 'https://x.com/explore/tabs/sports'],
+    ['https://x.com/search?q=one', 'https://x.com/search?q=two'],
+  ])('does no session work for policy-equivalent navigation %s to %s', (initial, next) => {
+    const fixture = setup(initial);
+    const controller = createXAccountTargetRouteSessionController(
+      new FakeDocument(), fixture.options,
+    );
+    controller.start();
+    const subscriptions = fixture.options.settingsRuntime.subscribe.mock.calls.length;
+    const observers = fixture.options.observerFactory.mock?.calls.length
+      ?? fixture.options.settingsRuntime.subscribe.mock.calls.length;
+    fixture.getObserverOptions().onNavigate(next);
+    expect(fixture.options.settingsRuntime.subscribe).toHaveBeenCalledTimes(subscriptions);
+    expect(fixture.options.observerFactory.mock?.calls.length ?? subscriptions).toBe(observers);
+    expect(fixture.options.navigationObserverFactory).toHaveBeenCalledTimes(1);
+    controller.stop();
+  });
+
+  it('replaces search with notification and cleans supported routes to unsupported', () => {
+    const fixture = setup('https://x.com/search?q=one');
+    const controller = createXAccountTargetRouteSessionController(
+      new FakeDocument(), fixture.options,
+    );
+    controller.start();
+    fixture.getObserverOptions().onNavigate('https://x.com/notifications');
+    expect(controller.getPlans().map(({ source }) => source)).toEqual(['notification']);
+    expect(fixture.options.settingsRuntime.subscribe).toHaveBeenCalledTimes(2);
+    fixture.getObserverOptions().onNavigate('https://x.com/i/bookmarks');
+    expect(controller.getPlans()).toEqual([]);
+    expect(controller.getTargets()).toEqual([]);
+    expect(controller.isActive()).toBe(true);
+    expect(fixture.navigation.stop).not.toHaveBeenCalled();
+    controller.stop();
+  });
 });

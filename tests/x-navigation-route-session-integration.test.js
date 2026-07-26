@@ -100,6 +100,10 @@ it('runs real navigation, routing, brokerage, sessions, parsing, and presentatio
   global.history.pushState({}, '', '/openai/with_replies');
   expect(controller.getPlans().map(({ source }) => source)).toEqual(['profile', 'reply']);
   expect(loadPayload).toHaveBeenCalledTimes(2);
+  global.history.pushState({}, '', '/openai/status/1');
+  expect(controller.getPlans().map(({ source }) => source)).toEqual(['reply']);
+  expect(controller.getTargets()).toHaveLength(1);
+  expect(loadPayload).toHaveBeenCalledTimes(2);
   global.history.replaceState({}, '', '/i/bookmarks');
   expect(controller.getRoute().type).toBe('unsupported');
   expect(controller.getTargets()).toEqual([]);
@@ -112,8 +116,10 @@ it('runs real navigation, routing, brokerage, sessions, parsing, and presentatio
   listeners.get('global:popstate')();
   expect(controller.getPlans().map(({ source }) => source)).toEqual(['timeline']);
   expect(loadPayload).toHaveBeenCalledTimes(3);
+  const stalePopstate = listeners.get('global:popstate');
   controller.stop();
   signal.stop();
   global.history.pushState({}, '', '/openai');
+  stalePopstate();
   expect(controller.getRoute()).toBeNull();
 });
