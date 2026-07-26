@@ -80,11 +80,31 @@ loader to sessions, stop all sessions, and stop the broker last.
 
 The broker performs no X request, hardcodes no query ID, and reads no authentication
 data. It is not connected to content-script startup, sessions are not automatically
-connected to it, and route/root orchestration remains unimplemented. The real About
-Account transport, query-ID discovery, memory-only authorization handling, live
+connected to it, and route/root orchestration remains unimplemented. Production About
+Account transport wiring, query-ID discovery, memory-only authorization handling, live
 content-script startup, route-aware root/source orchestration, broker-to-session
 production wiring, badge styling, and end-to-end browser verification remain
 unimplemented. Live X behavior remains unverified.
+
+An isolated version 1 About Account request transport now exposes a frozen,
+broker-compatible `loadPayload(identity, context)` loader. It obtains a complete
+request descriptor synchronously from its caller, strictly validates an X or Twitter
+`UserByScreenName` GraphQL endpoint, its account-bound JSON query parameters, and a
+closed header allowlist, and reconstructs the URL and headers before invoking only
+the injected fetch function. The GET uses included credentials, `no-store`, rejected
+redirects, and the broker's exact shared abort signal. Response and JSON failures are
+normalized at privacy-safe boundaries, while successful JSON is returned unchanged
+for the existing parser; the transport performs no response interpretation, caching,
+or persistence.
+
+The transport is deliberately not wired into production and cannot make a usable
+production request until a later memory-only boundary supplies a valid current
+request descriptor. Query-ID and request-template discovery, memory-only
+authorization acquisition, CSRF acquisition, guest-token acquisition,
+client-transaction-ID acquisition, production page/content bridging, production
+transport creation, production route-controller startup, automatic root acquisition,
+live X compatibility verification, and end-to-end Chrome and Firefox verification
+remain unimplemented. No live request template or authorization material is included.
 
 An isolated version 1 account-target session group now composes one shared
 broker with several caller-supplied explicit root/source session plans. It
