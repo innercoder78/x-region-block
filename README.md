@@ -201,6 +201,11 @@ unwinds, so reentrant final stop prevents later candidates and adopts in-progres
 Record-scoped cleanup attribution preserves nested cleanup failures while navigation stops
 first, every session stops exactly once, and the broker stops last. Pending compatible
 consumers can therefore transfer between route sessions without aborting the shared request.
+Navigation-observer creation has its own startup transaction: factory and reflective-method
+work is lifecycle-checked, navigation and error callbacks remain buffered until the observer
+starts and the initial route commits, and only the latest startup navigation is then applied.
+Reentrant final stop claims this startup work, adopts any safely stoppable returned observer,
+discards buffered callbacks, stops the observer before the broker, and starts no route session.
 
 These boundaries remain isolated: the page entrypoint does not install the signal, the
 page script is not injected, and the content script starts neither the observer nor the

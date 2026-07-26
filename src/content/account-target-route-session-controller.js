@@ -82,6 +82,8 @@ export function createXAccountTargetRouteSessionController(root, options) {
   let pendingUrl = null;
   let transaction = null;
   let finalStop = null;
+  let navigationStartup = null;
+  let navigationCallbackState = null;
 
   const report = (error) => { try { dependencies.onError(error); } catch { /* silent boundary */ } };
   const current = (lifecycle) => active && generation === lifecycle;
@@ -267,6 +269,37 @@ export function createXAccountTargetRouteSessionController(root, options) {
     let createdNavigation = null;
     let createdNavigationMethods = null;
     active = true; generation = lifecycle; records = [];
+    const startup = {
+      lifecycle,
+      broker: null,
+      observer: null,
+      methods: Object.create(null),
+      phase: 'broker',
+      claimed: false,
+      pendingUrl: null,
+      errors: [],
+    };
+    navigationStartup = startup;
+    navigationCallbackState = startup;
+    const startupCurrent = () => current(lifecycle) && navigationStartup === startup
+      && !startup.claimed && broker === startup.broker;
+    const discardStartupBuffers = () => {
+      startup.pendingUrl = null;
+      startup.errors.length = 0;
+    };
+    const finishClaimedStartup = () => {
+      discardStartupBuffers();
+      if (finalStop !== null) {
+        finalStop.navigation = startup.observer;
+        finalStop.navigationStop = startup.methods.stop ?? null;
+        finalStop.finish();
+      }
+      if (navigationStartup === startup) navigationStartup = null;
+      startup.observer = null;
+      startup.methods = null;
+      startup.broker = null;
+      return EMPTY;
+    };
     try {
       createdBroker = createXAboutAccountPayloadBroker({
         loadPayload: dependencies.loadPayload,
@@ -277,37 +310,86 @@ export function createXAccountTargetRouteSessionController(root, options) {
         },
       });
       broker = createdBroker;
+      startup.broker = createdBroker;
       createdBroker.start();
+      if (!startupCurrent()) return finishClaimedStartup();
+      startup.phase = 'factory';
       const observerOptions = Object.freeze({
         version: ACCOUNT_TARGET_ROUTE_SESSION_CONTROLLER_VERSION,
-        onNavigate: (url) => { if (current(lifecycle)) processUrl(url, lifecycle); },
-        onError: (error) => {
-          if (finalStop !== null && finalStop.navigation === createdNavigation) {
-            finalStop.failed = true;
+        onNavigate: (url) => {
+          if (startup.phase !== 'committed') {
+            if (!startup.claimed && navigationStartup === startup) startup.pendingUrl = url;
+          } else if (current(lifecycle) && navigationObserver === startup.observer) {
+            processUrl(url, lifecycle);
           }
-          else if (current(lifecycle)) report(error);
+        },
+        onError: (error) => {
+          if (startup.phase !== 'committed') {
+            if (!startup.claimed && navigationStartup === startup) startup.errors.push(error);
+          } else if (finalStop !== null && finalStop.navigation === startup.observer) {
+            finalStop.failed = true;
+          } else if (current(lifecycle) && navigationObserver === startup.observer) report(error);
         },
       });
-      createdNavigation = dependencies.navigationObserverFactory(observerOptions);
+      try {
+        createdNavigation = dependencies.navigationObserverFactory(observerOptions);
+      } catch (error) {
+        if (startup.claimed) return finishClaimedStartup();
+        throw error;
+      }
+      startup.observer = createdNavigation;
+      if (!startupCurrent()) {
+        try {
+          if (createdNavigation !== null && typeof createdNavigation === 'object'
+            && hasOwn(createdNavigation, 'stop')) startup.methods.stop = createdNavigation.stop;
+        } catch { /* Claimed startup cleanup is best effort. */ }
+        return finishClaimedStartup();
+      }
+      startup.phase = 'validation';
       try {
         if (createdNavigation === null || typeof createdNavigation !== 'object') throw new Error();
-        const methodKeys = ['start', 'stop', 'getCurrentUrl', 'isActive'];
-        if (methodKeys.some((key) => !hasOwn(createdNavigation, key))) throw new Error();
-        createdNavigationMethods = Object.fromEntries(
-          methodKeys.map((key) => [key, createdNavigation[key]]),
-        );
-        if (methodKeys.some((key) => typeof createdNavigationMethods[key] !== 'function')) {
-          throw new Error();
+        const methodKeys = ['stop', 'start', 'getCurrentUrl', 'isActive'];
+        createdNavigationMethods = Object.create(null);
+        for (const key of methodKeys) {
+          if (!hasOwn(createdNavigation, key)) throw new Error();
+          createdNavigationMethods[key] = createdNavigation[key];
+          startup.methods[key] = createdNavigationMethods[key];
+          if (typeof createdNavigationMethods[key] !== 'function') throw new Error();
+          if (!startupCurrent()) return finishClaimedStartup();
         }
       } catch {
+        if (startup.claimed) return finishClaimedStartup();
         throw new TypeError('navigationObserverFactory returned an invalid observer');
       }
+      if (!startupCurrent()) return finishClaimedStartup();
       navigationObserver = createdNavigation;
       navigationMethods = createdNavigationMethods;
+      startup.phase = 'starting';
+      if (!startupCurrent()) return finishClaimedStartup();
       const initialUrl = Reflect.apply(createdNavigationMethods.start, createdNavigation, []);
+      if (!startupCurrent()) return finishClaimedStartup();
+      if (typeof initialUrl !== 'string') throw new TypeError('X route URL must be a string');
+      startup.phase = 'routing';
       processUrl(initialUrl, lifecycle, true);
+      if (!startupCurrent()) return finishClaimedStartup();
+      startup.phase = 'committed';
+      navigationStartup = null;
+      const bufferedErrors = startup.errors.splice(0);
+      const bufferedUrl = startup.pendingUrl;
+      startup.pendingUrl = null;
+      for (const error of bufferedErrors) {
+        if (!current(lifecycle) || navigationObserver !== createdNavigation) break;
+        report(error);
+      }
+      if (current(lifecycle) && navigationObserver === createdNavigation && bufferedUrl !== null) {
+        processUrl(bufferedUrl, lifecycle);
+      }
+      startup.broker = null;
+      startup.methods = null;
       return getTargets();
     } catch (error) {
+      discardStartupBuffers();
+      if (startup.claimed) return finishClaimedStartup();
       active = false; generation += 1;
       const createdRecords = records ?? [];
       broker = null; navigationObserver = null; navigationMethods = null;
@@ -318,6 +400,11 @@ export function createXAccountTargetRouteSessionController(root, options) {
         try { Reflect.apply(createdNavigationMethods.stop, createdNavigation, []); } catch { /* preserve */ }
       }
       if (createdBroker !== null) { try { createdBroker.stop(); } catch { /* preserve */ } }
+      navigationStartup = null;
+      if (navigationCallbackState === startup) navigationCallbackState = null;
+      startup.observer = null;
+      startup.methods = null;
+      startup.broker = null;
       throw error;
     }
   };
@@ -325,8 +412,16 @@ export function createXAccountTargetRouteSessionController(root, options) {
   const stop = () => {
     if (!active) return;
     const wasReconciling = reconciling;
-    const oldNavigation = navigationObserver;
-    const oldNavigationMethods = navigationMethods;
+    const claimedStartup = navigationStartup !== null
+      && navigationStartup.phase !== 'committed' ? navigationStartup : null;
+    const callbackState = navigationCallbackState;
+    if (claimedStartup !== null) {
+      claimedStartup.claimed = true;
+      claimedStartup.pendingUrl = null;
+      claimedStartup.errors.length = 0;
+    }
+    const oldNavigation = navigationObserver ?? claimedStartup?.observer ?? null;
+    const oldNavigationMethods = navigationMethods ?? claimedStartup?.methods ?? null;
     const oldBroker = broker;
     const oldRecords = records;
     const claimedTransaction = transaction;
@@ -341,9 +436,12 @@ export function createXAccountTargetRouteSessionController(root, options) {
     navigationObserver = null; navigationMethods = null;
     broker = null; route = null; plans = EMPTY; records = null;
     pendingUrl = null;
+    if (callbackState !== null) callbackState.phase = 'stopped';
     const context = {
       broker: oldBroker,
       navigation: oldNavigation,
+      navigationStop: oldNavigationMethods?.stop ?? null,
+      navigationStopped: false,
       failed: false,
       finished: false,
       finish: null,
@@ -353,10 +451,19 @@ export function createXAccountTargetRouteSessionController(root, options) {
       if (!['retiring', 'retired'].includes(record.state)) record.state = 'final-stop';
       record.pendingErrors.length = 0;
     }
-    try { Reflect.apply(oldNavigationMethods.stop, oldNavigation, []); } catch { context.failed = true; }
+    const stopNavigation = () => {
+      if (context.navigationStopped || typeof context.navigationStop !== 'function'
+        || context.navigation === null) return;
+      context.navigationStopped = true;
+      try { Reflect.apply(context.navigationStop, context.navigation, []); } catch {
+        context.failed = true;
+      }
+    };
+    stopNavigation();
     context.finish = () => {
       if (context.finished) return;
       context.finished = true;
+      stopNavigation();
       for (let index = cleanupRecords.length - 1; index >= 0; index -= 1) {
         const record = cleanupRecords[index];
         if (record.state === 'retired' || record.state === 'retiring') continue;
@@ -375,10 +482,22 @@ export function createXAccountTargetRouteSessionController(root, options) {
         claimedTransaction.owned.clear();
       }
       cleanupRecords.length = 0;
+      if (claimedStartup !== null) {
+        claimedStartup.pendingUrl = null;
+        claimedStartup.errors.length = 0;
+      }
+      if (callbackState !== null) {
+        callbackState.pendingUrl = null;
+        callbackState.errors.length = 0;
+        callbackState.observer = null;
+        callbackState.methods = null;
+        callbackState.broker = null;
+      }
+      if (navigationCallbackState === callbackState) navigationCallbackState = null;
       finalStop = null;
       if (context.failed) report(new Error('Unable to stop X account target route session controller'));
     };
-    if (!wasReconciling) context.finish();
+    if (!wasReconciling && claimedStartup === null) context.finish();
   };
   const reconcile = () => {
     if (!active) throw new TypeError('account target route session controller is not active');

@@ -329,4 +329,148 @@ describe('dynamic account-target route sessions', () => {
     expect(fixture.navigation.stop).not.toHaveBeenCalled();
     controller.stop();
   });
+
+  it('adopts a valid observer returned after factory-time final stop without starting it', () => {
+    const fixture = setup('https://x.com/home');
+    let controller;
+    fixture.options.navigationObserverFactory.mockImplementationOnce(() => {
+      controller.stop();
+      return fixture.navigation;
+    });
+    controller = createXAccountTargetRouteSessionController(new FakeDocument(), fixture.options);
+    expect(controller.start()).toEqual([]);
+    expect(controller.isActive()).toBe(false);
+    expect(fixture.navigation.start).not.toHaveBeenCalled();
+    expect(fixture.navigation.stop).toHaveBeenCalledOnce();
+    expect(fixture.options.settingsRuntime.getSettings).not.toHaveBeenCalled();
+    expect(fixture.options.onError).not.toHaveBeenCalled();
+    expect(controller.getRoute()).toBeNull();
+    expect(controller.getInFlightCount()).toBe(0);
+    fixture.options.navigationObserverFactory.mockImplementation(() => fixture.navigation);
+    expect(controller.start()).toEqual([]);
+    expect(controller.isActive()).toBe(true);
+    controller.stop();
+  });
+
+  it('suppresses a factory exception after factory-time final stop', () => {
+    const fixture = setup();
+    let controller;
+    fixture.options.navigationObserverFactory.mockImplementation(() => {
+      controller.stop();
+      throw new Error('private factory failure');
+    });
+    controller = createXAccountTargetRouteSessionController(new FakeDocument(), fixture.options);
+    expect(() => controller.start()).not.toThrow();
+    expect(controller.isActive()).toBe(false);
+    expect(fixture.options.onError).not.toHaveBeenCalled();
+    expect(fixture.options.settingsRuntime.getSettings).not.toHaveBeenCalled();
+  });
+
+  it('buffers factory callbacks until initial route commit and keeps only the latest URL', () => {
+    const fixture = setup('https://x.com/i/bookmarks');
+    const observerError = new Error('privacy-safe observer error');
+    fixture.options.navigationObserverFactory.mockImplementation((observerOptions) => {
+      observerOptions.onNavigate('https://x.com/search?q=discarded');
+      observerOptions.onNavigate('https://x.com/home');
+      observerOptions.onError(observerError);
+      return fixture.navigation;
+    });
+    const controller = createXAccountTargetRouteSessionController(
+      new FakeDocument(), fixture.options,
+    );
+    controller.start();
+    expect(controller.getPlans().map(({ source }) => source)).toEqual(['timeline']);
+    expect(fixture.options.settingsRuntime.getSettings).toHaveBeenCalledTimes(1);
+    expect(fixture.options.onError).toHaveBeenCalledTimes(1);
+    expect(fixture.options.onError).toHaveBeenCalledWith(observerError);
+    controller.stop();
+  });
+
+  it('discards factory callbacks when returned observer validation fails', () => {
+    const fixture = setup();
+    fixture.options.navigationObserverFactory.mockImplementation((observerOptions) => {
+      observerOptions.onNavigate('https://x.com/home');
+      observerOptions.onError(new Error('private observer error'));
+      return {};
+    });
+    const controller = createXAccountTargetRouteSessionController(
+      new FakeDocument(), fixture.options,
+    );
+    expect(() => controller.start()).toThrowError(
+      new TypeError('navigationObserverFactory returned an invalid observer'),
+    );
+    expect(fixture.options.onError).not.toHaveBeenCalled();
+    expect(fixture.options.settingsRuntime.getSettings).not.toHaveBeenCalled();
+    expect(controller.isActive()).toBe(false);
+  });
+
+  it('stops reflective validation and adopts the captured stop method after final stop', () => {
+    const fixture = setup();
+    let controller;
+    const reads = [];
+    const observer = {};
+    for (const key of ['stop', 'start', 'getCurrentUrl', 'isActive']) {
+      Object.defineProperty(observer, key, {
+        enumerable: true,
+        get() {
+          reads.push(key);
+          if (key === 'start') controller.stop();
+          return fixture.navigation[key];
+        },
+      });
+    }
+    fixture.options.navigationObserverFactory.mockReturnValue(observer);
+    controller = createXAccountTargetRouteSessionController(new FakeDocument(), fixture.options);
+    expect(controller.start()).toEqual([]);
+    expect(reads).toEqual(['stop', 'start']);
+    expect(fixture.navigation.start).not.toHaveBeenCalled();
+    expect(fixture.navigation.stop).toHaveBeenCalledOnce();
+    expect(fixture.options.onError).not.toHaveBeenCalled();
+    expect(controller.isActive()).toBe(false);
+  });
+
+  it('buffers observer-start callbacks and reconciles only the latest after initial commit', () => {
+    const fixture = setup('https://x.com/i/bookmarks');
+    const observerError = new Error('startup observer error');
+    fixture.options.navigationObserverFactory.mockImplementation((observerOptions) => ({
+      start: vi.fn(() => {
+        expect(fixture.options.settingsRuntime.getSettings).not.toHaveBeenCalled();
+        observerOptions.onNavigate('https://x.com/search?q=discarded');
+        observerOptions.onNavigate('https://x.com/home');
+        observerOptions.onError(observerError);
+        expect(fixture.options.settingsRuntime.getSettings).not.toHaveBeenCalled();
+        return 'https://x.com/i/bookmarks';
+      }),
+      stop: vi.fn(), getCurrentUrl: vi.fn(), isActive: vi.fn(() => true),
+    }));
+    const controller = createXAccountTargetRouteSessionController(
+      new FakeDocument(), fixture.options,
+    );
+    controller.start();
+    expect(controller.getPlans().map(({ source }) => source)).toEqual(['timeline']);
+    expect(fixture.options.settingsRuntime.getSettings).toHaveBeenCalledTimes(1);
+    expect(fixture.options.onError).toHaveBeenCalledWith(observerError);
+    controller.stop();
+  });
+
+  it('adopts and stops an observer when final stop occurs inside observer start', () => {
+    const fixture = setup('https://x.com/home');
+    let controller;
+    const observer = {
+      start: vi.fn(() => {
+        controller.stop();
+        return 'https://x.com/home';
+      }),
+      stop: vi.fn(), getCurrentUrl: vi.fn(), isActive: vi.fn(() => true),
+    };
+    fixture.options.navigationObserverFactory.mockReturnValue(observer);
+    controller = createXAccountTargetRouteSessionController(new FakeDocument(), fixture.options);
+    expect(controller.start()).toEqual([]);
+    expect(observer.start).toHaveBeenCalledOnce();
+    expect(observer.stop).toHaveBeenCalledOnce();
+    expect(fixture.options.settingsRuntime.getSettings).not.toHaveBeenCalled();
+    expect(fixture.options.onError).not.toHaveBeenCalled();
+    expect(controller.isActive()).toBe(false);
+    expect(controller.getRoute()).toBeNull();
+  });
 });

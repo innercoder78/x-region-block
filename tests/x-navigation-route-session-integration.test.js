@@ -205,3 +205,79 @@ it('transfers one real pending broker request before retiring the old route cons
   signal.stop();
   expect(findLocationBadge(name)).toBeNull();
 });
+
+it('buffers real synchronous registration navigation until observer startup commits', async () => {
+  const listeners = new Map();
+  let runtimeReads = 0;
+  let deliverDuringRegistration = true;
+  const global = {
+    location: { href: 'https://x.com/i/bookmarks' },
+    document: {
+      addEventListener(type, listener) {
+        listeners.set(`document:${type}`, listener);
+        if (deliverDuringRegistration) {
+          const initial = global.location.href;
+          global.location.href = 'https://x.com/search?q=discarded';
+          listener();
+          global.location.href = 'https://x.com/home';
+          listener();
+          global.location.href = initial;
+          expect(runtimeReads).toBe(0);
+        }
+      },
+      removeEventListener(type, listener) {
+        if (listeners.get(`document:${type}`) === listener) listeners.delete(`document:${type}`);
+      },
+      dispatchEvent: (event) => listeners.get(`document:${event.type}`)?.(event),
+    },
+    history: {
+      pushState(state, title, url) { global.location.href = new URL(url, global.location.href).href; },
+      replaceState(state, title, url) { global.location.href = new URL(url, global.location.href).href; },
+    },
+    Event: class Event { constructor(type) { this.type = type; } },
+    addEventListener: (type, listener) => listeners.set(`global:${type}`, listener),
+    removeEventListener: (type, listener) => {
+      if (listeners.get(`global:${type}`) === listener) listeners.delete(`global:${type}`);
+    },
+  };
+  const root = new FakeDocument();
+  const tweet = root.createElement('article');
+  tweet.setAttribute('data-testid', 'tweet');
+  const name = root.createElement('div');
+  name.setAttribute('data-testid', 'User-Name');
+  const link = root.createElement('a');
+  link.setAttribute('href', '/openai');
+  name.appendChild(link);
+  tweet.appendChild(name);
+  root.appendChild(tweet);
+  const loadPayload = vi.fn(async () => ({
+    data: { user_result_by_screen_name: { result: { about_profile: { account_based_in: 'Japan' } } } },
+  }));
+  const controller = createXAccountTargetRouteSessionController(root, {
+    settingsRuntime: {
+      getSettings() { runtimeReads += 1; return {}; },
+      subscribe: () => () => {},
+    },
+    observerFactory: createFakeObserverFactory().factory,
+    loadPayload,
+    brokerAbortControllerFactory: createFakeAbortController,
+    consumerAbortControllerFactory: createFakeAbortController,
+    navigationObserverFactory: ({ onNavigate, onError }) => createXNavigationObserver(
+      global, { onNavigate, onError },
+    ),
+    onError: vi.fn(),
+  });
+  const signal = installXNavigationSignal(global);
+  controller.start();
+  deliverDuringRegistration = false;
+  expect(controller.getPlans().map(({ source }) => source)).toEqual(['timeline']);
+  expect(runtimeReads).toBe(1);
+  expect(loadPayload).toHaveBeenCalledTimes(1);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(findLocationBadge(name)).not.toBeNull();
+  controller.stop();
+  signal.stop();
+  expect(listeners.size).toBe(0);
+  expect(findLocationBadge(name)).toBeNull();
+});
