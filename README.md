@@ -62,7 +62,7 @@ and reply intentionally continue to share the fixed tweet selector.
 
 The coordinator and session have no real X transport or hardcoded query ID, read no
 authentication data, and are not connected to content-script startup. About Account request transport, query-ID discovery,
-memory-only authorization handling, live content-script session startup,
+production authorization composition, live content-script session startup,
 route-aware root and source orchestration, broker-to-session production wiring,
 badge styling, blocking
 live X content, and end-to-end browser verification remain unimplemented.
@@ -81,7 +81,7 @@ loader to sessions, stop all sessions, and stop the broker last.
 The broker performs no X request, hardcodes no query ID, and reads no authentication
 data. It is not connected to content-script startup, sessions are not automatically
 connected to it, and route/root orchestration remains unimplemented. Production About
-Account transport wiring, query-ID discovery, memory-only authorization handling, live
+Account transport wiring, query-ID discovery, production authorization composition, live
 content-script startup, route-aware root/source orchestration, broker-to-session
 production wiring, badge styling, and end-to-end browser verification remain
 unimplemented. Live X behavior remains unverified.
@@ -100,14 +100,28 @@ Endpoint validation examines the exact supplied pathname before URL normalizatio
 rejecting fragments and literal, encoded, or mixed dot segments rather than accepting
 a pathname repaired by the platform URL parser.
 
-The transport is deliberately not wired into production and cannot make a usable
-production request until a later memory-only boundary supplies a valid current
-request descriptor. Query-ID and request-template discovery, memory-only
-authorization acquisition, CSRF acquisition, guest-token acquisition,
-client-transaction-ID acquisition, production page/content bridging, production
-transport creation, production route-controller startup, automatic root acquisition,
-live X compatibility verification, and end-to-end Chrome and Firefox verification
-remain unimplemented. No live request template or authorization material is included.
+The transport is deliberately not wired into production. An isolated version 1
+page-world capture can observe an existing, exact same-origin X or Twitter
+`UserByScreenName` GET without modifying the request or capturing its response. It
+removes the observed handle and publishes only the reusable query template and a
+closed selection of request headers as a transient JSON-string same-document event.
+It retains only the latest valid snapshot in memory and supports replay. The matching
+isolated version 1 content-world bridge treats every event as untrusted, validates and
+deeply copies it, and exposes a synchronous transport-compatible
+`createRequest(identity, context)` which constructs fresh descriptors for canonical
+source-neutral identities. Stopping clears metadata; neither boundary reads cookies,
+persists data, uses runtime messaging, modifies the network request, or starts
+automatically.
+
+The same-document event is not a secrecy boundary from X's page world, which already
+originates the request. Metadata is never sent to another origin or external service.
+Query IDs, feature flags, headers, and authorization material are learned only from an
+eligible request already made by the current document; none are embedded. Live X
+request shapes and header availability remain unverified, so the bridge may remain
+unavailable until X makes an eligible request. Production page-script injection, root
+acquisition, route-controller startup, transport composition, live Chrome/Firefox
+verification, and release hardening remain unimplemented. No live request template or
+authorization material is included.
 
 An isolated version 1 account-target session group now composes one shared
 broker with several caller-supplied explicit root/source session plans. It
@@ -142,7 +156,7 @@ caller concerns and are not implemented. The
 group is not connected to content-script startup. No real X request, query ID,
 authentication handling, or persistent account data exists, and live X layout
 and end-to-end browser behavior remain unverified. Real About Account transport,
-query-ID discovery, memory-only authorization handling, live content-script
+query-ID discovery, production authorization composition, live content-script
 startup, production navigation wiring, automatic root
 acquisition, badge styling, and end-to-end browser verification all remain
 unimplemented; this repository is not production-ready.
@@ -190,7 +204,7 @@ Individual commands are available for linting (`npm run lint`), testing
 written to `dist/chrome` and `dist/firefox`; each generated directory contains
 its own root `manifest.json`.
 
-Live X layout compatibility and end-to-end browser behavior remain unverified. This repository is not production-ready. No real About Account transport, query-ID discovery, memory-only authorization handling, live content-script session startup, route-aware root and source orchestration, broker-to-session production wiring, badge styling, or end-to-end browser verification is implemented. No authentication handling or persistent account/location storage exists.
+Live X layout compatibility and end-to-end browser behavior remain unverified. This repository is not production-ready. No real About Account transport, query-ID discovery, production authorization composition, live content-script session startup, route-aware root and source orchestration, broker-to-session production wiring, badge styling, or end-to-end browser verification is implemented. No persistent account/location storage exists.
 
 ## Isolated navigation and dynamic route sessions
 
@@ -233,7 +247,7 @@ discards buffered callbacks, stops the observer before the broker, and starts no
 These boundaries remain isolated: the page entrypoint does not install the signal, the
 page script is not injected, and the content script starts neither the observer nor the
 route controller. A root must still be supplied explicitly; automatic root acquisition,
-real About Account transport, query-ID discovery, memory-only authorization handling,
+real About Account transport, query-ID discovery, production authorization composition,
 production page-signal injection, production content route-controller startup, badge
 styling and live-layout compatibility fixes, and end-to-end Chrome and Firefox
 verification remain MVP work. Route and selector compatibility has not been verified
