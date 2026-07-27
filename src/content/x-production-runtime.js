@@ -82,6 +82,7 @@ export function createXProductionContentRuntime(globalScope) {
     stopComponent(state, 'routeCandidate');
     state.routeController = null;
     stopComponent(state, 'bridge');
+    stopComponent(state, 'settingsCandidate');
     stopComponent(state, 'settingsRuntime');
     stopComponent(state, 'injector');
     removePagehide(state);
@@ -165,7 +166,8 @@ export function createXProductionContentRuntime(globalScope) {
     const state = {
       generation: generation + 1, claimed: false, cleaned: false, promiseSettled: false,
       resolve: null, reject: null, promise: null, bridge: null, injector: null,
-      settingsRuntime: null, transport: null, routeCandidate: null, routeController: null,
+      settingsCandidate: null, settingsRuntime: null, transport: null,
+      routeCandidate: null, routeController: null,
       stopped: new Set(), metadataListener: null, metadataMayBeAdded: false,
       metadataCheckPending: false, pagehideListener: null, pagehideMayBeAdded: false,
       prerequisitesReady: false, routeStarting: false,
@@ -225,13 +227,20 @@ export function createXProductionContentRuntime(globalScope) {
           try { settings?.stop(); } catch { /* contained */ }
           throw new Error('startup claimed');
         }
+        state.settingsCandidate = settings;
+        if (!owned(state)) {
+          stopComponent(state, 'settingsCandidate');
+          throw new Error('startup claimed');
+        }
         return settings;
       });
       checkpoint();
       dependencies.Promise.all([injectionPromise, guardedSettings]).then(([, settings]) => {
-        if (!owned(state)) { try { settings?.stop(); } catch { /* contained */ } return; }
+        if (!owned(state)) { stopComponent(state, 'settingsCandidate'); return; }
         if (settings === null) { fail(state); return; }
+        if (state.settingsCandidate !== settings) { fail(state); return; }
         state.settingsRuntime = settings;
+        state.settingsCandidate = null;
         if (!owned(state)) { stopComponent(state, 'settingsRuntime'); return; }
         state.prerequisitesReady = true;
         startRoute(state);

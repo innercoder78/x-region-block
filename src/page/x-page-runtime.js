@@ -24,6 +24,7 @@ export function installXPageRuntime(globalScope) {
   let add;
   let remove;
   let dispatch;
+  let ownerScope = globalScope;
   try {
     document = globalScope.document;
     EventConstructor = globalScope.Event;
@@ -39,12 +40,13 @@ export function installXPageRuntime(globalScope) {
   }
 
   const state = {
-    scope: globalScope, document, Event: EventConstructor, add, remove, dispatch,
+    document, Event: EventConstructor, add, remove, dispatch,
     active: false, claimed: false, finalized: false, probeMayBeAdded: false,
     requestMayBeAdded: false, stopMayBeAdded: false, navigation: null, capture: null,
     probe: null, respond: null, stopListener: null, controller: null,
   };
-  const current = () => installations.get(globalScope) === state && !state.claimed;
+  const current = () => ownerScope !== null && installations.get(ownerScope) === state
+    && !state.claimed;
   const event = (type) => new state.Event(type, {
     bubbles: false, cancelable: false, composed: false,
   });
@@ -72,9 +74,17 @@ export function installXPageRuntime(globalScope) {
     try { state.capture?.stop(); } catch { /* contained */ }
     try { state.navigation?.stop(); } catch { /* contained */ }
     state.capture = null; state.navigation = null;
-    if (installations.get(globalScope) === state) installations.delete(globalScope);
-    state.scope = null; state.document = null; state.Event = null;
+    const reservedScope = ownerScope;
+    if (reservedScope !== null && installations.get(reservedScope) === state) {
+      installations.delete(reservedScope);
+    }
+    ownerScope = null;
+    state.document = null; state.Event = null;
     state.add = null; state.remove = null; state.dispatch = null;
+    state.probe = null; state.respond = null; state.stopListener = null;
+    state.controller = null;
+    document = null; EventConstructor = null;
+    add = null; remove = null; dispatch = null;
   };
   const stop = () => {
     if (state.finalized) return;
@@ -85,12 +95,15 @@ export function installXPageRuntime(globalScope) {
   state.probe = () => { if (current()) state.crossBundleReady = true; };
   state.respond = () => { if (current() && state.active) { try { emit(X_PAGE_RUNTIME_READY_EVENT_TYPE); } catch { /* best effort */ } } };
   state.stopListener = stop;
-  installations.set(globalScope, state);
+  installations.set(ownerScope, state);
 
   const fail = () => {
+    const errorDocument = document ?? state.document;
+    const ErrorEvent = EventConstructor ?? state.Event;
+    const errorDispatch = dispatch ?? state.dispatch;
     state.claimed = true;
     finalize();
-    try { Reflect.apply(dispatch, document, [new EventConstructor(X_PAGE_RUNTIME_ERROR_EVENT_TYPE,
+    try { Reflect.apply(errorDispatch, errorDocument, [new ErrorEvent(X_PAGE_RUNTIME_ERROR_EVENT_TYPE,
       { bubbles: false, cancelable: false, composed: false })]); } catch { /* unavailable */ }
     throw new Error('Unable to install X page runtime');
   };
@@ -112,10 +125,10 @@ export function installXPageRuntime(globalScope) {
       finalize();
       return null;
     }
-    state.navigation = installXNavigationSignal(globalScope);
+    state.navigation = installXNavigationSignal(ownerScope);
     if (!current()) { try { state.navigation?.stop(); } catch { /* contained */ } }
     checkpoint();
-    state.capture = installXAboutAccountRequestCapture(globalScope);
+    state.capture = installXAboutAccountRequestCapture(ownerScope);
     if (!current()) { try { state.capture?.stop(); } catch { /* contained */ } }
     checkpoint();
     state.requestMayBeAdded = true;

@@ -100,4 +100,15 @@ describe('X page runtime', () => {
     expect(retried.isActive()).toBe(true);
     retried.stop();
   });
+
+  it('does not reach a released page scope through a retained stopped controller', () => {
+    const target = page();
+    const { proxy, revoke } = Proxy.revocable(target, {});
+    const controller = installXPageRuntime(proxy);
+    controller.stop();
+    revoke();
+    expect(() => controller.stop()).not.toThrow();
+    expect(controller.isActive()).toBe(false);
+    expect(() => controller.stop()).not.toThrow();
+  });
 });
