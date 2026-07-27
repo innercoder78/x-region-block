@@ -155,6 +155,12 @@ describe('release audit', () => {
     ['prohibited persistence API', 'content/content-script.js', 'localStorage.setItem("synthetic", "value");'],
     ['prohibited runtime messaging API', 'content/content-script.js', 'browser.runtime.sendMessage({ synthetic: true });'],
     ['prohibited polling or communication API', 'content/content-script.js', 'setInterval(() => {}, 1000);'],
+    ['prohibited polling or communication API', 'content/content-script.js', 'new XMLHttpRequest();'],
+    ['prohibited polling or communication API', 'content/content-script.js', 'new window.XMLHttpRequest();'],
+    ['prohibited polling or communication API', 'content/content-script.js', 'new globalThis.XMLHttpRequest();'],
+    ['prohibited polling or communication API', 'content/content-script.js', 'XMLHttpRequest();'],
+    ['prohibited polling or communication API', 'content/content-script.js', 'Reflect.construct(XMLHttpRequest, []);'],
+    ['prohibited polling or communication API', 'content/content-script.js', 'Reflect.construct(window.XMLHttpRequest, []);'],
   ])('rejects a %s', async (message, relative, contents) => {
     const context = await fixture();
     await writeFile(path.join(context.distRoot, 'firefox', relative), contents);

@@ -174,6 +174,7 @@ function canonicalizeHeaders(value) {
     throw new TypeError(DESCRIPTOR_ERROR);
   }
   headers.accept = 'application/json';
+  headers['accept-language'] = 'en-US,en;q=0.9';
   return headers;
 }
 
@@ -242,6 +243,9 @@ export function createXAboutAccountRequestTransport(options) {
   if (typeof createRequest !== 'function') throw new TypeError('createRequest must be a function');
   const invalidateSnapshot = typeof createRequest.invalidateSnapshot === 'function'
     ? createRequest.invalidateSnapshot : null;
+  const waitForFreshSnapshot = typeof createRequest.waitForFreshSnapshot === 'function'
+    ? createRequest.waitForFreshSnapshot : null;
+  const recoveryAttempts = new WeakMap();
 
   function loadPayload(identity, context) {
     const signal = validatePublicRequest(identity, context);
@@ -306,12 +310,19 @@ export function createXAboutAccountRequestTransport(options) {
       if (isAborted(signal)) throw abortError();
       if (!captured.ok) {
         if ([400, 401, 403, 404].includes(captured.status)) {
-          try { invalidateSnapshot?.(); } catch { /* Authentication invalidation is best effort. */ }
+          const kind = captured.status === 401 || captured.status === 403 ? 'authentication' : 'query';
+          try { invalidateSnapshot?.(kind); } catch { /* Metadata invalidation is best effort. */ }
         }
         if (captured.status === 401 || captured.status === 403) {
           diagnose('About Account lookup rejected because authentication became stale.');
         } else if (captured.status === 400 || captured.status === 404) {
           diagnose('About Account query ID rejected or obsolete.');
+        }
+        if ([400, 401, 403, 404].includes(captured.status) && waitForFreshSnapshot
+          && (recoveryAttempts.get(signal) ?? 0) < 1) {
+          recoveryAttempts.set(signal, 1);
+          await waitForFreshSnapshot(signal);
+          return loadPayload(identity, context);
         }
         throw new Error('X About Account request failed');
       }

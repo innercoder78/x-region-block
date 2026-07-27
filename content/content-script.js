@@ -3815,6 +3815,7 @@
       throw new TypeError(DESCRIPTOR_ERROR);
     }
     headers.accept = 'application/json';
+    headers['accept-language'] = 'en-US,en;q=0.9';
     return headers;
   }
 
@@ -3883,6 +3884,9 @@
     if (typeof createRequest !== 'function') throw new TypeError('createRequest must be a function');
     const invalidateSnapshot = typeof createRequest.invalidateSnapshot === 'function'
       ? createRequest.invalidateSnapshot : null;
+    const waitForFreshSnapshot = typeof createRequest.waitForFreshSnapshot === 'function'
+      ? createRequest.waitForFreshSnapshot : null;
+    const recoveryAttempts = new WeakMap();
 
     function loadPayload(identity, context) {
       const signal = validatePublicRequest(identity, context);
@@ -3944,12 +3948,19 @@
         if (isAborted(signal)) throw abortError();
         if (!captured.ok) {
           if ([400, 401, 403, 404].includes(captured.status)) {
-            try { invalidateSnapshot?.(); } catch { /* Authentication invalidation is best effort. */ }
+            const kind = captured.status === 401 || captured.status === 403 ? 'authentication' : 'query';
+            try { invalidateSnapshot?.(kind); } catch { /* Metadata invalidation is best effort. */ }
           }
           if (captured.status === 401 || captured.status === 403) {
             diagnose('About Account lookup rejected because authentication became stale.');
           } else if (captured.status === 400 || captured.status === 404) {
             diagnose('About Account query ID rejected or obsolete.');
+          }
+          if ([400, 401, 403, 404].includes(captured.status) && waitForFreshSnapshot
+            && (recoveryAttempts.get(signal) ?? 0) < 1) {
+            recoveryAttempts.set(signal, 1);
+            await waitForFreshSnapshot(signal);
+            return loadPayload(identity, context);
           }
           throw new Error('X About Account request failed');
         }
@@ -4060,6 +4071,8 @@
     let listener = null;
     let startup = null;
     let snapshot = null;
+    let rejected = null;
+    let refreshWaiters = new Set();
     const report = (error) => { try { onError(error); } catch { /* Error boundary is isolated. */ } };
 
     function start() {
@@ -4074,7 +4087,14 @@
           const parsed = JSON.parse(detail);
           const normalized = normalizeSnapshot(parsed, dependencies.origin);
           if (!active || ownedGeneration !== generation) return;
+          if (rejected?.kind === 'authentication'
+            && JSON.stringify(normalized.headers) === rejected.headers) return;
+          if (rejected?.kind === 'query' && normalized.queryId === rejected.queryId) return;
           snapshot = normalized;
+          rejected = null;
+          const waiters = refreshWaiters;
+          refreshWaiters = new Set();
+          for (const resolve of waiters) resolve();
         } catch {
           if (active && ownedGeneration === generation) {
             report(new Error('Unable to accept X About Account request metadata'));
@@ -4128,6 +4148,10 @@
       active = false;
       generation += 1;
       snapshot = null;
+      rejected = null;
+      for (const resolve of refreshWaiters) resolve();
+      refreshWaiters.clear();
+      refreshWaiters = new Set();
       const ownedListener = listener;
       listener = null;
       startup = null;
@@ -4161,7 +4185,31 @@
     }
 
     Object.defineProperty(createRequest, 'invalidateSnapshot', {
-      value: () => { snapshot = null; }, enumerable: false, configurable: false, writable: false,
+      value: (kind) => {
+        if (snapshot === null) return;
+        rejected = kind === 'query'
+          ? { kind, queryId: snapshot.queryId }
+          : { kind: 'authentication', headers: JSON.stringify(snapshot.headers) };
+        snapshot = null;
+      }, enumerable: false, configurable: false, writable: false,
+    });
+    Object.defineProperty(createRequest, 'waitForFreshSnapshot', {
+      value: (signal) => new Promise((resolve, reject) => {
+        if (snapshot !== null) { resolve(); return; }
+        let settled = false;
+        const finish = () => {
+          if (settled) return; settled = true; refreshWaiters.delete(finish);
+          try { signal?.removeEventListener('abort', cancel); } catch { /* best effort */ }
+          resolve();
+        };
+        const cancel = () => {
+          if (settled) return; settled = true; refreshWaiters.delete(finish);
+          const error = new Error('The operation was aborted'); error.name = 'AbortError'; reject(error);
+        };
+        refreshWaiters.add(finish);
+        try { signal?.addEventListener('abort', cancel, { once: true }); if (signal?.aborted) cancel(); }
+        catch { cancel(); }
+      }), enumerable: false, configurable: false, writable: false,
     });
 
     return Object.freeze({ start, stop, createRequest, hasSnapshot: () => snapshot !== null, isActive: () => active });
@@ -4650,11 +4698,14 @@
         });
         state.routeCandidate = candidate;
         if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }
-        candidate.start();
+        const discovered = candidate.start();
         if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }
         state.routeController = candidate; state.routeCandidate = null;
         ready = true;
         diagnostic('Metadata accepted and account processing started.');
+        if (Array.isArray(discovered) && discovered.length === 0) {
+          diagnostic('Account discovery started but no supported targets were found.', 'warn');
+        }
         removeMetadata(state);
       } catch {
         if (candidate !== null && state.routeCandidate === null) state.routeCandidate = candidate;

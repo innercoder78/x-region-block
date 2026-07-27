@@ -103,6 +103,8 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
   let listener = null;
   let startup = null;
   let snapshot = null;
+  let rejected = null;
+  let refreshWaiters = new Set();
   const report = (error) => { try { onError(error); } catch { /* Error boundary is isolated. */ } };
 
   function start() {
@@ -117,7 +119,14 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
         const parsed = JSON.parse(detail);
         const normalized = normalizeSnapshot(parsed, dependencies.origin);
         if (!active || ownedGeneration !== generation) return;
+        if (rejected?.kind === 'authentication'
+          && JSON.stringify(normalized.headers) === rejected.headers) return;
+        if (rejected?.kind === 'query' && normalized.queryId === rejected.queryId) return;
         snapshot = normalized;
+        rejected = null;
+        const waiters = refreshWaiters;
+        refreshWaiters = new Set();
+        for (const resolve of waiters) resolve();
       } catch {
         if (active && ownedGeneration === generation) {
           report(new Error('Unable to accept X About Account request metadata'));
@@ -171,6 +180,10 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
     active = false;
     generation += 1;
     snapshot = null;
+    rejected = null;
+    for (const resolve of refreshWaiters) resolve();
+    refreshWaiters.clear();
+    refreshWaiters = new Set();
     const ownedListener = listener;
     listener = null;
     startup = null;
@@ -204,7 +217,31 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
   }
 
   Object.defineProperty(createRequest, 'invalidateSnapshot', {
-    value: () => { snapshot = null; }, enumerable: false, configurable: false, writable: false,
+    value: (kind) => {
+      if (snapshot === null) return;
+      rejected = kind === 'query'
+        ? { kind, queryId: snapshot.queryId }
+        : { kind: 'authentication', headers: JSON.stringify(snapshot.headers) };
+      snapshot = null;
+    }, enumerable: false, configurable: false, writable: false,
+  });
+  Object.defineProperty(createRequest, 'waitForFreshSnapshot', {
+    value: (signal) => new Promise((resolve, reject) => {
+      if (snapshot !== null) { resolve(); return; }
+      let settled = false;
+      const finish = () => {
+        if (settled) return; settled = true; refreshWaiters.delete(finish);
+        try { signal?.removeEventListener('abort', cancel); } catch { /* best effort */ }
+        resolve();
+      };
+      const cancel = () => {
+        if (settled) return; settled = true; refreshWaiters.delete(finish);
+        const error = new Error('The operation was aborted'); error.name = 'AbortError'; reject(error);
+      };
+      refreshWaiters.add(finish);
+      try { signal?.addEventListener('abort', cancel, { once: true }); if (signal?.aborted) cancel(); }
+      catch { cancel(); }
+    }), enumerable: false, configurable: false, writable: false,
   });
 
   return Object.freeze({ start, stop, createRequest, hasSnapshot: () => snapshot !== null, isActive: () => active });

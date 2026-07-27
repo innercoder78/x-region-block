@@ -157,11 +157,14 @@ export function createXProductionContentRuntime(globalScope) {
       });
       state.routeCandidate = candidate;
       if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }
-      candidate.start();
+      const discovered = candidate.start();
       if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }
       state.routeController = candidate; state.routeCandidate = null;
       ready = true;
       diagnostic('Metadata accepted and account processing started.');
+      if (Array.isArray(discovered) && discovered.length === 0) {
+        diagnostic('Account discovery started but no supported targets were found.', 'warn');
+      }
       removeMetadata(state);
     } catch {
       if (candidate !== null && state.routeCandidate === null) state.routeCandidate = candidate;
