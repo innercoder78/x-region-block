@@ -435,4 +435,134 @@ describe('X About Account request capture', () => {
     expect(retainedWrapper('input')).toBe('delegated');
     expect(original).toHaveBeenCalledWith('input');
   });
+
+  it.each(['listener removal', 'ownership readback', 'restoration assignment'])(
+    'retains the stopped reservation during %s and permits a clean reinstall', (reentryPoint) => {
+      const original = vi.fn(() => 'delegated');
+      const { page, document } = metadataFacades(original);
+      const received = [];
+      let storedFetch = original;
+      let cleanupStarted = false;
+      let reentryEnabled = true;
+      Object.defineProperty(page, 'fetch', {
+        configurable: true,
+        get() {
+          if (cleanupStarted && reentryEnabled && reentryPoint === 'ownership readback') {
+            reentryEnabled = false;
+            received.push(installXAboutAccountRequestCapture(page));
+          }
+          return storedFetch;
+        },
+        set(value) {
+          if (cleanupStarted && reentryEnabled && reentryPoint === 'restoration assignment') {
+            reentryEnabled = false;
+            received.push(installXAboutAccountRequestCapture(page));
+          }
+          storedFetch = value;
+        },
+      });
+      const originalRemove = document.removeEventListener.bind(document);
+      document.removeEventListener = (type, listener) => {
+        originalRemove(type, listener);
+        if (cleanupStarted && reentryEnabled && reentryPoint === 'listener removal') {
+          reentryEnabled = false;
+          received.push(installXAboutAccountRequestCapture(page));
+        }
+      };
+
+      const controller = installXAboutAccountRequestCapture(page);
+      const retainedWrapper = storedFetch;
+      cleanupStarted = true;
+      controller.stop();
+      expect(received).toEqual([controller]);
+      expect(storedFetch).toBe(original);
+      expect(document.listeners.get(X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE)).toEqual([]);
+      expect(retainedWrapper('after-stop')).toBe('delegated');
+      expect(controller.stop()).toBeUndefined();
+      expect(controller.isActive()).toBe(false);
+      expect(controller.hasSnapshot()).toBe(false);
+
+      const later = installXAboutAccountRequestCapture(page);
+      expect(later).not.toBe(controller);
+      expect(later.isActive()).toBe(true);
+      later.stop();
+    },
+  );
+
+  it('retains the failed reservation throughout installation-failure restoration', () => {
+    const original = vi.fn(() => 'delegated');
+    const { page, document } = metadataFacades(original);
+    let storedFetch = original;
+    let failedController;
+    let registrationFailed = false;
+    const received = [];
+    Object.defineProperty(page, 'fetch', {
+      configurable: true,
+      get() { return storedFetch; },
+      set(value) {
+        if (registrationFailed && value === original) {
+          received.push(installXAboutAccountRequestCapture(page));
+        }
+        storedFetch = value;
+      },
+    });
+    const originalAdd = document.addEventListener.bind(document);
+    document.addEventListener = (type, listener) => {
+      originalAdd(type, listener);
+      if (type === X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE) {
+        failedController = installXAboutAccountRequestCapture(page);
+        registrationFailed = true;
+        throw new Error('after registration');
+      }
+    };
+
+    expect(() => installXAboutAccountRequestCapture(page)).toThrow(
+      'Unable to install X About Account request capture',
+    );
+    expect(received).toEqual([failedController]);
+    expect(failedController.isActive()).toBe(false);
+    expect(storedFetch).toBe(original);
+    expect(document.listeners.get(X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE)).toEqual([]);
+
+    document.addEventListener = originalAdd;
+    const later = installXAboutAccountRequestCapture(page);
+    expect(later).not.toBe(failedController);
+    expect(later.isActive()).toBe(true);
+    later.stop();
+  });
+
+  it('does not overwrite a newer page-owned fetch observed during cleanup', () => {
+    const original = vi.fn(() => 'original');
+    const newer = vi.fn(() => 'newer');
+    const { page } = metadataFacades(original);
+    let storedFetch = original;
+    let stopping = false;
+    let stopRead = false;
+    Object.defineProperty(page, 'fetch', {
+      configurable: true,
+      get() {
+        if (stopping && !stopRead) {
+          stopRead = true;
+          storedFetch = newer;
+        }
+        return storedFetch;
+      },
+      set(value) { storedFetch = value; },
+    });
+    const controller = installXAboutAccountRequestCapture(page);
+    stopping = true;
+    controller.stop();
+    expect(storedFetch).toBe(newer);
+    expect(page.fetch()).toBe('newer');
+  });
+
+  it('separates the original fetch delegate from controller-owned cleanup controls', async () => {
+    const source = await import('node:fs/promises').then(({ readFile }) => readFile(
+      new URL('../src/page/x-about-account-request-capture.js', import.meta.url), 'utf8',
+    ));
+    expect(source).toContain('function createFetchWrapper(fetch)');
+    expect(source).toContain('activateWrapper = null;');
+    expect(source).toContain('deactivateWrapper = null;');
+    expect(source).not.toContain('wrapperState');
+  });
 });

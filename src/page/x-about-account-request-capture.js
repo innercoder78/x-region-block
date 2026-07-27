@@ -178,6 +178,22 @@ function intrinsicGetter(constructor, name) {
   return descriptor.get;
 }
 
+function createFetchWrapper(fetch) {
+  let active = false;
+  let capture = null;
+  const wrapper = function wrappedXAboutAccountFetch(...args) {
+    if (active) {
+      try { capture(args[0], args[1]); } catch { /* Unsafe metadata is ignored. */ }
+    }
+    return Reflect.apply(fetch, this, args);
+  };
+  return {
+    wrapper,
+    activate(nextCapture) { capture = nextCapture; active = true; },
+    deactivate() { active = false; capture = null; },
+  };
+}
+
 export function installXAboutAccountRequestCapture(globalScope) {
   if ((typeof globalScope === 'object' && globalScope !== null) || typeof globalScope === 'function') {
     const existing = installations.get(globalScope);
@@ -190,7 +206,8 @@ export function installXAboutAccountRequestCapture(globalScope) {
   let state;
   let wrapper = null;
   let replay = null;
-  let wrapperState = null;
+  let activateWrapper = null;
+  let deactivateWrapper = null;
   let phase = 'pending';
   let installationRunning = true;
   const entry = { controller: null };
@@ -201,22 +218,21 @@ export function installXAboutAccountRequestCapture(globalScope) {
       state.active = false;
       state.snapshot = null;
     }
-    if (wrapperState) {
-      wrapperState.active = false;
-      wrapperState.capture = null;
-    }
+    if (deactivateWrapper) deactivateWrapper();
     if (state && replay) {
       try { Reflect.apply(state.documentRemoveEventListener, state.document,
         [X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay]); } catch { /* Cleanup is best effort. */ }
     }
-    if (final && scope && installations.get(scope) === entry) installations.delete(scope);
     if (state && wrapper) {
       try { if (state.scope.fetch === wrapper) state.scope.fetch = state.fetch; } catch { /* Ownership unverified. */ }
     }
     if (final) {
+      if (scope && installations.get(scope) === entry) installations.delete(scope);
       state = null;
       replay = null;
       wrapper = null;
+      activateWrapper = null;
+      deactivateWrapper = null;
       scope = null;
     }
   }
@@ -271,13 +287,8 @@ export function installXAboutAccountRequestCapture(globalScope) {
     throw new TypeError('Invalid X About Account request capture global scope');
   }
 
-  wrapperState = { active: false, capture: null, fetch: state.fetch };
-  wrapper = function wrappedXAboutAccountFetch(...args) {
-    if (wrapperState.active) {
-      try { wrapperState.capture(args[0], args[1]); } catch { /* Unsafe metadata is ignored. */ }
-    }
-    return Reflect.apply(wrapperState.fetch, this, args);
-  };
+  ({ wrapper, activate: activateWrapper, deactivate: deactivateWrapper }
+    = createFetchWrapper(state.fetch));
   replay = () => { if (phase === 'active' && state?.active) { try { state.publish(); } catch { /* Best effort. */ } } };
   state.publish = () => {
     if (phase !== 'active' || !state.active || state.snapshot === null) return;
@@ -296,8 +307,7 @@ export function installXAboutAccountRequestCapture(globalScope) {
     if (installations.get(state.scope) !== entry) throw new TypeError();
     phase = 'active';
     state.active = true;
-    wrapperState.capture = (...args) => captureSnapshot(state, ...args);
-    wrapperState.active = true;
+    activateWrapper((...args) => captureSnapshot(state, ...args));
     installationRunning = false;
     return controller;
   } catch (error) {
