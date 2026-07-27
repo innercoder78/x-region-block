@@ -176,7 +176,7 @@ function assertSafeContents(name, entries) {
     /\bBearer\s+[A-Za-z0-9._~+/-]{12,}/i,
     /["'](?:x-csrf-token|x-guest-token|x-client-transaction-id)["']\s*:\s*["'][^"']{8,}/i,
     new RegExp(`/graphql/(?!${X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID}/${X_ABOUT_ACCOUNT_OPERATION_NAME})[A-Za-z0-9_-]{8,}/[A-Za-z0-9_-]+`, 'i'),
-    /\b(?:localStorage|sessionStorage|indexedDB|WebSocket|EventSource)\b|(?:new\s+)?(?:window\.|globalThis\.)?XMLHttpRequest\s*\(|Reflect\.construct\s*\(\s*(?:(?:window|globalThis)\.)?XMLHttpRequest\b/,
+    /\b(?:localStorage|sessionStorage|indexedDB|WebSocket|EventSource)\b|(?:new\s+)?(?:(?:window|globalThis|self)(?:\.XMLHttpRequest|\[['"]XMLHttpRequest['"]\])|XMLHttpRequest)\s*\(|Reflect\.construct\s*\(\s*(?:(?:window|globalThis|self)(?:\.XMLHttpRequest|\[['"]XMLHttpRequest['"]\])|XMLHttpRequest)/,
     /\b(?:runtime|tabs)\.(?:sendMessage|connect)\s*\(/,
   ];
   invariant(!prohibited.some((pattern) => pattern.test(text)),

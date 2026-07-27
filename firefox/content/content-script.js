@@ -1931,6 +1931,11 @@
     }
   }
 
+  const X_ABOUT_ACCOUNT_RECOVERY_CODES = Object.freeze({
+    AUTHENTICATION: 'AUTHENTICATION_STALE',
+    QUERY: 'QUERY_ID_STALE',
+  });
+
   const ACCOUNT_TARGET_PROCESSOR_VERSION = 1;
 
   const EMPTY$2 = Object.freeze([]);
@@ -2107,11 +2112,13 @@
     };
     const isCurrent = (entry) => active && entry.live && entry.generation === generation
       && accounts.get(entry.key) === entry && entry.targets.size > 0;
-    const resolveFailure = (entry, message) => {
+    const resolveFailure = (entry, message, error = null) => {
       if (!isCurrent(entry)) return;
       entry.pending = null;
       entry.controller = null;
       entry.location = createUnavailableLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+      entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
+        || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
       report(new Error(message));
       presentEntry(entry);
     };
@@ -2146,7 +2153,7 @@
         entry.controller = null;
         entry.location = location;
         presentEntry(entry);
-      }, () => resolveFailure(entry, 'Unable to load account location'));
+      }, (error) => resolveFailure(entry, 'Unable to load account location', error));
     };
     const retireEmptyEntries = () => {
       for (const [key, entry] of accounts) {
@@ -2231,6 +2238,7 @@
             location: null,
             generation,
             live: true,
+            recoverable: false,
           };
           accounts.set(entry.key, entry);
           entriesToStart.push(entry);
@@ -2258,9 +2266,21 @@
       return settings;
     };
     const getTargets = () => targets;
+    const retryRecoverable = () => {
+      if (!active) return 0;
+      let count = 0;
+      for (const entry of accounts.values()) {
+        if (!entry.recoverable || !isCurrent(entry) || entry.pending !== null) continue;
+        entry.recoverable = false;
+        entry.location = null;
+        startLookup(entry);
+        count += 1;
+      }
+      return count;
+    };
     const isActive = () => active;
 
-    return Object.freeze({ start, stop, processChange, setSettings, getTargets, isActive });
+    return Object.freeze({ start, stop, processChange, setSettings, retryRecoverable, getTargets, isActive });
   }
 
   const X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION = 1;
@@ -2726,9 +2746,10 @@
       return processor.getTargets();
     };
     const getTargets = () => (active ? processor.getTargets() : EMPTY$1);
+    const retryRecoverable = () => (active ? processor.retryRecoverable() : 0);
     const isActive = () => active;
 
-    return Object.freeze({ start, stop, rescan, getTargets, isActive });
+    return Object.freeze({ start, stop, rescan, retryRecoverable, getTargets, isActive });
   }
 
   const ACCOUNT_TARGET_ROUTE_SESSION_CONTROLLER_VERSION = 1;
@@ -2819,6 +2840,10 @@
       if (!active || records === null) return EMPTY;
       const targets = records.flatMap((record) => record.session.getTargets());
       return targets.length === 0 ? EMPTY : Object.freeze(targets);
+    };
+    const retryRecoverable = () => {
+      if (!active || records === null) return 0;
+      return records.reduce((count, record) => count + record.session.retryRecoverable(), 0);
     };
     const plannerOptions = () => (dependencies.hasBaseUrl ? { baseUrl: dependencies.baseUrl } : {});
 
@@ -3248,7 +3273,7 @@
     const getInFlightCount = () => (active ? broker.getInFlightCount() : 0);
     const isActive = () => active;
     return Object.freeze({
-      start, stop, reconcile, rescan, getRoute, getPlans, getTargets, getInFlightCount, isActive,
+      start, stop, reconcile, rescan, retryRecoverable, getRoute, getPlans, getTargets, getInFlightCount, isActive,
     });
   }
 
@@ -3573,6 +3598,23 @@
 
   function metadataHeaderNames() { return HEADER_NAMES$1; }
 
+  function createMetadataAuthenticationFingerprint(headers) {
+    if (!isMetadataPlainObject(headers)) throw new TypeError('Invalid metadata authentication headers');
+    const fingerprint = Object.create(null);
+    for (const name of ['authorization', 'x-csrf-token', 'x-guest-token', 'x-twitter-auth-type']) {
+      if (Object.prototype.hasOwnProperty.call(headers, name)) {
+        const value = headers[name];
+        if (!validMetadataHeaderValue(value)) throw new TypeError('Invalid metadata authentication headers');
+        fingerprint[name] = value;
+      }
+    }
+    if (!Object.prototype.hasOwnProperty.call(fingerprint, 'authorization')
+      || !Object.prototype.hasOwnProperty.call(fingerprint, 'x-csrf-token')) {
+      throw new TypeError('Invalid metadata authentication headers');
+    }
+    return JSON.stringify(fingerprint);
+  }
+
   function validMetadataQueryId(value) {
     return isValidXAboutAccountQueryId(value);
   }
@@ -3665,6 +3707,11 @@
     'x-guest-token',
     'x-client-transaction-id',
   ]);
+  function recoverableError(code) {
+    const error = new Error('X About Account request requires fresh metadata');
+    Object.defineProperty(error, 'code', { value: code, enumerable: false });
+    return error;
+  }
   const diagnosticTimes = new Map();
   function diagnose(code) {
     const now = Date.now();
@@ -3884,9 +3931,6 @@
     if (typeof createRequest !== 'function') throw new TypeError('createRequest must be a function');
     const invalidateSnapshot = typeof createRequest.invalidateSnapshot === 'function'
       ? createRequest.invalidateSnapshot : null;
-    const waitForFreshSnapshot = typeof createRequest.waitForFreshSnapshot === 'function'
-      ? createRequest.waitForFreshSnapshot : null;
-    const recoveryAttempts = new WeakMap();
 
     function loadPayload(identity, context) {
       const signal = validatePublicRequest(identity, context);
@@ -3956,11 +4000,11 @@
           } else if (captured.status === 400 || captured.status === 404) {
             diagnose('About Account query ID rejected or obsolete.');
           }
-          if ([400, 401, 403, 404].includes(captured.status) && waitForFreshSnapshot
-            && (recoveryAttempts.get(signal) ?? 0) < 1) {
-            recoveryAttempts.set(signal, 1);
-            await waitForFreshSnapshot(signal);
-            return loadPayload(identity, context);
+          if (captured.status === 401 || captured.status === 403) {
+            throw recoverableError(X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION);
+          }
+          if (captured.status === 400 || captured.status === 404) {
+            throw recoverableError(X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY);
           }
           throw new Error('X About Account request failed');
         }
@@ -4088,7 +4132,7 @@
           const normalized = normalizeSnapshot(parsed, dependencies.origin);
           if (!active || ownedGeneration !== generation) return;
           if (rejected?.kind === 'authentication'
-            && JSON.stringify(normalized.headers) === rejected.headers) return;
+            && createMetadataAuthenticationFingerprint(normalized.headers) === rejected.fingerprint) return;
           if (rejected?.kind === 'query' && normalized.queryId === rejected.queryId) return;
           snapshot = normalized;
           rejected = null;
@@ -4189,7 +4233,8 @@
         if (snapshot === null) return;
         rejected = kind === 'query'
           ? { kind, queryId: snapshot.queryId }
-          : { kind: 'authentication', headers: JSON.stringify(snapshot.headers) };
+          : { kind: 'authentication',
+            fingerprint: createMetadataAuthenticationFingerprint(snapshot.headers) };
         snapshot = null;
       }, enumerable: false, configurable: false, writable: false,
     });
@@ -4706,7 +4751,6 @@
         if (Array.isArray(discovered) && discovered.length === 0) {
           diagnostic('Account discovery started but no supported targets were found.', 'warn');
         }
-        removeMetadata(state);
       } catch {
         if (candidate !== null && state.routeCandidate === null) state.routeCandidate = candidate;
         stopComponent(state, 'routeCandidate');
@@ -4753,7 +4797,10 @@
         state.metadataCheckPending = true;
         dependencies.Promise.resolve().then(() => {
           state.metadataCheckPending = false;
-          if (owned(state)) startRoute(state);
+          if (owned(state)) {
+            if (ready && state.bridge?.hasSnapshot()) state.routeController?.retryRecoverable();
+            else startRoute(state);
+          }
         });
       };
       state.pagehideListener = (event) => { if (event.persisted !== true && owned(state)) stop(); };

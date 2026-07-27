@@ -165,7 +165,6 @@ export function createXProductionContentRuntime(globalScope) {
       if (Array.isArray(discovered) && discovered.length === 0) {
         diagnostic('Account discovery started but no supported targets were found.', 'warn');
       }
-      removeMetadata(state);
     } catch {
       if (candidate !== null && state.routeCandidate === null) state.routeCandidate = candidate;
       stopComponent(state, 'routeCandidate');
@@ -212,7 +211,10 @@ export function createXProductionContentRuntime(globalScope) {
       state.metadataCheckPending = true;
       dependencies.Promise.resolve().then(() => {
         state.metadataCheckPending = false;
-        if (owned(state)) startRoute(state);
+        if (owned(state)) {
+          if (ready && state.bridge?.hasSnapshot()) state.routeController?.retryRecoverable();
+          else startRoute(state);
+        }
       });
     };
     state.pagehideListener = (event) => { if (event.persisted !== true && owned(state)) stop(); };

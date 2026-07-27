@@ -1,6 +1,7 @@
 import { createAccountIdentity } from '../shared/account-identity.js';
 import { X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION } from './x-about-account-payload-broker.js';
 import { X_ABOUT_ACCOUNT_OPERATION_NAME, isValidXAboutAccountQueryId } from '../shared/x-about-account-query.js';
+import { X_ABOUT_ACCOUNT_RECOVERY_CODES } from '../shared/x-about-account-recovery.js';
 
 export const X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION = 1;
 
@@ -24,6 +25,11 @@ const HEADER_NAMES = new Set([
   'x-guest-token',
   'x-client-transaction-id',
 ]);
+function recoverableError(code) {
+  const error = new Error('X About Account request requires fresh metadata');
+  Object.defineProperty(error, 'code', { value: code, enumerable: false });
+  return error;
+}
 const diagnosticTimes = new Map();
 function diagnose(code) {
   const now = Date.now();
@@ -243,9 +249,6 @@ export function createXAboutAccountRequestTransport(options) {
   if (typeof createRequest !== 'function') throw new TypeError('createRequest must be a function');
   const invalidateSnapshot = typeof createRequest.invalidateSnapshot === 'function'
     ? createRequest.invalidateSnapshot : null;
-  const waitForFreshSnapshot = typeof createRequest.waitForFreshSnapshot === 'function'
-    ? createRequest.waitForFreshSnapshot : null;
-  const recoveryAttempts = new WeakMap();
 
   function loadPayload(identity, context) {
     const signal = validatePublicRequest(identity, context);
@@ -318,11 +321,11 @@ export function createXAboutAccountRequestTransport(options) {
         } else if (captured.status === 400 || captured.status === 404) {
           diagnose('About Account query ID rejected or obsolete.');
         }
-        if ([400, 401, 403, 404].includes(captured.status) && waitForFreshSnapshot
-          && (recoveryAttempts.get(signal) ?? 0) < 1) {
-          recoveryAttempts.set(signal, 1);
-          await waitForFreshSnapshot(signal);
-          return loadPayload(identity, context);
+        if (captured.status === 401 || captured.status === 403) {
+          throw recoverableError(X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION);
+        }
+        if (captured.status === 400 || captured.status === 404) {
+          throw recoverableError(X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY);
         }
         throw new Error('X About Account request failed');
       }

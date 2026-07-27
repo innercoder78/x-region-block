@@ -49,15 +49,29 @@ describe('metadata bridge and transport integration', () => {
     const transport = createXAboutAccountRequestTransport({
       fetch: transportFetch, createRequest: bridge.createRequest,
     });
-    const pending = transport.loadPayload(createAccountIdentity({ handle: 'requested' }), {
+    const identity = createAccountIdentity({ handle: 'requested' });
+    await expect(transport.loadPayload(identity, {
       version: 1, signal: createFakeAbortController().signal,
-    });
-    await Promise.resolve(); await Promise.resolve();
+    })).rejects.toMatchObject({ code: 'AUTHENTICATION_STALE' });
+    expect(transportFetch).toHaveBeenCalledTimes(1);
+    for (const headers of [
+      { ...observedHeaders, 'x-client-transaction-id': 'volatile-next' },
+      { ...observedHeaders, 'x-twitter-client-language': 'fr' },
+      { ...observedHeaders, 'x-twitter-active-user': 'no' },
+    ]) {
+      page.fetch('/i/api/graphql/generic/HomeTimeline?volatile=1', { headers });
+      await Promise.resolve();
+      expect(transportFetch).toHaveBeenCalledTimes(1);
+    }
+    page.fetch(observedUrl('query_only_change'), { headers: observedHeaders });
+    await Promise.resolve();
     expect(transportFetch).toHaveBeenCalledTimes(1);
     page.fetch('/i/api/graphql/generic/HomeTimeline?x=2', { headers: {
       ...observedHeaders, 'x-csrf-token': 'fresh-test-only-csrf',
     } });
-    await expect(pending).resolves.toBe(payload);
+    await expect(transport.loadPayload(identity, {
+      version: 1, signal: createFakeAbortController().signal,
+    })).resolves.toBe(payload);
     expect(transportFetch).toHaveBeenCalledTimes(2);
   });
 
@@ -72,15 +86,17 @@ describe('metadata bridge and transport integration', () => {
     const transport = createXAboutAccountRequestTransport({
       fetch: transportFetch, createRequest: bridge.createRequest,
     });
-    const pending = transport.loadPayload(createAccountIdentity({ handle: 'requested' }), {
+    const identity = createAccountIdentity({ handle: 'requested' });
+    await expect(transport.loadPayload(identity, {
       version: 1, signal: createFakeAbortController().signal,
-    });
-    await Promise.resolve(); await Promise.resolve();
+    })).rejects.toMatchObject({ code: 'QUERY_ID_STALE' });
     page.fetch('/i/api/graphql/generic/HomeTimeline?x=2', { headers: observedHeaders });
     await Promise.resolve();
     expect(transportFetch).toHaveBeenCalledTimes(1);
     page.fetch(observedUrl('replacement_live_query'), { headers: observedHeaders });
-    await expect(pending).resolves.toEqual({ replaced: true });
+    await expect(transport.loadPayload(identity, {
+      version: 1, signal: createFakeAbortController().signal,
+    })).resolves.toEqual({ replaced: true });
     expect(transportFetch.mock.calls[1][0]).toContain('/replacement_live_query/AboutAccountQuery');
   });
 });

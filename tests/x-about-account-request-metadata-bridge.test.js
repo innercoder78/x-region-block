@@ -7,6 +7,32 @@ import { X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE } from '../src/shared/x-abo
 import { MetadataEvent, metadataFacades } from './helpers/x-request-metadata-facade.js';
 
 describe('X About Account request metadata bridge', () => {
+  it.each([
+    ['authorization', 'Bearer changed'],
+    ['x-csrf-token', 'csrf-changed'],
+    ['x-guest-token', 'guest-changed'],
+  ])('releases authentication recovery when %s changes', async (name, value) => {
+    const { content, document } = metadataFacades();
+    const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: () => undefined });
+    bridge.start();
+    const headers = { authorization: 'Bearer original', 'x-csrf-token': 'csrf-original',
+      'x-guest-token': 'guest-original' };
+    const publish = (next, queryId = 'query') => document.dispatchEvent(new MetadataEvent(
+      X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, { detail: JSON.stringify({
+        version: 2, origin: 'https://x.com', queryId, headers: next,
+      }) },
+    ));
+    publish(headers);
+    bridge.createRequest.invalidateSnapshot('authentication');
+    let released = false;
+    const waiting = bridge.createRequest.waitForFreshSnapshot().then(() => { released = true; });
+    publish({ ...headers, 'x-client-transaction-id': 'volatile' });
+    publish({ ...headers, 'x-twitter-client-language': 'fr', 'x-twitter-active-user': 'no' });
+    publish(headers, 'replacement_query');
+    await Promise.resolve(); expect(released).toBe(false);
+    publish({ ...headers, [name]: value });
+    await waiting; expect(released).toBe(true);
+  });
   it('validates events and creates fresh transport descriptors', () => {
     const { content, document } = metadataFacades();
     const errors = [];

@@ -11,6 +11,7 @@ import {
   parseXAboutAccountLocationPayload,
   X_ABOUT_ACCOUNT_LOCATION_SOURCE,
 } from '../shared/x-about-account-location.js';
+import { X_ABOUT_ACCOUNT_RECOVERY_CODES } from '../shared/x-about-account-recovery.js';
 
 export const ACCOUNT_TARGET_PROCESSOR_VERSION = 1;
 
@@ -188,11 +189,13 @@ export function createXAccountTargetProcessor(options) {
   };
   const isCurrent = (entry) => active && entry.live && entry.generation === generation
     && accounts.get(entry.key) === entry && entry.targets.size > 0;
-  const resolveFailure = (entry, message) => {
+  const resolveFailure = (entry, message, error = null) => {
     if (!isCurrent(entry)) return;
     entry.pending = null;
     entry.controller = null;
     entry.location = createUnavailableLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+    entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
+      || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
     report(new Error(message));
     presentEntry(entry);
   };
@@ -227,7 +230,7 @@ export function createXAccountTargetProcessor(options) {
       entry.controller = null;
       entry.location = location;
       presentEntry(entry);
-    }, () => resolveFailure(entry, 'Unable to load account location'));
+    }, (error) => resolveFailure(entry, 'Unable to load account location', error));
   };
   const retireEmptyEntries = () => {
     for (const [key, entry] of accounts) {
@@ -312,6 +315,7 @@ export function createXAccountTargetProcessor(options) {
           location: null,
           generation,
           live: true,
+          recoverable: false,
         };
         accounts.set(entry.key, entry);
         entriesToStart.push(entry);
@@ -339,7 +343,19 @@ export function createXAccountTargetProcessor(options) {
     return settings;
   };
   const getTargets = () => targets;
+  const retryRecoverable = () => {
+    if (!active) return 0;
+    let count = 0;
+    for (const entry of accounts.values()) {
+      if (!entry.recoverable || !isCurrent(entry) || entry.pending !== null) continue;
+      entry.recoverable = false;
+      entry.location = null;
+      startLookup(entry);
+      count += 1;
+    }
+    return count;
+  };
   const isActive = () => active;
 
-  return Object.freeze({ start, stop, processChange, setSettings, getTargets, isActive });
+  return Object.freeze({ start, stop, processChange, setSettings, retryRecoverable, getTargets, isActive });
 }

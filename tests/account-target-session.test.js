@@ -68,7 +68,7 @@ describe('account target session API and validation', () => {
     const { options } = dependencies();
     const session = createXAccountTargetSession(new FakeDocument(), options);
     expect(ACCOUNT_TARGET_SESSION_VERSION).toBe(1);
-    expect(Object.keys(session)).toEqual(['start', 'stop', 'rescan', 'getTargets', 'isActive']);
+    expect(Object.keys(session)).toEqual(['start', 'stop', 'rescan', 'retryRecoverable', 'getTargets', 'isActive']);
     expect(Object.isFrozen(session)).toBe(true);
     expect(session.getTargets()).toBe(session.getTargets());
     expect(Object.isFrozen(session.getTargets())).toBe(true);

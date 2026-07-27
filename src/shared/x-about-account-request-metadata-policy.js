@@ -9,6 +9,23 @@ export const METADATA_DETAIL_LIMIT = 65_536;
 
 export function metadataHeaderNames() { return HEADER_NAMES; }
 
+export function createMetadataAuthenticationFingerprint(headers) {
+  if (!isMetadataPlainObject(headers)) throw new TypeError('Invalid metadata authentication headers');
+  const fingerprint = Object.create(null);
+  for (const name of ['authorization', 'x-csrf-token', 'x-guest-token', 'x-twitter-auth-type']) {
+    if (Object.prototype.hasOwnProperty.call(headers, name)) {
+      const value = headers[name];
+      if (!validMetadataHeaderValue(value)) throw new TypeError('Invalid metadata authentication headers');
+      fingerprint[name] = value;
+    }
+  }
+  if (!Object.prototype.hasOwnProperty.call(fingerprint, 'authorization')
+    || !Object.prototype.hasOwnProperty.call(fingerprint, 'x-csrf-token')) {
+    throw new TypeError('Invalid metadata authentication headers');
+  }
+  return JSON.stringify(fingerprint);
+}
+
 export function validMetadataQueryId(value) {
   return isValidXAboutAccountQueryId(value);
 }

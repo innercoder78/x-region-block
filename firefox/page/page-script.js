@@ -39,6 +39,23 @@
 
   function metadataHeaderNames() { return HEADER_NAMES; }
 
+  function createMetadataAuthenticationFingerprint(headers) {
+    if (!isMetadataPlainObject(headers)) throw new TypeError('Invalid metadata authentication headers');
+    const fingerprint = Object.create(null);
+    for (const name of ['authorization', 'x-csrf-token', 'x-guest-token', 'x-twitter-auth-type']) {
+      if (Object.prototype.hasOwnProperty.call(headers, name)) {
+        const value = headers[name];
+        if (!validMetadataHeaderValue(value)) throw new TypeError('Invalid metadata authentication headers');
+        fingerprint[name] = value;
+      }
+    }
+    if (!Object.prototype.hasOwnProperty.call(fingerprint, 'authorization')
+      || !Object.prototype.hasOwnProperty.call(fingerprint, 'x-csrf-token')) {
+      throw new TypeError('Invalid metadata authentication headers');
+    }
+    return JSON.stringify(fingerprint);
+  }
+
   function validMetadataQueryId(value) {
     return isValidXAboutAccountQueryId(value);
   }
@@ -48,6 +65,12 @@
       const code = character.charCodeAt(0);
       return code <= 31 || code === 127;
     });
+  }
+
+  function isMetadataPlainObject(value) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === null || prototype === Object.prototype;
   }
 
   const installations$2 = new WeakMap();
@@ -165,12 +188,18 @@
     }
     if (!hasOwn(headers, 'authorization') || !hasOwn(headers, 'x-csrf-token')) return;
     if (operation === X_ABOUT_ACCOUNT_OPERATION_NAME) state.liveQueryId = queryId;
+    const publicationKey = JSON.stringify([
+      createMetadataAuthenticationFingerprint(headers),
+      state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID,
+    ]);
+    if (publicationKey === state.publicationKey) return;
     const serialized = JSON.stringify({
       version: X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION, origin: state.origin,
       queryId: state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, headers,
     });
     if (serialized.length > METADATA_DETAIL_LIMIT || serialized === state.snapshot) return;
     state.snapshot = serialized;
+    state.publicationKey = publicationKey;
     state.publish();
   }
 
@@ -288,7 +317,7 @@
       state = { scope, fetch, document, documentAddEventListener,
         documentRemoveEventListener, documentDispatchEvent, CustomEvent, URL, Headers, Request, origin,
         urlHref, requestUrl, requestMethod, requestHeaders, headersGet,
-        snapshot: null, liveQueryId: null, active: false };
+        snapshot: null, publicationKey: null, liveQueryId: null, active: false };
       if (typeof XMLHttpRequest === 'function') {
         const prototype = read(() => XMLHttpRequest.prototype);
         const originals = {

@@ -5,7 +5,7 @@ import {
   X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION,
 } from '../shared/x-about-account-request-metadata-event.js';
 import {
-  METADATA_DETAIL_LIMIT, copyAndValidateJsonValue, deeplyFreezeMetadata,
+  METADATA_DETAIL_LIMIT, copyAndValidateJsonValue, createMetadataAuthenticationFingerprint, deeplyFreezeMetadata,
   isMetadataPlainObject, metadataHeaderNames, validMetadataHeaderValue, validMetadataQueryId,
 } from '../shared/x-about-account-request-metadata-policy.js';
 import { X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION } from './x-about-account-request-transport.js';
@@ -120,7 +120,7 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
         const normalized = normalizeSnapshot(parsed, dependencies.origin);
         if (!active || ownedGeneration !== generation) return;
         if (rejected?.kind === 'authentication'
-          && JSON.stringify(normalized.headers) === rejected.headers) return;
+          && createMetadataAuthenticationFingerprint(normalized.headers) === rejected.fingerprint) return;
         if (rejected?.kind === 'query' && normalized.queryId === rejected.queryId) return;
         snapshot = normalized;
         rejected = null;
@@ -221,7 +221,8 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
       if (snapshot === null) return;
       rejected = kind === 'query'
         ? { kind, queryId: snapshot.queryId }
-        : { kind: 'authentication', headers: JSON.stringify(snapshot.headers) };
+        : { kind: 'authentication',
+          fingerprint: createMetadataAuthenticationFingerprint(snapshot.headers) };
       snapshot = null;
     }, enumerable: false, configurable: false, writable: false,
   });

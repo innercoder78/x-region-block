@@ -34,7 +34,7 @@ describe('dynamic account-target route sessions', () => {
     const controller = createXAccountTargetRouteSessionController(root, options);
     expect(ACCOUNT_TARGET_ROUTE_SESSION_CONTROLLER_VERSION).toBe(1);
     expect(Object.keys(controller)).toEqual([
-      'start', 'stop', 'reconcile', 'rescan', 'getRoute', 'getPlans', 'getTargets',
+      'start', 'stop', 'reconcile', 'rescan', 'retryRecoverable', 'getRoute', 'getPlans', 'getTargets',
       'getInFlightCount', 'isActive',
     ]);
     expect(Object.isFrozen(controller)).toBe(true);

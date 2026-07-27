@@ -161,6 +161,15 @@ describe('release audit', () => {
     ['prohibited polling or communication API', 'content/content-script.js', 'XMLHttpRequest();'],
     ['prohibited polling or communication API', 'content/content-script.js', 'Reflect.construct(XMLHttpRequest, []);'],
     ['prohibited polling or communication API', 'content/content-script.js', 'Reflect.construct(window.XMLHttpRequest, []);'],
+    ['prohibited polling or communication API', 'content/content-script.js', 'new self.XMLHttpRequest();'],
+    ['prohibited polling or communication API', 'content/content-script.js', 'self.XMLHttpRequest();'],
+    ['prohibited polling or communication API', 'content/content-script.js', 'Reflect.construct(self.XMLHttpRequest, []);'],
+    ['prohibited polling or communication API', 'content/content-script.js', "new window['XMLHttpRequest']();"],
+    ['prohibited polling or communication API', 'content/content-script.js', "new globalThis['XMLHttpRequest']();"],
+    ['prohibited polling or communication API', 'content/content-script.js', "new self['XMLHttpRequest']();"],
+    ['prohibited polling or communication API', 'content/content-script.js', "Reflect.construct(window['XMLHttpRequest'], []);"],
+    ['prohibited polling or communication API', 'content/content-script.js', "Reflect.construct(globalThis['XMLHttpRequest'], []);"],
+    ['prohibited polling or communication API', 'content/content-script.js', "Reflect.construct(self['XMLHttpRequest'], []);"],
   ])('rejects a %s', async (message, relative, contents) => {
     const context = await fixture();
     await writeFile(path.join(context.distRoot, 'firefox', relative), contents);

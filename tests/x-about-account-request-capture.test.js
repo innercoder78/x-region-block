@@ -24,6 +24,20 @@ describe('X About Account request capture', () => {
     expect(order).toEqual(['fetch', 'metadata']);
   });
 
+  it('does not republish metadata for volatile auxiliary-header changes', () => {
+    const { page, document } = metadataFacades(() => undefined);
+    const details = [];
+    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE,
+      (event) => details.push(event.detail));
+    installXAboutAccountRequestCapture(page);
+    const url = '/i/api/graphql/generic/HomeTimeline?variables=%7B%7D';
+    page.fetch(url, { headers: observedHeaders });
+    page.fetch(url, { headers: { ...observedHeaders, 'x-client-transaction-id': 'changed' } });
+    page.fetch(url, { headers: { ...observedHeaders, 'x-twitter-client-language': 'fr' } });
+    page.fetch(url, { headers: { ...observedHeaders, 'x-twitter-active-user': 'no' } });
+    expect(details).toHaveLength(1);
+  });
+
   it('passively observes XHR only after successful open, headers, and send', () => {
     const order = [];
     class FakeXHR {
@@ -66,6 +80,29 @@ describe('X About Account request capture', () => {
     xhr.setRequestHeader('authorization', 'Bearer test'); xhr.setRequestHeader('x-csrf-token', 'csrf');
     expect(() => xhr.send()).toThrow(failure);
     expect(details).toEqual([]);
+  });
+  it('preserves newer XHR methods and permits clean reinjection without stacking', () => {
+    class FakeXHR { open() { return 'open'; } setRequestHeader() {} send() { return 'send'; } }
+    const { page } = metadataFacades(() => undefined); page.XMLHttpRequest = FakeXHR;
+    const first = installXAboutAccountRequestCapture(page);
+    const retainedOpen = FakeXHR.prototype.open;
+    const newerSend = vi.fn(() => 'newer'); FakeXHR.prototype.send = newerSend;
+    first.stop();
+    expect(FakeXHR.prototype.send).toBe(newerSend);
+    expect(Reflect.apply(retainedOpen, new FakeXHR(), ['GET', observedUrl()])).toBe('open');
+    const second = installXAboutAccountRequestCapture(page);
+    expect(second).not.toBe(first);
+    expect(installXAboutAccountRequestCapture(page)).toBe(second);
+    second.stop();
+  });
+
+  it('does not add extension properties to observed XHR instances', () => {
+    class FakeXHR { open() {} setRequestHeader() {} send() {} }
+    const { page } = metadataFacades(() => undefined); page.XMLHttpRequest = FakeXHR;
+    installXAboutAccountRequestCapture(page);
+    const xhr = new FakeXHR(); const before = Reflect.ownKeys(xhr);
+    xhr.open('GET', observedUrl()); xhr.setRequestHeader('authorization', 'a'); xhr.send();
+    expect(Reflect.ownKeys(xhr)).toEqual(before);
   });
   it('is versioned, idempotent, sanitizes metadata, and restores fetch', () => {
     const fetch = vi.fn(() => 'page-result');

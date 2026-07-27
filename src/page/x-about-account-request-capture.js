@@ -4,7 +4,7 @@ import {
   X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION,
 } from '../shared/x-about-account-request-metadata-event.js';
 import {
-  METADATA_DETAIL_LIMIT, metadataHeaderNames,
+  METADATA_DETAIL_LIMIT, createMetadataAuthenticationFingerprint, metadataHeaderNames,
   validMetadataHeaderValue, validMetadataQueryId,
 } from '../shared/x-about-account-request-metadata-policy.js';
 import {
@@ -128,12 +128,18 @@ function captureSnapshot(state, input, init = undefined, suppliedXhrHeaders = un
   }
   if (!hasOwn(headers, 'authorization') || !hasOwn(headers, 'x-csrf-token')) return;
   if (operation === X_ABOUT_ACCOUNT_OPERATION_NAME) state.liveQueryId = queryId;
+  const publicationKey = JSON.stringify([
+    createMetadataAuthenticationFingerprint(headers),
+    state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID,
+  ]);
+  if (publicationKey === state.publicationKey) return;
   const serialized = JSON.stringify({
     version: X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION, origin: state.origin,
     queryId: state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, headers,
   });
   if (serialized.length > METADATA_DETAIL_LIMIT || serialized === state.snapshot) return;
   state.snapshot = serialized;
+  state.publicationKey = publicationKey;
   state.publish();
 }
 
@@ -251,7 +257,7 @@ export function installXAboutAccountRequestCapture(globalScope) {
     state = { scope, fetch, document, documentAddEventListener,
       documentRemoveEventListener, documentDispatchEvent, CustomEvent, URL, Headers, Request, origin,
       urlHref, requestUrl, requestMethod, requestHeaders, headersGet,
-      snapshot: null, liveQueryId: null, active: false };
+      snapshot: null, publicationKey: null, liveQueryId: null, active: false };
     if (typeof XMLHttpRequest === 'function') {
       const prototype = read(() => XMLHttpRequest.prototype);
       const originals = {

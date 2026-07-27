@@ -24,7 +24,7 @@ const sensitiveMaterial = [
 const prohibitedApis = [
   [/\b(?:localStorage|sessionStorage|indexedDB)\b/, 'prohibited persistence API'],
   [/\b(?:runtime|tabs)\.(?:sendMessage|connect)\s*\(/, 'prohibited runtime messaging API'],
-  [/\b(?:setInterval|WebSocket|EventSource)\s*\(|(?:new\s+)?(?:window\.|globalThis\.)?XMLHttpRequest\s*\(|Reflect\.construct\s*\(\s*(?:(?:window|globalThis)\.)?XMLHttpRequest\b/,
+  [/\b(?:setInterval|WebSocket|EventSource)\s*\(|(?:new\s+)?(?:(?:window|globalThis|self)(?:\.XMLHttpRequest|\[['"]XMLHttpRequest['"]\])|XMLHttpRequest)\s*\(|Reflect\.construct\s*\(\s*(?:(?:window|globalThis|self)(?:\.XMLHttpRequest|\[['"]XMLHttpRequest['"]\])|XMLHttpRequest)/,
     'prohibited polling or communication API'],
 ];
 
