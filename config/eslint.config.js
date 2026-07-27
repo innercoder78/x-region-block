@@ -3,7 +3,16 @@ import globals from 'globals';
 
 export default [
   {
-    ignores: ['dist/**', 'coverage/**'],
+    ignores: [
+      'dist/**',
+      'coverage/**',
+      'background/**',
+      'content/**',
+      'options/**',
+      'page/**',
+      'popup/**',
+      'firefox/**',
+    ],
   },
   eslint.configs.recommended,
   {

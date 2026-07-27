@@ -39,7 +39,10 @@ describe('repository layout', () => {
   });
 
   it('exposes release packaging and verification commands without replacing release verification', () => {
-    expect(packageJson.scripts['verify:release']).toBe('npm run check && npm run audit:release');
+    expect(packageJson.scripts['verify:release']).toContain(
+      'node scripts/sync-code-download-builds.js --verify',
+    );
+    expect(packageJson.scripts['verify:code-download']).toContain('npm run build');
     expect(packageJson.scripts['package:release']).toContain('node scripts/package-release.js');
     expect(packageJson.scripts['verify:packages']).toBe('node scripts/verify-packages.js');
   });

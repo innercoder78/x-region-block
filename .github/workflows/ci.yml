@@ -28,6 +28,9 @@ jobs:
       - name: Verify release invariants
         run: npm run verify:release
 
+      - name: Verify Code Download browser layouts
+        run: npm run verify:code-download
+
       - name: Build distributable packages
         run: npm run package:release && npm run verify:packages
 

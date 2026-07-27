@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>X Region Reveal &amp; Block options</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main>
+      <header><p class="eyebrow">X Region Reveal &amp; Block</p><h1>Settings</h1><p>Choose which location signals to hide or highlight.</p></header>
+      <form id="settings-form" aria-describedby="status" novalidate>
+        <fieldset><legend>Country rules</legend><p class="help">Enter two-letter country codes such as <code>US</code>, <code>CA</code>, or <code>GB</code>, separated by commas or lines.</p>
+          <label for="country-hide">Hide countries</label><textarea id="country-hide" rows="4"></textarea>
+          <label for="country-highlight">Highlight countries</label><textarea id="country-highlight" rows="4"></textarea>
+          <label for="country-always-show">Always show countries</label><textarea id="country-always-show" rows="4"></textarea>
+        </fieldset>
+        <fieldset><legend>Region rules</legend><p class="help">Select broad geographic regions.</p>
+          <div class="choice-section"><h2>Hide regions</h2><div id="region-hide" class="choices"></div></div>
+          <div class="choice-section"><h2>Highlight regions</h2><div id="region-highlight" class="choices"></div></div>
+        </fieldset>
+        <fieldset><legend>Unknown-location rules</legend><p class="help">Treat each reason for an unresolved location separately.</p>
+          <div class="choice-section"><h2>Hide statuses</h2><div id="other-hide" class="choices"></div></div>
+          <div class="choice-section"><h2>Highlight statuses</h2><div id="other-highlight" class="choices"></div></div>
+        </fieldset>
+        <fieldset><legend>Allowlist</legend><label for="allowlist">Allowlist keys</label><p id="allowlist-help" class="help">Canonical account keys use lowercase @handles (for example, @openai). Separate entries by lines or commas. Case is preserved in storage, matching is exact, and matching entries override all hide rules.</p><textarea id="allowlist" rows="5" aria-describedby="allowlist-help"></textarea></fieldset>
+        <div class="actions"><button type="submit" id="save-settings" class="primary">Save settings</button><button type="button" id="reset-settings">Reset to defaults</button></div>
+        <p id="status" role="status" aria-live="polite"></p>
+      </form>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

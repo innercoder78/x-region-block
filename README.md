@@ -96,27 +96,26 @@ handle only when creating a fresh transport descriptor.
 
 ## Download and install
 
-Download the browser-specific testing asset from the repository's **Releases** page.
-Do **not** use GitHub's automatic “Source code” ZIP as an installable extension: it is
-the project source, not a ready-built browser package. Users and testers need no
-Node.js, npm commands, or repository build commands.
+The standard GitHub **Code → Download ZIP** archive contains ready-built Chrome and
+Firefox layouts. Users and testers need no Node.js, npm commands, Actions artifacts,
+or release downloads.
 
 ### Chrome
 
-1. Download `x-region-block-chrome-0.0.1.zip`.
+1. Choose **Code → Download ZIP** on GitHub.
 2. Extract the ZIP.
 3. Open `chrome://extensions`.
 4. Enable **Developer mode**.
 5. Choose **Load unpacked**.
-6. Select the extracted folder containing `manifest.json`.
+6. Select the extracted top-level repository folder containing `manifest.json`.
 
 ### Firefox testing
 
-1. Download `x-region-block-firefox-0.0.1.zip`.
+1. Choose **Code → Download ZIP** on GitHub.
 2. Extract the ZIP.
 3. Open `about:debugging#/runtime/this-firefox`.
 4. Choose **Load Temporary Add-on**.
-5. Select the extracted `manifest.json`.
+5. Select `firefox/manifest.json` from the extracted repository.
 6. Remember that this temporary installation ends when Firefox closes. Normal
    permanent distribution will require a signed Firefox package.
 
@@ -130,12 +129,16 @@ npm run check
 ```
 
 Individual commands are available as `npm run lint`, `npm test`, `npm run build`, and
-`npm run validate:build`. Generated unpacked builds are written beneath `dist/` and are
-not committed.
+`npm run validate:build`. Generated intermediate builds are written beneath ignored
+`dist/`. After validating them, maintainers use `npm run sync:code-download` to update
+the committed root Chrome layout and `firefox/` layout, and
+`npm run verify:code-download` to freshly build and compare every byte.
 
 Maintainers can reproduce the downloadable archives and checksums with
 `npm run package:release`, then inspect them with `npm run verify:packages`. Generated
 packages are written beneath ignored `artifacts/` and are not committed.
+These smaller browser-only Release packages remain an optional distribution method;
+the standard Code ZIP is directly installable without them.
 
 For the reproducible automated release gate, run:
 

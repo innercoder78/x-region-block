@@ -1,0 +1,8 @@
+[data-x-region-block-account-action='hide'] {
+  display: none !important;
+}
+
+[data-x-region-block-account-action='highlight'] {
+  outline: 2px solid Highlight !important;
+  outline-offset: -2px !important;
+}
