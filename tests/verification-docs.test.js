@@ -30,7 +30,8 @@ const runbookRequirements = {
 };
 const reportRequirements = {
   'Test identity': [/commit SHA tested/i, /browser name and exact version/i, /operating system/i,
-    /extension build directory/i, /date tested/i],
+    /extension build directory/i, /date tested/i, /release\/tag name/i, /downloaded filename/i,
+    /SHA-256 verification result/i, /package origin/i],
   'Automated command results': [/npm run verify:release/i],
   'Per-surface results': [/home timeline/i, /notifications/i, /pushState/i],
   'Location-outcome results': [/known country/i, /unknown\/unrecognized location/i],

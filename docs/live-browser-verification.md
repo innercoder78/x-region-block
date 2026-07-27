@@ -21,11 +21,21 @@ X account settings or content.
 
 ## Automated verification
 
+Start manual testing from downloaded release assets; testers do not need Node.js, npm,
+or a local repository build. Before opening a browser, record the release/tag name,
+exact commit SHA, downloaded filename, and SHA-256 verification result from
+`SHA256SUMS.txt`. Also record the browser name and exact version, and whether the test
+used a downloaded package or a locally reproduced build.
+
+Maintainers who are explicitly checking reproducibility may instead:
+
 1. Record the commit SHA with `git rev-parse HEAD`.
 2. Install exact dependencies with `npm ci --ignore-scripts --no-audit --no-fund`.
 3. Run `npm run verify:release`. This lints, tests, builds both browsers, validates the
    builds, and performs the release audit without contacting X.
-4. Copy command outcomes to the report. Automated checks cover repository contracts,
+4. Run `npm run package:release` and `npm run verify:packages` to reproduce and inspect
+   the downloadable files.
+5. Copy command outcomes to the report. Automated checks cover repository contracts,
    synthetic integration behavior, manifests, generated assets, and static privacy and
    release invariants only.
 
@@ -33,11 +43,15 @@ X account settings or content.
 
 Perform every step separately in exact-version Chrome and Firefox and record evidence.
 
-- [ ] Confirm `dist/chrome` and `dist/firefox` were freshly built from the recorded SHA.
+- [ ] Confirm each downloaded archive matches `SHA256SUMS.txt`, then extract it. For a
+  local reproducibility test, confirm `dist/chrome` and `dist/firefox` were freshly
+  built from the recorded SHA.
 - [ ] Chrome: open `chrome://extensions`, enable Developer mode, choose **Load
-  unpacked**, and select `dist/chrome` (not `dist` or a source directory).
+  unpacked**, and select the extracted Chrome folder containing `manifest.json` (not an
+  enclosing folder or a source directory).
 - [ ] Firefox: open `about:debugging#/runtime/this-firefox`, choose **Load Temporary
-  Add-on**, and select `dist/firefox/manifest.json`.
+  Add-on**, and select the extracted Firefox `manifest.json`. This installation ends
+  when Firefox closes; permanent distribution requires a signed Firefox package.
 - [ ] On a supported `https://x.com/` or `https://twitter.com/` document, use browser
   developer tools to confirm the isolated content bundle and injected page bundle
   start. Do not expose request details in screenshots or logs.
