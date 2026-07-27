@@ -250,3 +250,97 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(transportCalls).toHaveLength(afterHome);
   expect(transportCalls.every(({ url }) => url.startsWith('https://x.com/'))).toBe(true);
 });
+
+async function recoveryHarness({ failureStatus, settings }) {
+  const document = new FakeDocument();
+  const listeners = new Map();
+  document.addEventListener = (type, listener) => { const values = listeners.get(type) ?? []; values.push(listener); listeners.set(type, values); };
+  document.removeEventListener = (type, listener) => listeners.set(type, (listeners.get(type) ?? []).filter((value) => value !== listener));
+  document.dispatchEvent = (event) => { for (const listener of [...(listeners.get(event.type) ?? [])]) listener(event); return true; };
+  const tweet = document.createElement('article'); tweet.setAttribute('data-testid', 'tweet');
+  const name = document.createElement('div'); name.setAttribute('data-testid', 'User-Name');
+  const link = document.createElement('a'); link.setAttribute('href', '/visible');
+  name.appendChild(link); tweet.appendChild(name); document.appendChild(tweet);
+  const observers = [];
+  class MutationObserver { constructor(callback) { this.callback = callback; observers.push(this); } observe(target) { this.target = target; } disconnect() { this.disconnected = true; } }
+  class AbortController { constructor() { const value = createFakeAbortController(); this.signal = value.signal; this.abort = value.abort.bind(value); } }
+  let pageTraffic = true; let attempt = 0; const transportCalls = [];
+  const originalFetch = vi.fn((url, options) => {
+    if (pageTraffic) return 'page-result';
+    transportCalls.push({ url, options }); attempt += 1;
+    if (attempt === 1) return Promise.resolve({ ok: false, status: failureStatus, json: () => null });
+    return Promise.resolve({ ok: true, status: 200, json: () => ({ data: {
+      user_result_by_screen_name: { result: { about_profile: { account_based_in: 'Canada' } } },
+    } }) });
+  });
+  const globalListeners = new Map(); const storageListeners = new Set();
+  const globalScope = {
+    location: { origin: 'https://x.com', hostname: 'x.com', href: 'https://x.com/home' },
+    document, Event: MetadataEvent, CustomEvent: MetadataEvent, URL, URLSearchParams, Headers, Request,
+    Promise, MutationObserver, AbortController, fetch: originalFetch,
+    history: { pushState() {}, replaceState() {} },
+    addEventListener(type, listener) { const values = globalListeners.get(type) ?? []; values.push(listener); globalListeners.set(type, values); },
+    removeEventListener(type, listener) { globalListeners.set(type, (globalListeners.get(type) ?? []).filter((item) => item !== listener)); },
+    browser: { runtime: { getURL: (path) => `moz-extension://test/${path}` }, storage: {
+      local: { get: async () => ({ 'xRegionBlock.settings': settings }), set: async () => {}, remove: async () => {} },
+      onChanged: { addListener: (listener) => storageListeners.add(listener), removeListener: (listener) => storageListeners.delete(listener) },
+    } },
+  };
+  const scriptRoot = new FakeElement('html', document); document.documentElement = scriptRoot;
+  scriptRoot.appendChild = (script) => { installXPageRuntime(globalScope); script.onload?.(); return script; };
+  const runtime = createXProductionContentRuntime(globalScope); await runtime.start();
+  const capture = (url, headers) => { pageTraffic = true; const result = globalScope.fetch(url, { headers }); pageTraffic = false; return result; };
+  return { runtime, globalScope, tweet, name, link, transportCalls, capture, observers };
+}
+
+it('recovers the same visible production target after genuinely fresh authentication metadata', async () => {
+  const settings = { schemaVersion: 1, country: { hide: [], highlight: [], alwaysShow: [] },
+    region: { hide: [], highlight: ['NORTH_AMERICA'] }, language: { highlight: [] },
+    tag: { highlight: [] }, other: { hide: [], highlight: [] }, allowlist: [] };
+  const context = await recoveryHarness({ failureStatus: 401, settings });
+  context.capture('/i/api/graphql/generic/HomeTimeline?x=1', observedHeaders); await settle();
+  expect(context.transportCalls).toHaveLength(1);
+  expect(findLocationBadge(context.name).textContent).toContain('Location unavailable');
+  for (const headers of [
+    { ...observedHeaders, 'x-client-transaction-id': 'volatile' },
+    { ...observedHeaders, 'x-twitter-client-language': 'fr' },
+    { ...observedHeaders, 'x-twitter-active-user': 'no' },
+  ]) context.capture('/i/api/graphql/generic/HomeTimeline?volatile=1', headers);
+  await settle(); expect(context.transportCalls).toHaveLength(1);
+  context.capture('/i/api/graphql/generic/HomeTimeline?fresh=1', {
+    ...observedHeaders, 'x-csrf-token': 'fresh-csrf',
+  });
+  await settle();
+  expect(context.transportCalls).toHaveLength(2);
+  expect(findLocationBadge(context.name).textContent).toContain('🇨🇦');
+  expect(findLocationBadge(context.name).textContent).toContain('North America');
+  expect(getAccountAction(context.tweet)).toBe('highlight');
+  context.capture('/i/api/graphql/generic/HomeTimeline?replay=1', {
+    ...observedHeaders, 'x-csrf-token': 'fresh-csrf',
+  });
+  await settle(); expect(context.transportCalls).toHaveLength(2);
+  context.runtime.stop();
+});
+
+it('recovers a visible production target only after a different live query ID', async () => {
+  const settings = { schemaVersion: 1, country: { hide: ['CA'], highlight: [], alwaysShow: ['CA'] },
+    region: { hide: [], highlight: [] }, language: { highlight: [] }, tag: { highlight: [] },
+    other: { hide: [], highlight: [] }, allowlist: [] };
+  const context = await recoveryHarness({ failureStatus: 404, settings });
+  context.capture('/i/api/graphql/generic/HomeTimeline?x=1', observedHeaders); await settle();
+  expect(context.transportCalls).toHaveLength(1);
+  expect(findLocationBadge(context.name).textContent).toContain('Location unavailable');
+  context.capture('/i/api/graphql/generic/HomeTimeline?x=2', {
+    ...observedHeaders, authorization: 'Bearer auth-only-change',
+  });
+  context.capture(observedUrl('XRqGa7EeokUU5kppkh13EA'), observedHeaders);
+  await settle(); expect(context.transportCalls).toHaveLength(1);
+  context.capture(observedUrl('replacement_live_query'), observedHeaders); await settle();
+  expect(context.transportCalls).toHaveLength(2);
+  expect(context.transportCalls[1].url).toContain('/replacement_live_query/AboutAccountQuery');
+  expect(findLocationBadge(context.name).textContent).toContain('🇨🇦');
+  expect(getAccountAction(context.tweet)).toBe('show');
+  context.capture(observedUrl('XRqGa7EeokUU5kppkh13EA'), observedHeaders); await settle();
+  expect(context.transportCalls).toHaveLength(2);
+  context.runtime.stop();
+});
