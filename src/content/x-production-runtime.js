@@ -57,30 +57,37 @@ export function createXProductionContentRuntime(globalScope) {
 
   const owned = (state) => lifecycle === state && active && !state.claimed
     && generation === state.generation;
-  const stopComponent = (state, key) => {
+  const stopComponent = (state, key, stoppedKey = `${key}Stopped`) => {
     const value = state[key];
-    if (value === null || state.stopped.has(value)) return;
-    state.stopped.add(value);
+    state[key] = null;
+    if (value === null || state[stoppedKey]) return;
+    state[stoppedKey] = true;
     try { value.stop(); } catch { /* contained */ }
   };
   const removeMetadata = (state) => {
-    if (!state.metadataMayBeAdded) return;
+    const listener = state.metadataListener;
+    state.metadataListener = null;
+    const mayBeAdded = state.metadataMayBeAdded;
     state.metadataMayBeAdded = false;
+    if (!mayBeAdded || listener === null) return;
     try { Reflect.apply(dependencies.documentRemove, dependencies.document,
-      [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, state.metadataListener]); } catch { /* contained */ }
+      [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, listener]); } catch { /* contained */ }
   };
   const removePagehide = (state) => {
-    if (!state.pagehideMayBeAdded) return;
+    const listener = state.pagehideListener;
+    state.pagehideListener = null;
+    const mayBeAdded = state.pagehideMayBeAdded;
     state.pagehideMayBeAdded = false;
+    if (!mayBeAdded || listener === null) return;
     try { Reflect.apply(dependencies.globalRemove, globalScope,
-      ['pagehide', state.pagehideListener]); } catch { /* contained */ }
+      ['pagehide', listener]); } catch { /* contained */ }
   };
   const cleanup = (state) => {
     if (state.cleaned) return;
     state.cleaned = true;
     removeMetadata(state);
     stopComponent(state, 'routeCandidate');
-    state.routeController = null;
+    stopComponent(state, 'routeController', 'routeCandidateStopped');
     stopComponent(state, 'bridge');
     stopComponent(state, 'settingsCandidate');
     stopComponent(state, 'settingsRuntime');
@@ -93,7 +100,9 @@ export function createXProductionContentRuntime(globalScope) {
   const rejectStartup = (state) => {
     if (state.promiseSettled) return;
     state.promiseSettled = true;
-    state.reject(new Error('Unable to start X production runtime'));
+    const reject = state.reject;
+    state.resolve = null; state.reject = null;
+    reject(new Error('Unable to start X production runtime'));
   };
   const fail = (state) => {
     state.claimed = true;
@@ -139,7 +148,7 @@ export function createXProductionContentRuntime(globalScope) {
       if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }
       candidate.start();
       if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }
-      state.routeController = candidate;
+      state.routeController = candidate; state.routeCandidate = null;
       ready = true;
       removeMetadata(state);
     } catch {
@@ -168,7 +177,9 @@ export function createXProductionContentRuntime(globalScope) {
       resolve: null, reject: null, promise: null, bridge: null, injector: null,
       settingsCandidate: null, settingsRuntime: null, transport: null,
       routeCandidate: null, routeController: null,
-      stopped: new Set(), metadataListener: null, metadataMayBeAdded: false,
+      bridgeStopped: false, injectorStopped: false, settingsCandidateStopped: false,
+      settingsRuntimeStopped: false, routeCandidateStopped: false,
+      metadataListener: null, metadataMayBeAdded: false,
       metadataCheckPending: false, pagehideListener: null, pagehideMayBeAdded: false,
       prerequisitesReady: false, routeStarting: false,
     };
@@ -201,18 +212,20 @@ export function createXProductionContentRuntime(globalScope) {
       bridge.start();
       checkpoint();
       state.metadataMayBeAdded = true;
+      const metadataListener = state.metadataListener;
       Reflect.apply(dependencies.documentAdd, dependencies.document,
-        [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, state.metadataListener]);
+        [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, metadataListener]);
       if (!owned(state)) {
         try { Reflect.apply(dependencies.documentRemove, dependencies.document,
-          [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, state.metadataListener]); } catch { /* contained */ }
+          [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, metadataListener]); } catch { /* contained */ }
       }
       checkpoint();
       state.pagehideMayBeAdded = true;
-      Reflect.apply(dependencies.globalAdd, globalScope, ['pagehide', state.pagehideListener]);
+      const pagehideListener = state.pagehideListener;
+      Reflect.apply(dependencies.globalAdd, globalScope, ['pagehide', pagehideListener]);
       if (!owned(state)) {
         try { Reflect.apply(dependencies.globalRemove, globalScope,
-          ['pagehide', state.pagehideListener]); } catch { /* contained */ }
+          ['pagehide', pagehideListener]); } catch { /* contained */ }
       }
       checkpoint();
       const injector = createXPageScriptInjector(globalScope);
@@ -241,12 +254,18 @@ export function createXProductionContentRuntime(globalScope) {
         if (state.settingsCandidate !== settings) { fail(state); return; }
         state.settingsRuntime = settings;
         state.settingsCandidate = null;
+        state.settingsRuntimeStopped = state.settingsCandidateStopped;
         if (!owned(state)) { stopComponent(state, 'settingsRuntime'); return; }
         state.prerequisitesReady = true;
         startRoute(state);
         if (!owned(state)) return;
         if (pending === state) pending = null;
-        if (!state.promiseSettled) { state.promiseSettled = true; state.resolve(); }
+        if (!state.promiseSettled) {
+          state.promiseSettled = true;
+          const resolve = state.resolve;
+          state.resolve = null; state.reject = null;
+          resolve();
+        }
       }, () => { if (owned(state)) fail(state); });
     } catch { if (owned(state)) fail(state); }
     return state.promise;

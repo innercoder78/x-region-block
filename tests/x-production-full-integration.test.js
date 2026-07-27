@@ -68,11 +68,18 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   const originalFetch = vi.fn((url, options) => {
     if (observingPageRequest) return 'page-result';
     transportCalls.push({ url, options });
+    const handle = JSON.parse(new URL(url).searchParams.get('variables')).screen_name;
+    let payload = { data: { user_result_by_screen_name: { result: {
+      about_profile: { account_based_in: 'Japan' },
+    } } } };
+    if (handle === 'missing') {
+      payload = { data: { user_result_by_screen_name: { result: { about_profile: {} } } } };
+    } else if (handle === 'unavailable') {
+      payload = { data: { user_result_by_screen_name: { result: { about_profile: null } } } };
+    } else if (handle === 'malformed') payload = {};
     return Promise.resolve({
       ok: true, status: 200,
-      json: () => ({ data: { user_result_by_screen_name: { result: {
-        about_profile: { account_based_in: 'Japan' },
-      } } } }),
+      json: () => payload,
     });
   });
   const storageListeners = new Set();
@@ -89,7 +96,10 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     URL, URLSearchParams, Headers, Request, Promise, MutationObserver, AbortController,
     fetch: originalFetch,
     history: {
-      pushState(state, title, url) { globalScope.location.href = new URL(url, globalScope.location.href).href; },
+      pushState(state, title, url) {
+        if (url === '/failed') throw new Error('simulated history failure');
+        globalScope.location.href = new URL(url, globalScope.location.href).href;
+      },
       replaceState(state, title, url) { globalScope.location.href = new URL(url, globalScope.location.href).href; },
     },
     addEventListener(type, listener) {
@@ -154,10 +164,77 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(getAccountAction(targets.profile)).toBe('hide');
   expect(getAccountAction(targets.tweet)).toBe('hide');
 
+  const latestHeaders = { ...observedHeaders, authorization: 'Bearer latest-test-only' };
+  observingPageRequest = true;
+  expect(globalScope.fetch(observedUrl('latest_runtime_query', 'LatestObserved'), {
+    headers: latestHeaders,
+  })).toBe('page-result');
+  observingPageRequest = false;
+  const dynamicTweet = document.createElement('article');
+  dynamicTweet.setAttribute('data-testid', 'tweet');
+  const dynamicName = document.createElement('div');
+  dynamicName.setAttribute('data-testid', 'User-Name');
+  const dynamicLink = document.createElement('a');
+  dynamicLink.setAttribute('href', '/anthropic');
+  dynamicName.appendChild(dynamicLink); dynamicTweet.appendChild(dynamicName);
+  document.appendChild(dynamicTweet);
+  const routeObservers = observerInstances.filter((observer) => observer.target === document);
+  for (const observer of routeObservers) observer.trigger();
+  await settle();
+  expect(transportCalls).toHaveLength(2);
+  expect(transportCalls[1].url).toContain('/latest_runtime_query/');
+  expect(decodeURIComponent(transportCalls[1].url)).toContain('"screen_name":"anthropic"');
+  expect(transportCalls[1].url).not.toContain('LatestObserved');
+  expect(transportCalls[1].options.headers.authorization).toBe('Bearer latest-test-only');
+  expect(findLocationBadge(dynamicName)).not.toBeNull();
+  for (const observer of routeObservers) observer.trigger();
+  await settle();
+  expect(transportCalls).toHaveLength(2);
+  dynamicLink.setAttribute('href', '/google');
+  for (const observer of routeObservers) observer.trigger();
+  await settle();
+  expect(transportCalls).toHaveLength(3);
+  expect(decodeURIComponent(transportCalls[2].url)).toContain('"screen_name":"google"');
+  document.children.splice(document.children.indexOf(dynamicTweet), 1);
+  dynamicTweet.parentNode = null;
+  for (const observer of routeObservers) observer.trigger();
+  await settle();
+  expect(findLocationBadge(dynamicName)).toBeNull();
+  expect(getAccountAction(dynamicTweet)).toBe('show');
+
+  for (const [handle, label] of [
+    ['missing', 'Location not provided'],
+    ['unavailable', 'Location unavailable'],
+    ['malformed', 'Location unavailable'],
+  ]) {
+    const outcomeTweet = document.createElement('article');
+    outcomeTweet.setAttribute('data-testid', 'tweet');
+    const outcomeName = document.createElement('div');
+    outcomeName.setAttribute('data-testid', 'User-Name');
+    const outcomeLink = document.createElement('a'); outcomeLink.setAttribute('href', `/${handle}`);
+    outcomeName.appendChild(outcomeLink); outcomeTweet.appendChild(outcomeName);
+    document.appendChild(outcomeTweet);
+    for (const observer of routeObservers) observer.trigger();
+    await settle();
+    expect(findLocationBadge(outcomeName).textContent).toContain(label);
+    expect(getAccountAction(outcomeTweet)).toBe('show');
+    document.children.splice(document.children.indexOf(outcomeTweet), 1);
+    outcomeTweet.parentNode = null;
+    for (const observer of routeObservers) observer.trigger();
+    await settle();
+  }
+
+  const beforeNavigation = transportCalls.length;
+  expect(() => globalScope.history.pushState({}, '', '/failed')).toThrow('simulated history failure');
+  expect(transportCalls).toHaveLength(beforeNavigation);
   globalScope.history.pushState({}, '', '/openai/with_replies');
+  expect(transportCalls.length).toBeGreaterThan(beforeNavigation);
+  const afterPush = transportCalls.length;
   globalScope.history.replaceState({}, '', '/openai/status/1');
+  expect(transportCalls.length).toBe(afterPush);
   globalScope.location.href = 'https://x.com/home';
   globalScope.dispatchEvent(new MetadataEvent('popstate'));
+  expect(transportCalls.length).toBe(afterPush);
   expect(observerInstances.some((observer) => observer.target === document)).toBe(true);
 
   runtime.stop();
@@ -167,6 +244,6 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(globalScope.history.pushState).toBe(originalPush);
   expect(storageListeners.size).toBe(0);
   expect(observerInstances.every((observer) => observer.disconnected)).toBe(true);
-  expect(transportCalls).toHaveLength(2);
+  expect(transportCalls).toHaveLength(afterPush);
   expect(transportCalls.every(({ url }) => url.startsWith('https://x.com/'))).toBe(true);
 });

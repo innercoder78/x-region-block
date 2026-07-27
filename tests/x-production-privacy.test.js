@@ -30,4 +30,19 @@ describe('production source privacy boundaries', () => {
     expect(source).not.toMatch(/(?:csrf|guest)[-_ ]?token\s*[:=]\s*['"][^'"]+/i);
     expect(source).not.toMatch(/(?:dataset|setAttribute|createTextNode|textContent|innerHTML)\s*[.(]/);
   });
+
+  it('does not retain stopped production components in a strong collection', async () => {
+    const source = await readFile('src/content/x-production-runtime.js', 'utf8');
+    expect(source).not.toMatch(/\bstopped\s*:\s*new Set\s*\(/);
+    for (const field of [
+      'bridge', 'injector', 'settingsCandidate', 'settingsRuntime',
+      'routeCandidate', 'routeController',
+    ]) {
+      expect(source).toContain(`state[key] = null`);
+      expect(source).toContain(`stopComponent(state, '${field}'`);
+    }
+    expect(source).toContain('state.metadataListener = null');
+    expect(source).toContain('state.pagehideListener = null');
+    expect(source).toContain('state.resolve = null; state.reject = null');
+  });
 });

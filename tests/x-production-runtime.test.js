@@ -198,6 +198,42 @@ describe('X production content runtime', () => {
     expect(concurrentSettings.stop).toHaveBeenCalledOnce();
   });
 
+  it('releases an injection-complete lifecycle while settings remains pending', async () => {
+    const lateSettings = deferred(); mocks.settingsPromise = lateSettings.promise;
+    const runtime = createXProductionContentRuntime(scope());
+    const started = runtime.start();
+    const bridge = mocks.bridge; const injector = mocks.injector;
+    await Promise.resolve(); runtime.stop();
+    await expect(started).rejects.toThrow('Unable to start X production runtime');
+    expect(bridge.stop).toHaveBeenCalledOnce();
+    expect(injector.stop).toHaveBeenCalledOnce();
+    const returnedSettings = settings(); lateSettings.resolve(returnedSettings);
+    await Promise.resolve(); await Promise.resolve();
+    expect(returnedSettings.stop).toHaveBeenCalledOnce();
+    expect(mocks.route).toBeNull();
+  });
+
+  it('stops all components once when injection and settings are both pending', async () => {
+    const injection = deferred(); const lateSettings = deferred();
+    mocks.injectorPromise = injection.promise; mocks.settingsPromise = lateSettings.promise;
+    const runtime = createXProductionContentRuntime(scope());
+    const started = runtime.start();
+    const bridge = mocks.bridge; const injector = mocks.injector;
+    runtime.stop();
+    await expect(started).rejects.toThrow('Unable to start X production runtime');
+    expect(bridge.stop).toHaveBeenCalledOnce();
+    expect(injector.stop).toHaveBeenCalledOnce();
+    injection.resolve();
+    const returnedSettings = settings(); lateSettings.resolve(returnedSettings);
+    await Promise.resolve(); await Promise.resolve();
+    expect(returnedSettings.stop).toHaveBeenCalledOnce();
+    expect(bridge.stop).toHaveBeenCalledOnce();
+    expect(injector.stop).toHaveBeenCalledOnce();
+    expect(mocks.route).toBeNull();
+    mocks.injectorPromise = Promise.resolve(); mocks.settingsPromise = Promise.resolve(settings());
+    await runtime.start(); runtime.stop();
+  });
+
   it('preserves persisted pagehide and stops on normal pagehide', async () => {
     const fake = scope(); const runtime = createXProductionContentRuntime(fake);
     await runtime.start();
