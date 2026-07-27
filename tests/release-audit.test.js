@@ -74,6 +74,13 @@ describe('release audit', () => {
     await expect(auditRelease(await fixture())).resolves.toBeUndefined();
   });
 
+  it('accepts legitimate X and Twitter JavaScript endpoint literals', async () => {
+    const context = await fixture();
+    await writeFile(path.join(context.distRoot, 'chrome/content/content-script.js'),
+      'const endpoints = ["https://x.com/path", "https://twitter.com/path"];');
+    await expect(auditRelease(context)).resolves.toBeUndefined();
+  });
+
   it('rejects missing package extensionName', async () => {
     const context = await fixture();
     await writeFile(context.packagePath, JSON.stringify({ version: '0.0.1' }));
@@ -138,9 +145,13 @@ describe('release audit', () => {
     ['scheme-relative remote destination', 'content/content-script.js', 'const value = "//example.com/collect";'],
     ['scheme-relative remote destination', 'content/account-actions.css', 'body { background: url(//example.com/image.png); }'],
     ['unexpected remote destination', 'popup/popup.html', '<form action="https://example.com/submit"></form>'],
+    ['remote HTML asset', 'popup/popup.html', '<script src="https://x.com/remote.js"></script>'],
+    ['remote CSS asset', 'content/account-actions.css', 'body { background-image: url("https://twitter.com/remote.png"); }'],
     ['embedded request token', 'content/content-script.js', 'const h = { "x-csrf-token": "synthetic-token-value" };'],
     ['fixed GraphQL query ID', 'content/content-script.js', 'const p = "/graphql/SYNTHETIC123/UserByScreenName";'],
     ['captured feature or field-toggle snapshot', 'content/content-script.js', 'const p = { "features": { enabled: true } };'],
+    ['captured feature or field-toggle snapshot', 'content/content-script.js', 'const p = { features: { enabled: true } };'],
+    ['captured feature or field-toggle snapshot', 'content/content-script.js', 'const p = { fieldToggles: { enabled: true } };'],
     ['prohibited persistence API', 'content/content-script.js', 'localStorage.setItem("synthetic", "value");'],
     ['prohibited runtime messaging API', 'content/content-script.js', 'browser.runtime.sendMessage({ synthetic: true });'],
     ['prohibited polling or communication API', 'content/content-script.js', 'setInterval(() => {}, 1000);'],
@@ -148,6 +159,13 @@ describe('release audit', () => {
     const context = await fixture();
     await writeFile(path.join(context.distRoot, 'firefox', relative), contents);
     await expect(auditRelease(context)).rejects.toThrow(message);
+  });
+
+  it('allows ordinary feature-name references without embedded snapshots', async () => {
+    const context = await fixture();
+    await writeFile(path.join(context.distRoot, 'firefox/content/content-script.js'),
+      'const names = ["features", "fieldToggles"]; const features = readFeatures();');
+    await expect(auditRelease(context)).resolves.toBeUndefined();
   });
 
   it('rejects an empty required production bundle', async () => {

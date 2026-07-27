@@ -16,7 +16,7 @@ const sensitiveMaterial = [
   [/["'](?:x-csrf-token|x-guest-token|x-client-transaction-id)["']\s*:\s*["'][^"']{8,}/i,
     'embedded request token'],
   [/\/graphql\/[A-Za-z0-9_-]{8,}\/UserByScreenName/i, 'fixed GraphQL query ID'],
-  [/["'](?:features|fieldToggles)["']\s*:\s*["']?\{[^}]+\}/i,
+  [/(?:["'](?:features|fieldToggles)["']|\b(?:features|fieldToggles)\b)\s*:\s*\{[^}]+\}/i,
     'captured feature or field-toggle snapshot'],
 ];
 const prohibitedApis = [
@@ -83,6 +83,20 @@ function assertAllowedRemoteDestinations(relative, text) {
   const cssSchemeRelative = /(?:url\(\s*["']?\/\/|@import\s+(?:url\()?\s*["']?\/\/)/i;
   invariant(!quotedSchemeRelative && !cssSchemeRelative.test(text),
     `${relative} contains scheme-relative remote destination`);
+}
+
+function assertNoRemoteHtmlAssets(relative, text) {
+  const loadingAttribute = /\b(?:src|href|action|poster|srcset|data|formaction)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+  for (const match of text.matchAll(loadingAttribute)) {
+    const value = match[1] ?? match[2] ?? match[3];
+    invariant(!/(?:https?:)?\/\//i.test(value),
+      `${relative} contains a remote HTML asset`);
+  }
+}
+
+function assertNoRemoteCssAssets(relative, text) {
+  const remoteCssAsset = /(?:url\(\s*["']?|@import\s+(?:url\(\s*)?["']?)(?:https?:)?\/\//i;
+  invariant(!remoteCssAsset.test(text), `${relative} contains a remote CSS asset`);
 }
 
 function auditJavaScript(relative, text) {
@@ -171,6 +185,8 @@ async function auditBrowser(browser, root, manifest, packageJson) {
     const relative = path.relative(root, filename);
     const text = await readFile(filename, 'utf8');
     assertAllowedRemoteDestinations(relative, text);
+    if (/\.html$/i.test(filename)) assertNoRemoteHtmlAssets(relative, text);
+    if (/\.css$/i.test(filename)) assertNoRemoteCssAssets(relative, text);
     if (/\.js$/i.test(filename)) auditJavaScript(relative, text);
   }
 }
