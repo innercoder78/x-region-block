@@ -1,5 +1,6 @@
 {
   "name": "x-region-block",
+  "extensionName": "X Region Reveal & Block",
   "version": "0.0.1",
   "private": true,
   "type": "module",

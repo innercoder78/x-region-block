@@ -11,7 +11,6 @@ const bundles = [
   'popup/popup.js',
   'options/options.js',
 ];
-const remoteReference = /(?:src|href|action|poster)\s*=\s*["'](?:https?:)?\/\//i;
 const sensitiveMaterial = [
   [/\bBearer\s+[A-Za-z0-9._~+/-]{12,}/i, 'embedded bearer token'],
   [/["'](?:x-csrf-token|x-guest-token|x-client-transaction-id)["']\s*:\s*["'][^"']{8,}/i,
@@ -22,8 +21,9 @@ const sensitiveMaterial = [
 ];
 const prohibitedApis = [
   [/\b(?:localStorage|sessionStorage|indexedDB)\b/, 'prohibited persistence API'],
-  [/\b(?:runtime|tabs)\.(?:sendMessage|connect)\s*\(/, 'prohibited cross-context messaging API'],
-  [/\b(?:setInterval|WebSocket|EventSource|XMLHttpRequest)\s*\(/, 'prohibited polling or communication API'],
+  [/\b(?:runtime|tabs)\.(?:sendMessage|connect)\s*\(/, 'prohibited runtime messaging API'],
+  [/\b(?:setInterval|WebSocket|EventSource|XMLHttpRequest)\s*\(/,
+    'prohibited polling or communication API'],
 ];
 
 function invariant(value, message) {
@@ -54,8 +54,8 @@ function manifestAssets(manifest) {
   return [
     manifest.background?.service_worker,
     ...(manifest.background?.scripts ?? []),
-    ...manifest.content_scripts.flatMap((item) => [...(item.js ?? []), ...(item.css ?? [])]),
-    ...manifest.web_accessible_resources.flatMap((item) => item.resources ?? []),
+    ...manifest.content_scripts.flatMap((item) => [...item.js, ...item.css]),
+    ...manifest.web_accessible_resources.flatMap((item) => item.resources),
     manifest.action?.default_popup,
     manifest.options_page,
     manifest.options_ui?.page,
@@ -64,44 +64,65 @@ function manifestAssets(manifest) {
   ].filter(Boolean);
 }
 
-function findUrls(text) {
-  return [...text.matchAll(/https?:\/\/[^\s"'`<>\\)]+/gi)].map((match) => match[0]);
+function assertAllowedRemoteDestinations(relative, text) {
+  const absoluteUrls = [...text.matchAll(/https?:\/\/[^\s"'`<>\\)]+/gi)]
+    .map((match) => match[0]);
+  for (const value of absoluteUrls) {
+    let url;
+    try {
+      url = new URL(value.replace(/\*$/, ''));
+    } catch {
+      throw new Error(`${relative} contains malformed remote destination`);
+    }
+    invariant(url.protocol === 'https:' && ['https://x.com', 'https://twitter.com'].includes(url.origin),
+      `${relative} contains unexpected remote destination`);
+  }
+
+  const quotedSchemeRelative = [...text.matchAll(/(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g)]
+    .some((match) => /^\/\/[^/\s]/.test(match[2].trim()));
+  const cssSchemeRelative = /(?:url\(\s*["']?\/\/|@import\s+(?:url\()?\s*["']?\/\/)/i;
+  invariant(!quotedSchemeRelative && !cssSchemeRelative.test(text),
+    `${relative} contains scheme-relative remote destination`);
 }
 
-function auditText(relative, text) {
-  invariant(!/\/(?:\/|\*)# sourceMappingURL=|sourceMappingURL=/i.test(text),
-    `${relative} contains a source-map reference`);
+function auditJavaScript(relative, text) {
+  invariant(!/sourceMappingURL=/i.test(text), `${relative} contains a source-map reference`);
   for (const [pattern, description] of sensitiveMaterial) {
     invariant(!pattern.test(text), `${relative} contains ${description}`);
   }
   for (const [pattern, description] of prohibitedApis) {
     invariant(!pattern.test(text), `${relative} contains ${description}`);
   }
-  for (const url of findUrls(text)) {
-    invariant(/^https:\/\/(?:api\.)?(?:x|twitter)\.com(?:\/|$)/i.test(url),
-      `${relative} contains unexpected external endpoint`);
-  }
 }
 
-async function auditBrowser(distRoot, browser, metadata) {
+async function readGeneratedManifest(distRoot, browser) {
   const root = path.join(distRoot, browser);
   try {
     await access(root);
   } catch {
     throw new Error(`missing ${browser} build directory`);
   }
-  let manifest;
   try {
-    manifest = JSON.parse(await readFile(await requiredFile(root, 'manifest.json'), 'utf8'));
+    return {
+      manifest: JSON.parse(await readFile(await requiredFile(root, 'manifest.json'), 'utf8')),
+      root,
+    };
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error(`${browser} manifest is not valid JSON`);
     throw error;
   }
-  invariant(manifest.name === metadata.name, `${browser} manifest name differs from package metadata`);
-  invariant(manifest.version === metadata.version, `${browser} manifest version differs from package metadata`);
+}
+
+function assertManifestContract(browser, manifest, packageJson) {
+  invariant(manifest.name === packageJson.extensionName,
+    `${browser} manifest name differs from package extensionName`);
+  invariant(manifest.version === packageJson.version,
+    `${browser} manifest version differs from package version`);
   invariant(manifest.manifest_version === 3, `${browser} manifest must use Manifest V3`);
   invariant(JSON.stringify(manifest.permissions) === JSON.stringify(['storage']),
     `${browser} manifest has unexpected permission`);
+  invariant(manifest.optional_permissions === undefined,
+    `${browser} manifest has unexpected optional permission`);
   invariant(manifest.host_permissions === undefined && manifest.optional_host_permissions === undefined,
     `${browser} manifest has unexpected host permission`);
   invariant(manifest.content_scripts?.length === 1, `${browser} must have exactly one content script`);
@@ -110,42 +131,65 @@ async function auditBrowser(distRoot, browser, metadata) {
     `${browser} manifest has unexpected match pattern`);
   invariant(content.run_at === 'document_start', `${browser} content script must run at document_start`);
   invariant(JSON.stringify(content.js) === JSON.stringify(['content/content-script.js']),
-    `${browser} manifest has an unexpected isolated-world script`);
+    `${browser} manifest has an unexpected content JavaScript entry`);
+  invariant(JSON.stringify(content.css) === JSON.stringify(['content/account-actions.css']),
+    `${browser} manifest has an unexpected content CSS entry`);
+  invariant(!content.js.includes('page/page-script.js'),
+    `${browser} page script must not run as an isolated content script`);
   invariant(manifest.web_accessible_resources?.length === 1
     && JSON.stringify(manifest.web_accessible_resources[0].resources) === JSON.stringify(['page/page-script.js'])
     && JSON.stringify(manifest.web_accessible_resources[0].matches) === JSON.stringify(matches),
   `${browser} manifest has unexpected web-accessible resource`);
+  invariant(manifest.action?.default_popup === 'popup/popup.html',
+    `${browser} manifest has an unexpected popup entry`);
+  if (browser === 'chrome') {
+    invariant(manifest.background?.service_worker === 'background/service-worker.js'
+      && manifest.background.scripts === undefined,
+    'chrome manifest has an unexpected background entry');
+    invariant(manifest.options_page === 'options/options.html' && manifest.options_ui === undefined,
+      'chrome manifest has an unexpected options entry');
+  } else {
+    invariant(JSON.stringify(manifest.background?.scripts) === JSON.stringify(['background/service-worker.js'])
+      && manifest.background.service_worker === undefined,
+    'firefox manifest has an unexpected background entry');
+    invariant(manifest.options_page === undefined
+      && manifest.options_ui?.page === 'options/options.html'
+      && manifest.options_ui.open_in_tab === true,
+    'firefox manifest has an unexpected options entry');
+  }
+}
 
+async function auditBrowser(browser, root, manifest, packageJson) {
+  assertManifestContract(browser, manifest, packageJson);
   await Promise.all(manifestAssets(manifest).map((asset) => requiredFile(root, asset)));
   for (const bundle of bundles) {
     const filename = await requiredFile(root, bundle);
     invariant((await stat(filename)).size > 0, `${browser}/${bundle} is empty`);
   }
-  const files = await walk(root);
-  for (const filename of files) {
-    const relative = path.relative(root, filename);
+  for (const filename of await walk(root)) {
     if (!/\.(?:js|html|css|json)$/i.test(filename)) continue;
+    const relative = path.relative(root, filename);
     const text = await readFile(filename, 'utf8');
-    if (/\.html$/i.test(filename)) {
-      invariant(!remoteReference.test(text) && !/url\(\s*["']?(?:https?:)?\/\//i.test(text),
-        `${relative} references a remote asset`);
-    }
-    if (/\.js$/i.test(filename)) auditText(relative, text);
-    for (const url of findUrls(text)) {
-      invariant(/^https:\/\/(?:api\.)?(?:x|twitter)\.com(?:\/|\*|$)/i.test(url),
-        `${relative} contains unexpected external endpoint`);
-    }
+    assertAllowedRemoteDestinations(relative, text);
+    if (/\.js$/i.test(filename)) auditJavaScript(relative, text);
   }
-  return manifest;
 }
 
 export async function auditRelease({ distRoot = 'dist', packagePath = 'package.json' } = {}) {
   const packageJson = JSON.parse(await readFile(packagePath, 'utf8'));
-  const metadata = { name: 'X Region Reveal & Block', version: packageJson.version };
-  const manifests = [];
-  for (const browser of browsers) manifests.push(await auditBrowser(distRoot, browser, metadata));
-  invariant(manifests[0].name === manifests[1].name && manifests[0].version === manifests[1].version,
-    'generated manifest names and versions must match');
+  invariant(typeof packageJson.extensionName === 'string' && packageJson.extensionName.trim() !== '',
+    'package extensionName must be a nonempty string');
+  invariant(typeof packageJson.version === 'string' && /^\d+(?:\.\d+){0,3}$/.test(packageJson.version),
+    'package version must be a valid nonempty extension version');
+  const generated = [];
+  for (const browser of browsers) generated.push(await readGeneratedManifest(distRoot, browser));
+  invariant(generated[0].manifest.name === generated[1].manifest.name,
+    'generated Chrome and Firefox manifest names disagree');
+  invariant(generated[0].manifest.version === generated[1].manifest.version,
+    'generated Chrome and Firefox manifest versions disagree');
+  for (let index = 0; index < browsers.length; index += 1) {
+    await auditBrowser(browsers[index], generated[index].root, generated[index].manifest, packageJson);
+  }
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);

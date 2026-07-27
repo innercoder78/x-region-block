@@ -16,7 +16,10 @@ async function fixture() {
   temporaryDirectories.push(root);
   const distRoot = path.join(root, 'dist');
   const packagePath = path.join(root, 'package.json');
-  await writeFile(packagePath, JSON.stringify({ version: '0.0.1' }));
+  await writeFile(packagePath, JSON.stringify({
+    extensionName: 'X Region Reveal & Block',
+    version: '0.0.1',
+  }));
   for (const browser of ['chrome', 'firefox']) {
     const directory = path.join(distRoot, browser);
     const manifest = {
@@ -37,7 +40,7 @@ async function fixture() {
       action: { default_popup: 'popup/popup.html' },
       ...(browser === 'chrome'
         ? { options_page: 'options/options.html' }
-        : { options_ui: { page: 'options/options.html' } }),
+        : { options_ui: { page: 'options/options.html', open_in_tab: true } }),
     };
     for (const relative of [...required, 'popup/popup.html', 'options/options.html']) {
       const filename = path.join(directory, relative);
@@ -71,6 +74,31 @@ describe('release audit', () => {
     await expect(auditRelease(await fixture())).resolves.toBeUndefined();
   });
 
+  it('rejects missing package extensionName', async () => {
+    const context = await fixture();
+    await writeFile(context.packagePath, JSON.stringify({ version: '0.0.1' }));
+    await expect(auditRelease(context)).rejects.toThrow(/extensionName/);
+  });
+
+  it.each([
+    ['manifest name differs', (manifest) => { manifest.name = 'Synthetic mismatch'; }, /names disagree/],
+    ['manifest version differs', (manifest) => { manifest.version = '0.0.2'; }, /versions disagree/],
+  ])('rejects when browser %s from the other browser', async (label, mutate, error) => {
+    const context = await fixture();
+    await editManifest(context, 'firefox', mutate);
+    await expect(auditRelease(context)).rejects.toThrow(error);
+  });
+
+  it.each([
+    ['manifest name', (manifest) => { manifest.name = 'Wrong name'; }, /chrome manifest name/],
+    ['manifest version', (manifest) => { manifest.version = '0.0.2'; }, /chrome manifest version/],
+  ])('rejects a %s mismatch with package metadata', async (label, mutate, error) => {
+    const context = await fixture();
+    await editManifest(context, 'chrome', mutate);
+    await editManifest(context, 'firefox', mutate);
+    await expect(auditRelease(context)).rejects.toThrow(error);
+  });
+
   it('rejects a missing generated asset', async () => {
     const context = await fixture();
     await rm(path.join(context.distRoot, 'chrome/page/page-script.js'));
@@ -80,6 +108,7 @@ describe('release audit', () => {
   it.each([
     ['unexpected permission', (manifest) => manifest.permissions.push('tabs')],
     ['unexpected host permission', (manifest) => { manifest.host_permissions = ['https://example.com/*']; }],
+    ['unexpected optional permission', (manifest) => { manifest.optional_permissions = ['tabs']; }],
     ['unexpected match pattern', (manifest) => manifest.content_scripts[0].matches.push('https://example.com/*')],
     ['unexpected web-accessible resource', (manifest) => manifest.web_accessible_resources[0].resources.push('private.js')],
   ])('rejects an %s', async (message, mutate) => {
@@ -89,13 +118,47 @@ describe('release audit', () => {
   });
 
   it.each([
-    ['remote asset', 'popup/popup.html', '<script src="https://example.com/a.js"></script>'],
+    ['background entry', (manifest) => { manifest.background.service_worker = 'background/extra.js'; }],
+    ['content CSS entry', (manifest) => manifest.content_scripts[0].css.push('content/extra.css')],
+    ['popup entry', (manifest) => { manifest.action.default_popup = 'popup/other.html'; }],
+    ['options entry', (manifest) => { manifest.options_page = 'options/other.html'; }],
+  ])('rejects a changed or extra %s', async (message, mutate) => {
+    const context = await fixture();
+    await editManifest(context, 'chrome', mutate);
+    await expect(auditRelease(context)).rejects.toThrow(message);
+  });
+
+  it.each([
+    ['unexpected remote destination', 'popup/popup.html', '<script src="https://example.com/a.js"></script>'],
     ['embedded bearer token', 'content/content-script.js', 'const value = "Bearer abcdefghijklmnop";'],
-    ['unexpected external endpoint', 'content/content-script.js', 'const value = "https://example.com/api";'],
+    ['unexpected remote destination', 'content/content-script.js', 'const value = "https://example.com/api";'],
     ['source-map reference', 'content/content-script.js', '//# sourceMappingURL=bundle.js.map'],
+    ['unexpected remote destination', 'content/content-script.js', 'const value = "https://api.x.com/collect";'],
+    ['unexpected remote destination', 'content/content-script.js', 'const value = "http://x.com/path";'],
+    ['scheme-relative remote destination', 'content/content-script.js', 'const value = "//example.com/collect";'],
+    ['scheme-relative remote destination', 'content/account-actions.css', 'body { background: url(//example.com/image.png); }'],
+    ['unexpected remote destination', 'popup/popup.html', '<form action="https://example.com/submit"></form>'],
+    ['embedded request token', 'content/content-script.js', 'const h = { "x-csrf-token": "synthetic-token-value" };'],
+    ['fixed GraphQL query ID', 'content/content-script.js', 'const p = "/graphql/SYNTHETIC123/UserByScreenName";'],
+    ['captured feature or field-toggle snapshot', 'content/content-script.js', 'const p = { "features": { enabled: true } };'],
+    ['prohibited persistence API', 'content/content-script.js', 'localStorage.setItem("synthetic", "value");'],
+    ['prohibited runtime messaging API', 'content/content-script.js', 'browser.runtime.sendMessage({ synthetic: true });'],
+    ['prohibited polling or communication API', 'content/content-script.js', 'setInterval(() => {}, 1000);'],
   ])('rejects a %s', async (message, relative, contents) => {
     const context = await fixture();
     await writeFile(path.join(context.distRoot, 'firefox', relative), contents);
     await expect(auditRelease(context)).rejects.toThrow(message);
+  });
+
+  it('rejects an empty required production bundle', async () => {
+    const context = await fixture();
+    await writeFile(path.join(context.distRoot, 'chrome/page/page-script.js'), '');
+    await expect(auditRelease(context)).rejects.toThrow(/is empty/);
+  });
+
+  it('rejects invalid generated manifest JSON', async () => {
+    const context = await fixture();
+    await writeFile(path.join(context.distRoot, 'firefox/manifest.json'), '{ invalid');
+    await expect(auditRelease(context)).rejects.toThrow(/not valid JSON/);
   });
 });
