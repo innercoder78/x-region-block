@@ -1,1 +1,3 @@
-// Reserved for future page-context integration. This scaffold has no side effects.
+import { installXPageRuntime } from './x-page-runtime.js';
+
+installXPageRuntime(globalThis);

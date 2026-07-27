@@ -75,6 +75,20 @@ async function validateBrowser(browser) {
     `${browser} manifest has unexpected match patterns`);
   assert(JSON.stringify(manifest.content_scripts[0].css) === JSON.stringify(expectedContentCss),
     `${browser} manifest must reference the account action CSS`);
+  assert(manifest.content_scripts[0].run_at === 'document_start',
+    `${browser} content script must run at document_start`);
+  assert(JSON.stringify(manifest.content_scripts[0].js) === JSON.stringify(['content/content-script.js']),
+    `${browser} manifest has an unexpected content script entry`);
+  assert(manifest.web_accessible_resources?.length === 1,
+    `${browser} manifest must have one web-accessible-resource declaration`);
+  const exposed = manifest.web_accessible_resources[0];
+  assert(JSON.stringify(exposed.resources) === JSON.stringify(['page/page-script.js']),
+    `${browser} manifest must expose only the page script`);
+  assert(JSON.stringify(exposed.matches) === JSON.stringify(expectedMatches),
+    `${browser} page script has unexpected match patterns`);
+  assert(!manifest.content_scripts.some((entry) => entry.js.includes('page/page-script.js')),
+    `${browser} page script must not be an isolated-world content script`);
+  await requireFile(root, 'page/page-script.js');
   await requireFile(root, expectedContentCss[0]);
 
   for (const file of expectedJavaScriptEntries) {
