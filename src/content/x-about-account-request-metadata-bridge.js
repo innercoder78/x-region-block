@@ -94,12 +94,17 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
     const Event = globalScope.Event;
     const URLSearchParams = globalScope.URLSearchParams;
     const origin = location.origin;
+    const documentAddEventListener = document.addEventListener;
+    const documentRemoveEventListener = document.removeEventListener;
+    const documentDispatchEvent = document.dispatchEvent;
     if (globalScope === null || typeof globalScope !== 'object' || Array.isArray(globalScope)
       || (prototype !== null && prototype !== Object.prototype) || !supportedOrigins.has(origin)
       || typeof Event !== 'function' || typeof URLSearchParams !== 'function'
-      || typeof document.addEventListener !== 'function'
-      || typeof document.removeEventListener !== 'function' || typeof document.dispatchEvent !== 'function') throw new TypeError();
-    dependencies = { document, Event, URLSearchParams, origin };
+      || typeof documentAddEventListener !== 'function'
+      || typeof documentRemoveEventListener !== 'function'
+      || typeof documentDispatchEvent !== 'function') throw new TypeError();
+    dependencies = { document, documentAddEventListener, documentRemoveEventListener,
+      documentDispatchEvent, Event, URLSearchParams, origin };
   } catch {
     throw new TypeError('Invalid X About Account request metadata bridge global scope');
   }
@@ -135,9 +140,11 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
     listener = candidateListener;
     active = true;
     try {
-      dependencies.document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, candidateListener);
+      Reflect.apply(dependencies.documentAddEventListener, dependencies.document,
+        [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, candidateListener]);
       if (!active || generation !== ownedGeneration || startup !== transaction) {
-        try { dependencies.document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, candidateListener); } catch { /* Stop owns cleanup. */ }
+        try { Reflect.apply(dependencies.documentRemoveEventListener, dependencies.document,
+          [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, candidateListener]); } catch { /* Stop owns cleanup. */ }
         return;
       }
       const replayEvent = new dependencies.Event(
@@ -145,12 +152,14 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
         { bubbles: false, cancelable: false, composed: false },
       );
       if (!active || generation !== ownedGeneration || startup !== transaction) {
-        try { dependencies.document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, candidateListener); } catch { /* Stop owns cleanup. */ }
+        try { Reflect.apply(dependencies.documentRemoveEventListener, dependencies.document,
+          [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, candidateListener]); } catch { /* Stop owns cleanup. */ }
         return;
       }
-      dependencies.document.dispatchEvent(replayEvent);
+      Reflect.apply(dependencies.documentDispatchEvent, dependencies.document, [replayEvent]);
       if (!active || generation !== ownedGeneration || startup !== transaction) {
-        try { dependencies.document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, candidateListener); } catch { /* Stop owns cleanup. */ }
+        try { Reflect.apply(dependencies.documentRemoveEventListener, dependencies.document,
+          [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, candidateListener]); } catch { /* Stop owns cleanup. */ }
         return;
       }
       startup = null;
@@ -161,7 +170,8 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
       listener = null;
       startup = null;
       snapshot = null;
-      try { dependencies.document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, candidateListener); } catch { /* Startup rollback. */ }
+      try { Reflect.apply(dependencies.documentRemoveEventListener, dependencies.document,
+        [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, candidateListener]); } catch { /* Startup rollback. */ }
       if (stopped) return;
       throw new Error('Unable to start X About Account request metadata bridge');
     }
@@ -176,7 +186,8 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
     listener = null;
     startup = null;
     if (ownedListener) {
-      try { dependencies.document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, ownedListener); }
+      try { Reflect.apply(dependencies.documentRemoveEventListener, dependencies.document,
+        [X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, ownedListener]); }
       catch { report(new Error('Unable to stop X About Account request metadata bridge')); }
     }
   }

@@ -156,4 +156,52 @@ describe('X About Account request capture', () => {
     page.fetch(url.href, { headers: observedHeaders });
     expect(capture.hasSnapshot()).toBe(false);
   });
+
+  it('walks null-safe reusable graphs and rejects residue in features and field toggles', () => {
+    const accepted = new URL(observedUrl('null_safe', 'MiXeD'));
+    accepted.searchParams.set('variables', JSON.stringify({ screen_name: 'MiXeD', values: [null, true, 3] }));
+    accepted.searchParams.set('features', JSON.stringify({ nullable: null, text: 'prefix-mixed-suffix' }));
+    accepted.searchParams.set('fieldToggles', JSON.stringify({ values: [null, false] }));
+    const { page, document } = metadataFacades(() => 'unchanged');
+    const details = [];
+    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, (event) => details.push(event.detail));
+    installXAboutAccountRequestCapture(page);
+    page.fetch(accepted.href, { headers: observedHeaders });
+    expect(details).toHaveLength(1);
+
+    for (const [name, residue] of [
+      ['features', { nested: { value: '@MIXED' } }],
+      ['features', { nested: { screen_name: 'different' } }],
+      ['fieldToggles', { nested: { value: 'mixed' } }],
+      ['fieldToggles', { nested: { screen_name: 'different' } }],
+    ]) {
+      const rejected = new URL(observedUrl(`reject_${name}`, 'MiXeD'));
+      rejected.searchParams.set(name, JSON.stringify(residue));
+      page.fetch(rejected.href, { headers: observedHeaders });
+    }
+    expect(details).toHaveLength(1);
+  });
+
+  it('never invokes constructor Symbol.hasInstance hooks', () => {
+    let checks = 0;
+    function SafeURL(...args) { return new URL(...args); }
+    SafeURL.prototype = URL.prototype;
+    function SafeRequest(...args) { return new Request(...args); }
+    SafeRequest.prototype = Request.prototype;
+    function SafeHeaders(...args) { return new Headers(...args); }
+    SafeHeaders.prototype = Headers.prototype;
+    for (const constructor of [SafeURL, SafeRequest, SafeHeaders]) {
+      Object.defineProperty(constructor, Symbol.hasInstance, {
+        value() { checks += 1; throw new Error('observable hasInstance'); },
+      });
+    }
+    const fetch = vi.fn(() => 'unchanged');
+    const { page } = metadataFacades(fetch);
+    Object.assign(page, { URL: SafeURL, Request: SafeRequest, Headers: SafeHeaders });
+    installXAboutAccountRequestCapture(page);
+    const input = new URL(observedUrl());
+    expect(page.fetch(input, { headers: new Headers(observedHeaders) })).toBe('unchanged');
+    expect(checks).toBe(0);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
 });

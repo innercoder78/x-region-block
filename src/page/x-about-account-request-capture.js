@@ -71,14 +71,14 @@ function safeRecordHeaders(value) {
 }
 
 function normalizeHeaders(state, source) {
-  if (source instanceof state.Headers) {
+  try {
     const headers = Object.create(null);
     for (const name of metadataHeaderNames()) {
       const value = Reflect.apply(state.headersGet, source, [name]);
       if (value !== null) headers[name] = value;
     }
     return headers;
-  }
+  } catch { /* Non-Headers sources are classified structurally below. */ }
   const safeSource = Array.isArray(source) ? safeArrayHeaders(source) : safeRecordHeaders(source);
   const copied = new state.Headers(safeSource);
   const headers = Object.create(null);
@@ -98,6 +98,7 @@ function parseParameter(component) {
 }
 
 function containsObservedAccount(value, canonicalHandle) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') return false;
   if (typeof value === 'string') {
     const normalized = value.toLowerCase();
     return normalized === canonicalHandle || normalized === `@${canonicalHandle}`;
@@ -113,11 +114,14 @@ function captureSnapshot(state, input, init) {
   let request = null;
   let suppliedUrl;
   if (typeof input === 'string') suppliedUrl = input;
-  else if (input instanceof state.URL) suppliedUrl = Reflect.apply(state.urlHref, input, []);
-  else if (input instanceof state.Request) {
-    request = input;
-    suppliedUrl = Reflect.apply(state.requestUrl, input, []);
-  } else return;
+  else {
+    try {
+      suppliedUrl = Reflect.apply(state.requestUrl, input, []);
+      request = input;
+    } catch {
+      try { suppliedUrl = Reflect.apply(state.urlHref, input, []); } catch { return; }
+    }
+  }
   if (typeof suppliedUrl !== 'string' || suppliedUrl.trim() !== suppliedUrl
     || !suppliedUrl.startsWith('https://') || containsControl(suppliedUrl)
     || suppliedUrl.includes('\\') || suppliedUrl.includes('#')) return;
@@ -161,7 +165,11 @@ function captureSnapshot(state, input, init) {
   if (!hasOwn(parameters, 'variables') || !hasOwn(parameters.variables, 'screen_name')) return;
   const canonicalObservedHandle = normalizeXHandle(parameters.variables.screen_name);
   delete parameters.variables.screen_name;
-  if (containsObservedAccount(parameters.variables, canonicalObservedHandle)) return;
+  if (containsObservedAccount(parameters.variables, canonicalObservedHandle)
+    || (hasOwn(parameters, 'features')
+      && containsObservedAccount(parameters.features, canonicalObservedHandle))
+    || (hasOwn(parameters, 'fieldToggles')
+      && containsObservedAccount(parameters.fieldToggles, canonicalObservedHandle))) return;
 
   const headers = normalizeHeaders(state, headerSource);
   for (const [name, value] of Object.entries(headers)) {
@@ -203,6 +211,9 @@ export function installXAboutAccountRequestCapture(globalScope) {
     const Headers = globalScope.Headers;
     const Request = globalScope.Request;
     const origin = location.origin;
+    const documentAddEventListener = document.addEventListener;
+    const documentRemoveEventListener = document.removeEventListener;
+    const documentDispatchEvent = document.dispatchEvent;
     const urlHref = intrinsicGetter(URL, 'href');
     const requestUrl = intrinsicGetter(Request, 'url');
     const requestMethod = intrinsicGetter(Request, 'method');
@@ -211,9 +222,10 @@ export function installXAboutAccountRequestCapture(globalScope) {
     if (typeof fetch !== 'function' || !supportedOrigins.has(origin)
       || typeof Event !== 'function' || typeof CustomEvent !== 'function'
       || typeof URLSearchParams !== 'function' || typeof headersGet !== 'function'
-      || typeof document.addEventListener !== 'function'
-      || typeof document.removeEventListener !== 'function' || typeof document.dispatchEvent !== 'function') throw new TypeError();
-    state = { scope: globalScope, fetch, document, CustomEvent, URL, Headers, Request, origin,
+      || typeof documentAddEventListener !== 'function'
+      || typeof documentRemoveEventListener !== 'function' || typeof documentDispatchEvent !== 'function') throw new TypeError();
+    state = { scope: globalScope, fetch, document, documentAddEventListener,
+      documentRemoveEventListener, documentDispatchEvent, CustomEvent, URL, Headers, Request, origin,
       urlHref, requestUrl, requestMethod, requestHeaders, headersGet, snapshot: null, active: true };
   } catch {
     throw new TypeError('Invalid X About Account request capture global scope');
@@ -229,9 +241,9 @@ export function installXAboutAccountRequestCapture(globalScope) {
   const replay = () => { if (state?.active) { try { state.publish(); } catch { /* Best effort. */ } } };
   state.publish = () => {
     if (!state.active || state.snapshot === null) return;
-    state.document.dispatchEvent(new state.CustomEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
+    Reflect.apply(state.documentDispatchEvent, state.document, [new state.CustomEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
       detail: state.snapshot, bubbles: false, cancelable: false, composed: false,
-    }));
+    })]);
   };
 
   function release() {
@@ -241,7 +253,8 @@ export function installXAboutAccountRequestCapture(globalScope) {
     owned.snapshot = null;
     wrapperState.active = false;
     wrapperState.capture = null;
-    try { owned.document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay); } catch { /* Cleanup is best effort. */ }
+    try { Reflect.apply(owned.documentRemoveEventListener, owned.document,
+      [X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay]); } catch { /* Cleanup is best effort. */ }
     installations.delete(owned.scope);
     try { if (owned.scope.fetch === wrapper) owned.scope.fetch = owned.fetch; } catch { /* Ownership unverified. */ }
     state = null;
@@ -253,7 +266,8 @@ export function installXAboutAccountRequestCapture(globalScope) {
     state.scope.fetch = wrapper;
     if (state.scope.fetch !== wrapper) throw new TypeError();
     listenerAttempted = true;
-    state.document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay);
+    Reflect.apply(state.documentAddEventListener, state.document,
+      [X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay]);
     installations.set(state.scope, controller);
     if (installations.get(state.scope) !== controller) throw new TypeError();
     return controller;

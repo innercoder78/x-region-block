@@ -57,13 +57,14 @@ describe('X About Account request metadata bridge', () => {
 
   it('lets stop claim listener registration synchronously and permits restart', () => {
     const { content, document } = metadataFacades();
-    const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: () => undefined });
     const originalAdd = document.addEventListener.bind(document);
     let claim = true;
+    let bridge;
     document.addEventListener = (type, listener) => {
       originalAdd(type, listener);
       if (claim) bridge.stop();
     };
+    bridge = createXAboutAccountRequestMetadataBridge(content, { onError: () => undefined });
     expect(bridge.start()).toBeUndefined();
     expect(bridge.isActive()).toBe(false);
     expect(bridge.hasSnapshot()).toBe(false);
