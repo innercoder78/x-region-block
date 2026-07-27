@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION, installXAboutAccountRequestCapture,
 } from '../src/page/x-about-account-request-capture.js';
-import { X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE } from '../src/shared/x-about-account-request-metadata-event.js';
+import {
+  X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE,
+  X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE,
+} from '../src/shared/x-about-account-request-metadata-event.js';
 import { metadataFacades, observedHeaders, observedUrl } from './helpers/x-request-metadata-facade.js';
 
 describe('X About Account request capture', () => {
@@ -203,5 +206,125 @@ describe('X About Account request capture', () => {
     expect(page.fetch(input, { headers: new Headers(observedHeaders) })).toBe('unchanged');
     expect(checks).toBe(0);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('matches enumerable record-header semantics without invoking accessors', () => {
+    const cases = [];
+    const hidden = {};
+    Object.defineProperties(hidden, {
+      authorization: { value: 'hidden', enumerable: false },
+      'x-csrf-token': { value: 'hidden', enumerable: false },
+    });
+    cases.push([hidden, false, null]);
+    const accessor = { authorization: 'authorization' };
+    let reads = 0;
+    Object.defineProperty(accessor, 'x-csrf-token', {
+      enumerable: true, get() { reads += 1; return 'csrf'; },
+    });
+    cases.push([accessor, false, () => expect(reads).toBe(0)]);
+    const symbol = { authorization: 'authorization', 'x-csrf-token': 'csrf' };
+    symbol[Symbol('ignored')] = 'symbol-secret';
+    cases.push([symbol, true, null]);
+    for (const [headers, accepted, verify] of cases) {
+      const fetch = vi.fn(() => 'unchanged');
+      const { page } = metadataFacades(fetch);
+      const capture = installXAboutAccountRequestCapture(page);
+      const init = { headers };
+      expect(page.fetch(observedUrl(), init)).toBe('unchanged');
+      expect(capture.hasSnapshot()).toBe(accepted);
+      expect(fetch.mock.calls[0][1]).toBe(init);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      verify?.();
+      capture.stop();
+    }
+  });
+
+  it('skips tuple arrays with observable or nonstandard iteration', () => {
+    const standard = [['authorization', 'authorization'], ['x-csrf-token', 'csrf']];
+    const outerOverride = standard.map((tuple) => [...tuple]);
+    outerOverride[Symbol.iterator] = function* overridden() { yield ['authorization', 'changed']; };
+    const tupleOverride = standard.map((tuple) => [...tuple]);
+    tupleOverride[0][Symbol.iterator] = function* overridden() { yield 'authorization'; yield 'changed'; };
+    for (const headers of [outerOverride, tupleOverride]) {
+      const fetch = vi.fn(() => 'unchanged');
+      const { page } = metadataFacades(fetch);
+      const capture = installXAboutAccountRequestCapture(page);
+      const init = { headers };
+      page.fetch(observedUrl(), init);
+      expect(capture.hasSnapshot()).toBe(false);
+      expect(fetch.mock.calls[0][1]).toBe(init);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      capture.stop();
+    }
+  });
+
+  it('skips tuple capture when the array prototype iterator changes after install', () => {
+    const fetch = vi.fn(() => 'unchanged');
+    const { page } = metadataFacades(fetch);
+    const capture = installXAboutAccountRequestCapture(page);
+    const originalIterator = Array.prototype[Symbol.iterator];
+    let retainedInit;
+    try {
+      Array.prototype[Symbol.iterator] = function* changedIterator() { yield ['authorization', 'changed']; };
+      const headers = [['authorization', 'authorization'], ['x-csrf-token', 'csrf']];
+      const init = { headers };
+      page.fetch(observedUrl(), init);
+      retainedInit = init;
+    } finally {
+      Array.prototype[Symbol.iterator] = originalIterator;
+    }
+    expect(capture.hasSnapshot()).toBe(false);
+    expect(fetch.mock.calls[0][1]).toBe(retainedInit);
+    capture.stop();
+  });
+
+  it('reserves one controller across reentrant fetch assignment and listener registration', () => {
+    const original = vi.fn(() => 'original');
+    const { page, document } = metadataFacades(original);
+    const received = [];
+    let storedFetch = original;
+    Object.defineProperty(page, 'fetch', {
+      configurable: true,
+      get() { return storedFetch; },
+      set(value) {
+        received.push(installXAboutAccountRequestCapture(page));
+        storedFetch = value;
+      },
+    });
+    const originalAdd = document.addEventListener.bind(document);
+    document.addEventListener = (type, listener) => {
+      received.push(installXAboutAccountRequestCapture(page));
+      originalAdd(type, listener);
+    };
+    const controller = installXAboutAccountRequestCapture(page);
+    expect(received).toEqual([controller, controller]);
+    expect(controller.isActive()).toBe(true);
+    expect(document.listeners.get(X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE)).toHaveLength(1);
+    controller.stop();
+  });
+
+  it('lets a reentrant installer stop and permits a later clean install', () => {
+    const original = vi.fn(() => 'original');
+    const { page } = metadataFacades(original);
+    let storedFetch = original;
+    let claimed = false;
+    Object.defineProperty(page, 'fetch', {
+      configurable: true,
+      get() { return storedFetch; },
+      set(value) {
+        if (!claimed) {
+          claimed = true;
+          installXAboutAccountRequestCapture(page).stop();
+        }
+        storedFetch = value;
+      },
+    });
+    const stopped = installXAboutAccountRequestCapture(page);
+    expect(stopped.isActive()).toBe(false);
+    expect(storedFetch).toBe(original);
+    const active = installXAboutAccountRequestCapture(page);
+    expect(active).not.toBe(stopped);
+    expect(active.isActive()).toBe(true);
+    active.stop();
   });
 });

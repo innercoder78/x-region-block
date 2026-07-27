@@ -69,7 +69,9 @@ function normalizeSnapshot(candidate, origin) {
     || (candidate.fieldToggles !== null && !isMetadataPlainObject(candidate.fieldToggles))
     || !isMetadataPlainObject(candidate.headers)) throw new TypeError();
   const snapshot = copyAndValidateJsonValue(candidate, { requireObject: true });
-  if (containsScreenName(snapshot.variables)) throw new TypeError();
+  if (containsScreenName(snapshot.variables)
+    || (snapshot.features !== null && containsScreenName(snapshot.features))
+    || (snapshot.fieldToggles !== null && containsScreenName(snapshot.fieldToggles))) throw new TypeError();
   const headerKeys = Reflect.ownKeys(snapshot.headers);
   if (headerKeys.some((key) => !metadataHeaderNames().includes(key))
     || !hasOwn(snapshot.headers, 'authorization') || !hasOwn(snapshot.headers, 'x-csrf-token')

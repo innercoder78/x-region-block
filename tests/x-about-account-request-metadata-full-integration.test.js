@@ -66,7 +66,10 @@ it('composes captured metadata through broker, parser, settings, badge, and acti
 
   const firstLookup = deferred();
   const secondLookup = deferred();
-  const lookups = [firstLookup, secondLookup];
+  const thirdLookup = deferred();
+  const missingLookup = deferred();
+  const unavailableLookup = deferred();
+  const lookups = [firstLookup, secondLookup, thirdLookup, missingLookup, unavailableLookup];
   const transportFetch = vi.fn(() => lookups.shift().promise);
   const requestedIdentities = [];
   const transport = createXAboutAccountRequestTransport({
@@ -116,14 +119,54 @@ it('composes captured metadata through broker, parser, settings, badge, and acti
   expect(sharedControllers[0].abortCount).toBe(0);
 
   const fresh = target('openai');
+  const freshTimeline = target('OpenAI', true);
   const freshSession = makeSession(fresh, 'profile', broker, consumerControllers);
+  const freshTimelineSession = makeSession(
+    freshTimeline, 'timeline', broker, consumerControllers,
+  );
   freshSession.start();
+  freshTimelineSession.start();
   expect(transportFetch).toHaveBeenCalledTimes(2);
   expect(sharedControllers).toHaveLength(2);
   freshSession.stop();
+  expect(sharedControllers[1].abortCount).toBe(0);
+  freshTimelineSession.stop();
   expect(sharedControllers[1].abortCount).toBe(1);
+  expect(broker.getInFlightCount()).toBe(0);
+  secondLookup.resolve({ ok: true, status: 200, json: () => known });
+  await settle();
   expect(findLocationBadge(fresh.root)).toBeNull();
   expect(getAccountAction(fresh.root)).toBe('show');
+  expect(findLocationBadge(freshTimeline.name)).toBeNull();
+  expect(getAccountAction(freshTimeline.presentation)).toBe('show');
+
+  const afterCancellation = target('openai');
+  const afterCancellationSession = makeSession(
+    afterCancellation, 'profile', broker, consumerControllers,
+  );
+  afterCancellationSession.start();
+  expect(transportFetch).toHaveBeenCalledTimes(3);
+  afterCancellationSession.stop();
+  expect(sharedControllers[2].abortCount).toBe(1);
+  expect(broker.getInFlightCount()).toBe(0);
+
+  for (const [lookup, payload] of [
+    [missingLookup, { data: { user_result_by_screen_name: { result: { about_profile: {} } } } }],
+    [unavailableLookup, { malformed: true }],
+  ]) {
+    const locationTarget = target('openai');
+    const locationSession = makeSession(
+      locationTarget, 'profile', broker, consumerControllers,
+    );
+    locationSession.start();
+    lookup.resolve({ ok: true, status: 200, json: () => payload });
+    await settle();
+    await settle();
+    expect(findLocationBadge(locationTarget.root)).not.toBeNull();
+    expect(getAccountAction(locationTarget.root)).toBe('show');
+    locationSession.stop();
+  }
+  expect(transportFetch).toHaveBeenCalledTimes(5);
 
   bridge.stop();
   expect(bridge.hasSnapshot()).toBe(false);

@@ -107,4 +107,31 @@ describe('X About Account request metadata bridge', () => {
     expect(bridge.hasSnapshot()).toBe(false);
     expect(errors).toHaveLength(1);
   });
+
+  it.each(['variables', 'features', 'fieldToggles'])(
+    'rejects nested screen_name in %s without replacing a valid snapshot', (name) => {
+      const { content, document } = metadataFacades();
+      const errors = [];
+      const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (error) => errors.push(error) });
+      bridge.start();
+      const valid = {
+        version: 1, origin: 'https://x.com', queryId: 'valid_query',
+        variables: { values: [null, true, 3] }, features: { nullable: null },
+        fieldToggles: { values: [false, null] },
+        headers: { authorization: 'authorization', 'x-csrf-token': 'csrf' },
+      };
+      document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
+        detail: JSON.stringify(valid),
+      }));
+      const invalid = structuredClone(valid);
+      invalid[name] = { values: [null, { nested: { screen_name: 'private-handle' } }] };
+      document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
+        detail: JSON.stringify(invalid),
+      }));
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toBe('Unable to accept X About Account request metadata');
+      const identity = createAccountIdentity({ handle: 'different' });
+      expect(bridge.createRequest(identity, { version: 1 }).url).toContain('/valid_query/');
+    },
+  );
 });

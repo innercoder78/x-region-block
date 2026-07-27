@@ -39,7 +39,11 @@ function dataProperty(value, name) {
   return { supplied: false, value: undefined };
 }
 
-function safeArrayHeaders(value) {
+function safeArrayHeaders(state, value) {
+  const arrayIterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator);
+  if (Object.getPrototypeOf(value) !== Array.prototype
+    || Object.getOwnPropertyDescriptor(value, Symbol.iterator)
+    || !arrayIterator || arrayIterator.value !== state.arrayIterator) throw new TypeError();
   const length = Object.getOwnPropertyDescriptor(value, 'length');
   if (!length || !hasOwn(length, 'value') || !Number.isSafeInteger(length.value)) throw new TypeError();
   const output = [];
@@ -47,6 +51,8 @@ function safeArrayHeaders(value) {
     const tupleDescriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!tupleDescriptor || !hasOwn(tupleDescriptor, 'value') || !Array.isArray(tupleDescriptor.value)) throw new TypeError();
     const tuple = tupleDescriptor.value;
+    if (Object.getPrototypeOf(tuple) !== Array.prototype
+      || Object.getOwnPropertyDescriptor(tuple, Symbol.iterator)) throw new TypeError();
     const tupleLength = Object.getOwnPropertyDescriptor(tuple, 'length');
     const first = Object.getOwnPropertyDescriptor(tuple, '0');
     const second = Object.getOwnPropertyDescriptor(tuple, '1');
@@ -62,9 +68,11 @@ function safeRecordHeaders(value) {
   if (!isPlainObject(value)) throw new TypeError();
   const output = Object.create(null);
   for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== 'string') throw new TypeError();
+    if (typeof key !== 'string') continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !hasOwn(descriptor, 'value') || typeof descriptor.value !== 'string') throw new TypeError();
+    if (!descriptor) throw new TypeError();
+    if (!descriptor.enumerable) continue;
+    if (!hasOwn(descriptor, 'value') || typeof descriptor.value !== 'string') throw new TypeError();
     output[key] = descriptor.value;
   }
   return output;
@@ -79,7 +87,7 @@ function normalizeHeaders(state, source) {
     }
     return headers;
   } catch { /* Non-Headers sources are classified structurally below. */ }
-  const safeSource = Array.isArray(source) ? safeArrayHeaders(source) : safeRecordHeaders(source);
+  const safeSource = Array.isArray(source) ? safeArrayHeaders(state, source) : safeRecordHeaders(source);
   const copied = new state.Headers(safeSource);
   const headers = Object.create(null);
   for (const name of metadataHeaderNames()) {
@@ -197,28 +205,70 @@ function intrinsicGetter(constructor, name) {
 export function installXAboutAccountRequestCapture(globalScope) {
   if ((typeof globalScope === 'object' && globalScope !== null) || typeof globalScope === 'function') {
     const existing = installations.get(globalScope);
-    if (existing) return existing;
+    if (existing) return existing.controller;
+  }
+  if ((typeof globalScope !== 'object' || globalScope === null) && typeof globalScope !== 'function') {
+    throw new TypeError('Invalid X About Account request capture global scope');
   }
   let state;
+  let wrapper = null;
+  let replay = null;
+  let wrapperState = null;
+  let phase = 'pending';
+  let installationRunning = true;
+  const entry = { controller: null };
+  const stopped = Object.freeze({ stopped: true });
+
+  function cleanup() {
+    if (state) {
+      state.active = false;
+      state.snapshot = null;
+    }
+    if (wrapperState) {
+      wrapperState.active = false;
+      wrapperState.capture = null;
+    }
+    if (state && replay) {
+      try { Reflect.apply(state.documentRemoveEventListener, state.document,
+        [X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay]); } catch { /* Cleanup is best effort. */ }
+    }
+    if (installations.get(globalScope) === entry) installations.delete(globalScope);
+    if (state && wrapper) {
+      try { if (state.scope.fetch === wrapper) state.scope.fetch = state.fetch; } catch { /* Ownership unverified. */ }
+    }
+    if (!installationRunning) state = null;
+  }
+  function stop() {
+    if (phase === 'stopped' || phase === 'failed') return;
+    phase = 'stopped';
+    cleanup();
+  }
+  const controller = Object.freeze({ stop, isActive: () => phase === 'active',
+    hasSnapshot: () => phase === 'active' && state?.snapshot !== null && state?.snapshot !== undefined });
+  entry.controller = controller;
+  installations.set(globalScope, entry);
+  const checkpoint = () => { if (phase !== 'pending') throw stopped; };
+  const read = (operation) => { const value = operation(); checkpoint(); return value; };
   try {
-    const fetch = globalScope.fetch;
-    const location = globalScope.location;
-    const document = globalScope.document;
-    const Event = globalScope.Event;
-    const CustomEvent = globalScope.CustomEvent;
-    const URL = globalScope.URL;
-    const URLSearchParams = globalScope.URLSearchParams;
-    const Headers = globalScope.Headers;
-    const Request = globalScope.Request;
-    const origin = location.origin;
-    const documentAddEventListener = document.addEventListener;
-    const documentRemoveEventListener = document.removeEventListener;
-    const documentDispatchEvent = document.dispatchEvent;
-    const urlHref = intrinsicGetter(URL, 'href');
-    const requestUrl = intrinsicGetter(Request, 'url');
-    const requestMethod = intrinsicGetter(Request, 'method');
-    const requestHeaders = intrinsicGetter(Request, 'headers');
-    const headersGet = Headers.prototype.get;
+    const fetch = read(() => globalScope.fetch);
+    const location = read(() => globalScope.location);
+    const document = read(() => globalScope.document);
+    const Event = read(() => globalScope.Event);
+    const CustomEvent = read(() => globalScope.CustomEvent);
+    const URL = read(() => globalScope.URL);
+    const URLSearchParams = read(() => globalScope.URLSearchParams);
+    const Headers = read(() => globalScope.Headers);
+    const Request = read(() => globalScope.Request);
+    const origin = read(() => location.origin);
+    const documentAddEventListener = read(() => document.addEventListener);
+    const documentRemoveEventListener = read(() => document.removeEventListener);
+    const documentDispatchEvent = read(() => document.dispatchEvent);
+    const urlHref = read(() => intrinsicGetter(URL, 'href'));
+    const requestUrl = read(() => intrinsicGetter(Request, 'url'));
+    const requestMethod = read(() => intrinsicGetter(Request, 'method'));
+    const requestHeaders = read(() => intrinsicGetter(Request, 'headers'));
+    const headersGet = read(() => Headers.prototype.get);
+    const arrayIterator = read(() => Array.prototype[Symbol.iterator]);
     if (typeof fetch !== 'function' || !supportedOrigins.has(origin)
       || typeof Event !== 'function' || typeof CustomEvent !== 'function'
       || typeof URLSearchParams !== 'function' || typeof headersGet !== 'function'
@@ -226,19 +276,28 @@ export function installXAboutAccountRequestCapture(globalScope) {
       || typeof documentRemoveEventListener !== 'function' || typeof documentDispatchEvent !== 'function') throw new TypeError();
     state = { scope: globalScope, fetch, document, documentAddEventListener,
       documentRemoveEventListener, documentDispatchEvent, CustomEvent, URL, Headers, Request, origin,
-      urlHref, requestUrl, requestMethod, requestHeaders, headersGet, snapshot: null, active: true };
-  } catch {
+      urlHref, requestUrl, requestMethod, requestHeaders, headersGet, arrayIterator,
+      snapshot: null, active: true };
+  } catch (error) {
+    if (error === stopped) {
+      installationRunning = false;
+      cleanup();
+      return controller;
+    }
+    phase = 'failed';
+    installationRunning = false;
+    cleanup();
     throw new TypeError('Invalid X About Account request capture global scope');
   }
 
-  const wrapperState = { active: true, capture: (...args) => captureSnapshot(state, ...args), fetch: state.fetch };
-  const wrapper = function wrappedXAboutAccountFetch(...args) {
+  wrapperState = { active: true, capture: (...args) => captureSnapshot(state, ...args), fetch: state.fetch };
+  wrapper = function wrappedXAboutAccountFetch(...args) {
     if (wrapperState.active) {
       try { wrapperState.capture(args[0], args[1]); } catch { /* Unsafe metadata is ignored. */ }
     }
     return Reflect.apply(wrapperState.fetch, this, args);
   };
-  const replay = () => { if (state?.active) { try { state.publish(); } catch { /* Best effort. */ } } };
+  replay = () => { if (phase === 'active' && state?.active) { try { state.publish(); } catch { /* Best effort. */ } } };
   state.publish = () => {
     if (!state.active || state.snapshot === null) return;
     Reflect.apply(state.documentDispatchEvent, state.document, [new state.CustomEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
@@ -246,36 +305,26 @@ export function installXAboutAccountRequestCapture(globalScope) {
     })]);
   };
 
-  function release() {
-    if (!state) return;
-    const owned = state;
-    owned.active = false;
-    owned.snapshot = null;
-    wrapperState.active = false;
-    wrapperState.capture = null;
-    try { Reflect.apply(owned.documentRemoveEventListener, owned.document,
-      [X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay]); } catch { /* Cleanup is best effort. */ }
-    installations.delete(owned.scope);
-    try { if (owned.scope.fetch === wrapper) owned.scope.fetch = owned.fetch; } catch { /* Ownership unverified. */ }
-    state = null;
-  }
-  const controller = Object.freeze({ stop: release, isActive: () => state?.active === true,
-    hasSnapshot: () => state?.snapshot !== null && state?.snapshot !== undefined });
-  let listenerAttempted = false;
   try {
     state.scope.fetch = wrapper;
-    if (state.scope.fetch !== wrapper) throw new TypeError();
-    listenerAttempted = true;
+    checkpoint();
+    if (read(() => state.scope.fetch) !== wrapper) throw new TypeError();
     Reflect.apply(state.documentAddEventListener, state.document,
       [X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay]);
-    installations.set(state.scope, controller);
-    if (installations.get(state.scope) !== controller) throw new TypeError();
+    checkpoint();
+    if (installations.get(state.scope) !== entry) throw new TypeError();
+    phase = 'active';
+    installationRunning = false;
     return controller;
-  } catch {
-    if (!listenerAttempted && state) {
-      // release still performs every safe rollback step.
+  } catch (error) {
+    if (error === stopped) {
+      installationRunning = false;
+      cleanup();
+      return controller;
     }
-    release();
+    phase = 'failed';
+    installationRunning = false;
+    cleanup();
     throw new Error('Unable to install X About Account request capture');
   }
 }
