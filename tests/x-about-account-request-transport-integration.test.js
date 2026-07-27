@@ -11,8 +11,8 @@ const deferred = () => {
   return { promise, resolve, reject };
 };
 const descriptor = (handle) => ({
-  url: `https://x.com/i/api/graphql/Injected_Test_Id/UserByScreenName?${new URLSearchParams({
-    variables: JSON.stringify({ screen_name: handle }),
+  url: `https://x.com/i/api/graphql/Injected_Test_Id/AboutAccountQuery?${new URLSearchParams({
+    variables: JSON.stringify({ screenName: handle }),
   })}`,
   headers: { authorization: 'injected-test-value', 'x-csrf-token': 'injected-test-value' },
 });

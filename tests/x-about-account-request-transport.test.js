@@ -10,10 +10,10 @@ const identity = () => createAccountIdentity({ handle: 'Example', accountId: '42
 const signal = () => createFakeAbortController().signal;
 const context = (value = signal()) => ({ version: 1, signal: value });
 const headers = () => ({ authorization: 'Bearer secret', 'x-csrf-token': ' csrf-secret ' });
-const url = (parameters = { variables: { screen_name: 'example' } }, host = 'x.com', id = 'Test_ID-7') => {
+const url = (parameters = { variables: { screenName: 'example' } }, host = 'x.com', id = 'Test_ID-7') => {
   const query = new URLSearchParams();
   for (const [name, value] of Object.entries(parameters)) query.set(name, JSON.stringify(value));
-  return `https://${host}/i/api/graphql/${id}/UserByScreenName?${query}`;
+  return `https://${host}/i/api/graphql/${id}/AboutAccountQuery?${query}`;
 };
 const response = (payload = { value: true }) => ({ ok: true, status: 200, json: vi.fn(() => payload) });
 const setup = (overrides = {}) => {
@@ -135,9 +135,7 @@ describe('X About Account request transport requests', () => {
       'X-Client-Transaction-Id': 'transaction',
     };
     const original = {
-      url: url({
-        fieldToggles: { z: false }, variables: { screen_name: 'example', count: 1 }, features: { a: true },
-      }, 'twitter.com', 'a_Z-09'),
+      url: url({ variables: { screenName: 'example' } }, 'twitter.com', 'a_Z-09'),
       headers: originalHeaders,
     };
     const fetch = vi.fn(function fetchDouble() {
@@ -152,9 +150,7 @@ describe('X About Account request transport requests', () => {
     expect(Object.isFrozen(createRequest.mock.calls[0][1])).toBe(true);
     expect(fetch).toHaveBeenCalledTimes(1);
     const [fetchedUrl, init] = fetch.mock.calls[0];
-    expect(fetchedUrl).toBe(url({
-      variables: { screen_name: 'example', count: 1 }, features: { a: true }, fieldToggles: { z: false },
-    }, 'twitter.com', 'a_Z-09'));
+    expect(fetchedUrl).toBe(url({ variables: { screenName: 'example' } }, 'twitter.com', 'a_Z-09'));
     expect(init).toEqual({
       method: 'GET', credentials: 'include', cache: 'no-store', redirect: 'error',
       headers: Object.assign(Object.create(null), {
@@ -162,6 +158,7 @@ describe('X About Account request transport requests', () => {
         'x-twitter-active-user': 'yes', 'x-twitter-auth-type': 'OAuth2Session',
         'x-twitter-client-language': 'en', 'x-guest-token': 'guest',
         'x-client-transaction-id': 'transaction', accept: 'application/json',
+        'accept-language': 'en-US,en;q=0.9',
       }),
       signal: sharedSignal,
     });
@@ -170,16 +167,16 @@ describe('X About Account request transport requests', () => {
   });
 
   it.each([
-    'http://x.com/i/api/graphql/id/UserByScreenName?variables=%7B%7D',
-    'https://api.x.com/i/api/graphql/id/UserByScreenName?variables=%7B%7D',
-    'https://x.com:443/i/api/graphql/id/UserByScreenName?variables=%7B%7D',
-    'https://user@x.com/i/api/graphql/id/UserByScreenName?variables=%7B%7D',
-    'https://x.com/i/api/graphql/id/UserByScreenName/?variables=%7B%7D',
-    'https://x.com/i/api/graphql//id/UserByScreenName?variables=%7B%7D',
+    'http://x.com/i/api/graphql/id/AboutAccountQuery?variables=%7B%7D',
+    'https://api.x.com/i/api/graphql/id/AboutAccountQuery?variables=%7B%7D',
+    'https://x.com:443/i/api/graphql/id/AboutAccountQuery?variables=%7B%7D',
+    'https://user@x.com/i/api/graphql/id/AboutAccountQuery?variables=%7B%7D',
+    'https://x.com/i/api/graphql/id/AboutAccountQuery/?variables=%7B%7D',
+    'https://x.com/i/api/graphql//id/AboutAccountQuery?variables=%7B%7D',
     'https://x.com/i/api/graphql/id/usersbyscreenname?variables=%7B%7D',
-    'https://x.com/i/api/graphql/bad$id/UserByScreenName?variables=%7B%7D',
-    'https://x.com/i/api/graphql/id/UserByScreenName?unknown=%7B%7D',
-    'https://x.com/i/api/graphql/id/UserByScreenName?variables=%ZZ',
+    'https://x.com/i/api/graphql/bad$id/AboutAccountQuery?variables=%7B%7D',
+    'https://x.com/i/api/graphql/id/AboutAccountQuery?unknown=%7B%7D',
+    'https://x.com/i/api/graphql/id/AboutAccountQuery?variables=%ZZ',
   ])('rejects an unsafe URL without disclosing it: %s', async (badUrl) => {
     const { transport, fetch } = setup({ createRequest: () => ({ url: badUrl, headers: headers() }) });
     const failure = await transport.loadPayload(identity(), context()).catch((error) => error);
@@ -189,18 +186,18 @@ describe('X About Account request transport requests', () => {
   });
 
   it.each([
-    '/./i/api/graphql/private_id/UserByScreenName',
-    '/a/../i/api/graphql/private_id/UserByScreenName',
-    '/a/%2e%2e/i/api/graphql/private_id/UserByScreenName',
-    '/a/%2E%2e/i/api/graphql/private_id/UserByScreenName',
-    '/a/.%2E/i/api/graphql/private_id/UserByScreenName',
-    '/i/api/graphql/junk/../private_id/UserByScreenName',
-    '/i/api/graphql/%2e%2e/graphql/private_id/UserByScreenName',
-    '/i/api/graphql/private_id/./UserByScreenName',
-    '/i/api/graphql/private_id/%2E/UserByScreenName',
+    '/./i/api/graphql/private_id/AboutAccountQuery',
+    '/a/../i/api/graphql/private_id/AboutAccountQuery',
+    '/a/%2e%2e/i/api/graphql/private_id/AboutAccountQuery',
+    '/a/%2E%2e/i/api/graphql/private_id/AboutAccountQuery',
+    '/a/.%2E/i/api/graphql/private_id/AboutAccountQuery',
+    '/i/api/graphql/junk/../private_id/AboutAccountQuery',
+    '/i/api/graphql/%2e%2e/graphql/private_id/AboutAccountQuery',
+    '/i/api/graphql/private_id/./AboutAccountQuery',
+    '/i/api/graphql/private_id/%2E/AboutAccountQuery',
   ])('rejects raw dot-segment repair before URL normalization: %s', async (pathname) => {
     const supplied = `https://x.com${pathname}?variables=${encodeURIComponent(JSON.stringify({
-      screen_name: 'example', secret: 'private-variable',
+      screenName: 'example', secret: 'private-variable',
     }))}`;
     const { transport, fetch } = setup({ createRequest: () => ({ url: supplied, headers: headers() }) });
     const failure = await transport.loadPayload(identity(), context()).catch((error) => error);
@@ -219,11 +216,11 @@ describe('X About Account request transport requests', () => {
 
   it('rejects mismatched variables, duplicates, malformed objects, and oversized IDs', async () => {
     const values = [
-      url({ variables: { screen_name: 'other' } }),
-      `${url()}&variables=${encodeURIComponent('{"screen_name":"example"}')}`,
+      url({ variables: { screenName: 'other' } }),
+      `${url()}&variables=${encodeURIComponent('{"screenName":"example"}')}`,
       url({ variables: [] }),
-      url({ features: {}, variables: { screen_name: 'Example' } }),
-      url({ variables: { screen_name: 'example' } }, 'x.com', 'a'.repeat(257)),
+      url({ features: {}, variables: { screenName: 'Example' } }),
+      url({ variables: { screenName: 'example' } }, 'x.com', 'a'.repeat(257)),
     ];
     for (const value of values) {
       const { transport } = setup({ createRequest: () => ({ url: value, headers: headers() }) });

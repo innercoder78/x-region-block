@@ -1,5 +1,7 @@
 import { createAccountIdentity } from '../shared/account-identity.js';
 import { X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION } from './x-about-account-payload-broker.js';
+import { X_ABOUT_ACCOUNT_OPERATION_NAME, isValidXAboutAccountQueryId } from '../shared/x-about-account-query.js';
+import { X_ABOUT_ACCOUNT_RECOVERY_CODES } from '../shared/x-about-account-recovery.js';
 
 export const X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION = 1;
 
@@ -13,7 +15,7 @@ const IDENTITY_KEYS = Object.freeze([
 const CONTEXT_KEYS = Object.freeze(['version', 'signal']);
 const DESCRIPTOR_KEYS = Object.freeze(['url', 'headers']);
 const OPTION_KEYS = Object.freeze(['fetch', 'createRequest']);
-const QUERY_NAMES = new Set(['variables', 'features', 'fieldToggles']);
+const QUERY_NAMES = new Set(['variables']);
 const HEADER_NAMES = new Set([
   'authorization',
   'x-csrf-token',
@@ -23,6 +25,18 @@ const HEADER_NAMES = new Set([
   'x-guest-token',
   'x-client-transaction-id',
 ]);
+function recoverableError(code) {
+  const error = new Error('X About Account request requires fresh metadata');
+  Object.defineProperty(error, 'code', { value: code, enumerable: false });
+  return error;
+}
+const diagnosticTimes = new Map();
+function diagnose(code) {
+  const now = Date.now();
+  if (now - (diagnosticTimes.get(code) ?? 0) < 30_000) return;
+  diagnosticTimes.set(code, now);
+  try { console.warn(`[X Region Reveal & Block] ${code}`); } catch { /* local only */ }
+}
 
 function isPlainObject(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -112,7 +126,7 @@ function canonicalizeUrl(value, handle) {
   });
   const [first, second, third, queryId, operation] = segments;
   if (first !== 'i' || second !== 'api' || third !== 'graphql'
-    || operation !== 'UserByScreenName' || !/^[A-Za-z0-9_-]{1,256}$/.test(queryId)) {
+    || operation !== X_ABOUT_ACCOUNT_OPERATION_NAME || !isValidXAboutAccountQueryId(queryId)) {
     throw new TypeError(DESCRIPTOR_ERROR);
   }
 
@@ -134,14 +148,15 @@ function canonicalizeUrl(value, handle) {
     parameters[name] = parseObjectParameter(decodedValue);
   }
   if (!hasOwn(parameters, 'variables')
-    || !hasOwn(parameters.variables, 'screen_name')
-    || parameters.variables.screen_name !== handle) throw new TypeError(DESCRIPTOR_ERROR);
+    || Reflect.ownKeys(parameters.variables).length !== 1
+    || !hasOwn(parameters.variables, 'screenName')
+    || parameters.variables.screenName !== handle) throw new TypeError(DESCRIPTOR_ERROR);
 
   const canonicalParameters = new URLSearchParams();
-  for (const name of ['variables', 'features', 'fieldToggles']) {
+  for (const name of ['variables']) {
     if (hasOwn(parameters, name)) canonicalParameters.set(name, JSON.stringify(parameters[name]));
   }
-  return `${url.origin}/i/api/graphql/${queryId}/UserByScreenName?${canonicalParameters}`;
+  return `${url.origin}/i/api/graphql/${queryId}/${X_ABOUT_ACCOUNT_OPERATION_NAME}?${canonicalParameters}`;
 }
 
 function canonicalizeHeaders(value) {
@@ -165,6 +180,7 @@ function canonicalizeHeaders(value) {
     throw new TypeError(DESCRIPTOR_ERROR);
   }
   headers.accept = 'application/json';
+  headers['accept-language'] = 'en-US,en;q=0.9';
   return headers;
 }
 
@@ -199,7 +215,7 @@ function captureResponse(response) {
     const json = response.json;
     if (typeof ok !== 'boolean' || !Number.isInteger(status) || status < 100 || status > 599
       || typeof json !== 'function') throw new TypeError();
-    return { ok, json };
+    return { ok, status, json };
   } catch {
     throw new TypeError(RESPONSE_ERROR);
   }
@@ -231,6 +247,8 @@ export function createXAboutAccountRequestTransport(options) {
   }
   if (typeof fetchDependency !== 'function') throw new TypeError('fetch must be a function');
   if (typeof createRequest !== 'function') throw new TypeError('createRequest must be a function');
+  const invalidateSnapshot = typeof createRequest.invalidateSnapshot === 'function'
+    ? createRequest.invalidateSnapshot : null;
 
   function loadPayload(identity, context) {
     const signal = validatePublicRequest(identity, context);
@@ -293,7 +311,24 @@ export function createXAboutAccountRequestTransport(options) {
         throw isAborted(signal) ? abortError() : error;
       }
       if (isAborted(signal)) throw abortError();
-      if (!captured.ok) throw new Error('X About Account request failed');
+      if (!captured.ok) {
+        if ([400, 401, 403, 404].includes(captured.status)) {
+          const kind = captured.status === 401 || captured.status === 403 ? 'authentication' : 'query';
+          try { invalidateSnapshot?.(kind); } catch { /* Metadata invalidation is best effort. */ }
+        }
+        if (captured.status === 401 || captured.status === 403) {
+          diagnose('About Account lookup rejected because authentication became stale.');
+        } else if (captured.status === 400 || captured.status === 404) {
+          diagnose('About Account query ID rejected or obsolete.');
+        }
+        if (captured.status === 401 || captured.status === 403) {
+          throw recoverableError(X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION);
+        }
+        if (captured.status === 400 || captured.status === 404) {
+          throw recoverableError(X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY);
+        }
+        throw new Error('X About Account request failed');
+      }
       if (isAborted(signal)) throw abortError();
       let jsonResult;
       try { jsonResult = captured.json.call(response); } catch {

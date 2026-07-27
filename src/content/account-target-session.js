@@ -170,7 +170,8 @@ export function createXAccountTargetSession(root, options) {
     return processor.getTargets();
   };
   const getTargets = () => (active ? processor.getTargets() : EMPTY);
+  const retryRecoverable = () => (active ? processor.retryRecoverable() : 0);
   const isActive = () => active;
 
-  return Object.freeze({ start, stop, rescan, getTargets, isActive });
+  return Object.freeze({ start, stop, rescan, retryRecoverable, getTargets, isActive });
 }

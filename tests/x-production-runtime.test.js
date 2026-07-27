@@ -146,6 +146,22 @@ describe('X production content runtime', () => {
     runtime.stop();
   });
 
+  it('rate-limits privacy-safe empty-discovery diagnostics after a completed pass', async () => {
+    mocks.snapshot = true; mocks.routeStartHook = () => [];
+    const fake = scope(); fake.console = { info: vi.fn(), warn: vi.fn() };
+    const runtime = createXProductionContentRuntime(fake);
+    await runtime.start(); runtime.stop();
+    await runtime.start();
+    expect(fake.console.warn).toHaveBeenCalledTimes(1);
+    expect(fake.console.warn.mock.calls[0][0]).toContain(
+      'Account discovery started but no supported targets were found.',
+    );
+    expect(JSON.stringify(fake.console.warn.mock.calls)).not.toMatch(
+      /authorization|csrf|cookie|handle|account.?id|query.?id|location|selector|https?:/i,
+    );
+    runtime.stop();
+  });
+
   it('stops a settings runtime that resolves after stop and supports a clean restart', async () => {
     const late = deferred(); mocks.settingsPromise = late.promise;
     const runtime = createXProductionContentRuntime(scope());

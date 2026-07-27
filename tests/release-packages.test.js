@@ -99,4 +99,16 @@ describe('release packages', () => {
     await packageRelease(context);
     await expect(verifyPackages(context)).rejects.toThrow(/unexpected remote assets/);
   });
+
+  it.each([
+    'new self.XMLHttpRequest();',
+    "new window['XMLHttpRequest']();",
+    "new globalThis['XMLHttpRequest']();",
+    "Reflect.construct(self['XMLHttpRequest'], []);",
+  ])('rejects packaged XHR construction bypass: %s', async (source) => {
+    const context = await fixture();
+    await writeFile(path.join(context.distRoot, 'firefox/content/content-script.js'), source);
+    await packageRelease(context);
+    await expect(verifyPackages(context)).rejects.toThrow(/prohibited APIs/);
+  });
 });

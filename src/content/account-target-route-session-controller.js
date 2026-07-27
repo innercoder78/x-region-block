@@ -92,6 +92,10 @@ export function createXAccountTargetRouteSessionController(root, options) {
     const targets = records.flatMap((record) => record.session.getTargets());
     return targets.length === 0 ? EMPTY : Object.freeze(targets);
   };
+  const retryRecoverable = () => {
+    if (!active || records === null) return 0;
+    return records.reduce((count, record) => count + record.session.retryRecoverable(), 0);
+  };
   const plannerOptions = () => (dependencies.hasBaseUrl ? { baseUrl: dependencies.baseUrl } : {});
 
   const transactionCurrent = (candidate) => current(candidate.lifecycle)
@@ -520,6 +524,6 @@ export function createXAccountTargetRouteSessionController(root, options) {
   const getInFlightCount = () => (active ? broker.getInFlightCount() : 0);
   const isActive = () => active;
   return Object.freeze({
-    start, stop, reconcile, rescan, getRoute, getPlans, getTargets, getInFlightCount, isActive,
+    start, stop, reconcile, rescan, retryRecoverable, getRoute, getPlans, getTargets, getInFlightCount, isActive,
   });
 }

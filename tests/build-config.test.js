@@ -62,7 +62,6 @@ describe('build configuration', () => {
     const source = (await Promise.all(sourceFiles.map((file) => readFile(file, 'utf8')))).join('\n');
     const excludedTerms = [
       ['tele', 'metry'].join(''),
-      ['XMLHttp', 'Request'].join(''),
       ['local', 'Storage'].join(''),
       ['browser.storage', '.local'].join(''),
       ['ios', 'application'].join(''),
@@ -73,5 +72,6 @@ describe('build configuration', () => {
       expect(source.toLowerCase()).not.toContain(term.toLowerCase());
     }
     expect(source).not.toMatch(/\bfetch\s*\(/);
+    expect(source).not.toMatch(/new\s+XMLHttpRequest\s*\(/);
   });
 });

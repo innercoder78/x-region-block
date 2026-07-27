@@ -1,15 +1,17 @@
-import { normalizeXHandle } from '../shared/account-identity.js';
 import {
   X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE,
   X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE,
   X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION,
 } from '../shared/x-about-account-request-metadata-event.js';
 import {
-  METADATA_DETAIL_LIMIT, copyAndValidateJsonValue, metadataHeaderNames,
+  METADATA_DETAIL_LIMIT, createMetadataAuthenticationFingerprint, metadataHeaderNames,
   validMetadataHeaderValue, validMetadataQueryId,
 } from '../shared/x-about-account-request-metadata-policy.js';
+import {
+  X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, X_ABOUT_ACCOUNT_OPERATION_NAME,
+} from '../shared/x-about-account-query.js';
 
-export const X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION = 1;
+export const X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION = 2;
 
 const installations = new WeakMap();
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
@@ -73,28 +75,7 @@ function normalizeHeaders(state, source) {
   return headers;
 }
 
-function parseParameter(component) {
-  const separator = component.indexOf('=');
-  const encodedName = separator < 0 ? component : component.slice(0, separator);
-  const encodedValue = separator < 0 ? '' : component.slice(separator + 1);
-  return [decodeURIComponent(encodedName.replace(/\+/g, ' ')),
-    decodeURIComponent(encodedValue.replace(/\+/g, ' '))];
-}
-
-function containsObservedAccount(value, canonicalHandle) {
-  if (value === null || typeof value === 'boolean' || typeof value === 'number') return false;
-  if (typeof value === 'string') {
-    const normalized = value.toLowerCase();
-    return normalized === canonicalHandle || normalized === `@${canonicalHandle}`;
-  }
-  if (Array.isArray(value)) return value.some((item) => containsObservedAccount(item, canonicalHandle));
-  for (const key of Object.keys(value)) {
-    if (key === 'screen_name' || containsObservedAccount(value[key], canonicalHandle)) return true;
-  }
-  return false;
-}
-
-function captureSnapshot(state, input, init) {
+function captureSnapshot(state, input, init = undefined, suppliedXhrHeaders = undefined) {
   let request = null;
   let suppliedUrl;
   if (typeof input === 'string') suppliedUrl = input;
@@ -107,11 +88,11 @@ function captureSnapshot(state, input, init) {
     }
   }
   if (typeof suppliedUrl !== 'string' || suppliedUrl.trim() !== suppliedUrl
-    || !suppliedUrl.startsWith('https://') || containsControl(suppliedUrl)
+    || containsControl(suppliedUrl)
     || suppliedUrl.includes('\\') || suppliedUrl.includes('#')) return;
 
   let method = request ? Reflect.apply(state.requestMethod, request, []) : 'GET';
-  let headerSource = request ? Reflect.apply(state.requestHeaders, request, []) : undefined;
+  let headerSource = suppliedXhrHeaders ?? (request ? Reflect.apply(state.requestHeaders, request, []) : undefined);
   if (init !== undefined) {
     const methodProperty = dataProperty(init, 'method');
     const headersProperty = dataProperty(init, 'headers');
@@ -120,11 +101,13 @@ function captureSnapshot(state, input, init) {
   }
   if (typeof method !== 'string' || method.toUpperCase() !== 'GET' || headerSource === undefined) return;
 
-  const supplied = /^https:\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?$/.exec(suppliedUrl);
+  let absolute;
+  try { absolute = new state.URL(suppliedUrl, `${state.origin}/`).href; } catch { return; }
+  const supplied = /^https:\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?$/.exec(absolute);
   if (!supplied) return;
   const [, authority, rawPath, rawQuery] = supplied;
   if (!rawPath || rawPath.endsWith('/') || rawPath.includes('//') || rawQuery === undefined || rawQuery === '') return;
-  const url = new state.URL(suppliedUrl);
+  const url = new state.URL(absolute);
   if (url.origin !== state.origin || authority !== url.host || url.username || url.password || url.port) return;
   const rawSegments = rawPath.slice(1).split('/');
   if (rawSegments.length !== 5) return;
@@ -137,38 +120,26 @@ function captureSnapshot(state, input, init) {
   });
   const [first, second, third, queryId, operation] = segments;
   if (first !== 'i' || second !== 'api' || third !== 'graphql'
-    || operation !== 'UserByScreenName' || !validMetadataQueryId(queryId)) return;
-
-  const parameters = Object.create(null);
-  for (const component of rawQuery.split('&')) {
-    const [name, value] = parseParameter(component);
-    if (!['variables', 'features', 'fieldToggles'].includes(name) || hasOwn(parameters, name)) return;
-    const parsed = JSON.parse(value);
-    parameters[name] = copyAndValidateJsonValue(parsed, { requireObject: true });
-  }
-  if (!hasOwn(parameters, 'variables') || !hasOwn(parameters.variables, 'screen_name')) return;
-  const canonicalObservedHandle = normalizeXHandle(parameters.variables.screen_name);
-  delete parameters.variables.screen_name;
-  if (containsObservedAccount(parameters.variables, canonicalObservedHandle)
-    || (hasOwn(parameters, 'features')
-      && containsObservedAccount(parameters.features, canonicalObservedHandle))
-    || (hasOwn(parameters, 'fieldToggles')
-      && containsObservedAccount(parameters.fieldToggles, canonicalObservedHandle))) return;
+    || !validMetadataQueryId(operation) || !validMetadataQueryId(queryId)) return;
 
   const headers = normalizeHeaders(state, headerSource);
   for (const [name, value] of Object.entries(headers)) {
     if (!validMetadataHeaderValue(value) || !metadataHeaderNames().includes(name)) return;
   }
   if (!hasOwn(headers, 'authorization') || !hasOwn(headers, 'x-csrf-token')) return;
+  if (operation === X_ABOUT_ACCOUNT_OPERATION_NAME) state.liveQueryId = queryId;
+  const publicationKey = JSON.stringify([
+    createMetadataAuthenticationFingerprint(headers),
+    state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID,
+  ]);
+  if (publicationKey === state.publicationKey) return;
   const serialized = JSON.stringify({
-    version: X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION, origin: state.origin, queryId,
-    variables: parameters.variables,
-    features: hasOwn(parameters, 'features') ? parameters.features : null,
-    fieldToggles: hasOwn(parameters, 'fieldToggles') ? parameters.fieldToggles : null,
-    headers,
+    version: X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION, origin: state.origin,
+    queryId: state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, headers,
   });
   if (serialized.length > METADATA_DETAIL_LIMIT || serialized === state.snapshot) return;
   state.snapshot = serialized;
+  state.publicationKey = publicationKey;
   state.publish();
 }
 
@@ -182,10 +153,11 @@ function createFetchWrapper(fetch) {
   let active = false;
   let capture = null;
   const wrapper = function wrappedXAboutAccountFetch(...args) {
+    const result = Reflect.apply(fetch, this, args);
     if (active) {
       try { capture(args[0], args[1]); } catch { /* Unsafe metadata is ignored. */ }
     }
-    return Reflect.apply(fetch, this, args);
+    return result;
   };
   return {
     wrapper,
@@ -208,6 +180,7 @@ export function installXAboutAccountRequestCapture(globalScope) {
   let replay = null;
   let activateWrapper = null;
   let deactivateWrapper = null;
+  let xhr = null;
   let phase = 'pending';
   let installationRunning = true;
   const entry = { controller: null };
@@ -226,6 +199,14 @@ export function installXAboutAccountRequestCapture(globalScope) {
     if (state && wrapper) {
       try { if (state.scope.fetch === wrapper) state.scope.fetch = state.fetch; } catch { /* Ownership unverified. */ }
     }
+    if (xhr) {
+      for (const name of ['open', 'setRequestHeader', 'send']) {
+        try {
+          if (xhr.prototype[name] === xhr.wrappers[name]) xhr.prototype[name] = xhr.originals[name];
+        } catch { /* Ownership unverified. */ }
+      }
+      xhr.active = false;
+    }
     if (final) {
       if (scope && installations.get(scope) === entry) installations.delete(scope);
       state = null;
@@ -233,6 +214,7 @@ export function installXAboutAccountRequestCapture(globalScope) {
       wrapper = null;
       activateWrapper = null;
       deactivateWrapper = null;
+      xhr = null;
       scope = null;
     }
   }
@@ -257,6 +239,7 @@ export function installXAboutAccountRequestCapture(globalScope) {
     const URLSearchParams = read(() => scope.URLSearchParams);
     const Headers = read(() => scope.Headers);
     const Request = read(() => scope.Request);
+    const XMLHttpRequest = read(() => scope.XMLHttpRequest);
     const origin = read(() => location.origin);
     const documentAddEventListener = read(() => document.addEventListener);
     const documentRemoveEventListener = read(() => document.removeEventListener);
@@ -274,7 +257,52 @@ export function installXAboutAccountRequestCapture(globalScope) {
     state = { scope, fetch, document, documentAddEventListener,
       documentRemoveEventListener, documentDispatchEvent, CustomEvent, URL, Headers, Request, origin,
       urlHref, requestUrl, requestMethod, requestHeaders, headersGet,
-      snapshot: null, active: false };
+      snapshot: null, publicationKey: null, liveQueryId: null, active: false };
+    if (typeof XMLHttpRequest === 'function') {
+      const prototype = read(() => XMLHttpRequest.prototype);
+      const originals = {
+        open: read(() => prototype.open),
+        setRequestHeader: read(() => prototype.setRequestHeader),
+        send: read(() => prototype.send),
+      };
+      if (!Object.values(originals).every((value) => typeof value === 'function')) throw new TypeError();
+      const requests = new WeakMap();
+      const wrappers = {
+        open: function wrappedXAboutAccountOpen(...args) {
+          const result = Reflect.apply(originals.open, this, args);
+          if (xhr?.active) {
+            try { requests.set(this, { method: args[0], url: args[1], headers: Object.create(null) }); } catch { /* passive */ }
+          }
+          return result;
+        },
+        setRequestHeader: function wrappedXAboutAccountSetRequestHeader(...args) {
+          const result = Reflect.apply(originals.setRequestHeader, this, args);
+          if (xhr?.active) {
+            try {
+              const request = requests.get(this);
+              const name = typeof args[0] === 'string' ? args[0].toLowerCase() : '';
+              if (request && metadataHeaderNames().includes(name) && typeof args[1] === 'string') {
+                request.headers[name] = request.headers[name]
+                  ? `${request.headers[name]}, ${args[1]}` : args[1];
+              }
+            } catch { /* passive */ }
+          }
+          return result;
+        },
+        send: function wrappedXAboutAccountSend(...args) {
+          const result = Reflect.apply(originals.send, this, args);
+          if (xhr?.active) {
+            try {
+              const request = requests.get(this);
+              if (request) captureSnapshot(state, request.url,
+                { method: request.method, headers: request.headers }, request.headers);
+            } catch { /* passive */ }
+          }
+          return result;
+        },
+      };
+      xhr = { prototype, originals, wrappers, active: false };
+    }
   } catch (error) {
     if (error === stopped) {
       installationRunning = false;
@@ -301,12 +329,20 @@ export function installXAboutAccountRequestCapture(globalScope) {
     state.scope.fetch = wrapper;
     checkpoint();
     if (read(() => state.scope.fetch) !== wrapper) throw new TypeError();
+    if (xhr) {
+      for (const name of ['open', 'setRequestHeader', 'send']) {
+        xhr.prototype[name] = xhr.wrappers[name];
+        checkpoint();
+        if (read(() => xhr.prototype[name]) !== xhr.wrappers[name]) throw new TypeError();
+      }
+    }
     Reflect.apply(state.documentAddEventListener, state.document,
       [X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay]);
     checkpoint();
     if (installations.get(state.scope) !== entry) throw new TypeError();
     phase = 'active';
     state.active = true;
+    if (xhr) xhr.active = true;
     activateWrapper((...args) => captureSnapshot(state, ...args));
     installationRunning = false;
     return controller;

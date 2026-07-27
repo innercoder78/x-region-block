@@ -3,6 +3,7 @@ import { lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditRelease } from './release-audit.js';
+import { X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, X_ABOUT_ACCOUNT_OPERATION_NAME } from '../src/shared/x-about-account-query.js';
 
 export const browsers = ['chrome', 'firefox'];
 export const expectedFiles = [
@@ -174,8 +175,8 @@ function assertSafeContents(name, entries) {
     /sourceMappingURL=/i,
     /\bBearer\s+[A-Za-z0-9._~+/-]{12,}/i,
     /["'](?:x-csrf-token|x-guest-token|x-client-transaction-id)["']\s*:\s*["'][^"']{8,}/i,
-    /\/graphql\/[A-Za-z0-9_-]{8,}\/UserByScreenName/i,
-    /\b(?:localStorage|sessionStorage|indexedDB|XMLHttpRequest|WebSocket|EventSource)\b/,
+    new RegExp(`/graphql/(?!${X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID}/${X_ABOUT_ACCOUNT_OPERATION_NAME})[A-Za-z0-9_-]{8,}/[A-Za-z0-9_-]+`, 'i'),
+    /\b(?:localStorage|sessionStorage|indexedDB|WebSocket|EventSource)\b|(?:new\s+)?(?:(?:window|globalThis|self)(?:\.XMLHttpRequest|\[['"]XMLHttpRequest['"]\])|XMLHttpRequest)\s*\(|Reflect\.construct\s*\(\s*(?:(?:window|globalThis|self)(?:\.XMLHttpRequest|\[['"]XMLHttpRequest['"]\])|XMLHttpRequest)/,
     /\b(?:runtime|tabs)\.(?:sendMessage|connect)\s*\(/,
   ];
   invariant(!prohibited.some((pattern) => pattern.test(text)),

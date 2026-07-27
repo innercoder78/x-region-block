@@ -18,7 +18,7 @@ wrappers without page-global markers or runtime messaging.
 Page injection and settings initialization proceed after the bridge starts. Account
 processing deliberately waits until injection and settings startup have completed and
 the bridge holds its first valid metadata snapshot. The extension may therefore be
-active but not ready until X makes an eligible `UserByScreenName` request. Invalid
+active but not ready until X makes an eligible GraphQL request with usable authentication metadata. Invalid
 metadata events are only wake-up signals and cannot start processing.
 
 Once metadata is available, production startup composes the real request transport and
@@ -37,11 +37,13 @@ outgoing request only; it does not intercept or capture response bodies.
 
 ## Privacy and lifecycle
 
-Request query templates, query IDs, permitted headers, and authorization material stay
+Request query IDs, permitted headers, and authorization material stay
 in memory. The extension does not read `document.cookie`, use runtime messaging, or
 persist accounts, payloads, parsed locations, queries, headers, or authorization
-material. It contains no hardcoded query ID, bearer token, CSRF token, guest token,
-transaction ID, feature snapshot, or field-toggle snapshot. It does not poll and does
+material. It bundles one centralized, replaceable About Account persisted-query ID as
+a fallback because X's web client may change it; the capture prefers a valid ID observed
+from a live `AboutAccountQuery`. It contains no hardcoded authentication token, bearer
+token, CSRF token, guest token, transaction ID, feature snapshot, or field-toggle snapshot. It does not poll and does
 not add a resolved payload or location cache.
 
 Normal content-runtime stop removes its metadata-readiness and page-lifecycle listeners,
@@ -88,11 +90,12 @@ payload or parsed-location cache. The transport obtains a fresh request descript
 the bridge for every request, validates the endpoint and closed header allowlist, and
 passes successful JSON unchanged to the established parser.
 
-The page capture observes an eligible same-origin `UserByScreenName` GET without
-modifying it or reading its response. It removes the observed handle before publishing
-the reusable template. The isolated-world bridge treats the same-document event as
-untrusted input, validates and deeply copies it, and substitutes each canonical target
-handle only when creating a fresh transport descriptor.
+The page capture passively observes eligible same-origin GraphQL GETs made with fetch or
+XMLHttpRequest without modifying them or reading bodies or responses. Generic traffic
+provides authentication headers; a live `AboutAccountQuery` also refreshes the query ID.
+The isolated-world bridge treats the same-document event as untrusted input, validates
+and deeply copies it, and adds each canonical target handle only when creating a fresh
+About Account descriptor.
 
 ## Download and install
 

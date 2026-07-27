@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION = 1;
+  const X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION = 2;
 
   const X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE =
     'x-region-block:about-account-request-metadata';
@@ -1931,6 +1931,11 @@
     }
   }
 
+  const X_ABOUT_ACCOUNT_RECOVERY_CODES = Object.freeze({
+    AUTHENTICATION: 'AUTHENTICATION_STALE',
+    QUERY: 'QUERY_ID_STALE',
+  });
+
   const ACCOUNT_TARGET_PROCESSOR_VERSION = 1;
 
   const EMPTY$2 = Object.freeze([]);
@@ -2107,11 +2112,13 @@
     };
     const isCurrent = (entry) => active && entry.live && entry.generation === generation
       && accounts.get(entry.key) === entry && entry.targets.size > 0;
-    const resolveFailure = (entry, message) => {
+    const resolveFailure = (entry, message, error = null) => {
       if (!isCurrent(entry)) return;
       entry.pending = null;
       entry.controller = null;
       entry.location = createUnavailableLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+      entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
+        || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
       report(new Error(message));
       presentEntry(entry);
     };
@@ -2146,7 +2153,7 @@
         entry.controller = null;
         entry.location = location;
         presentEntry(entry);
-      }, () => resolveFailure(entry, 'Unable to load account location'));
+      }, (error) => resolveFailure(entry, 'Unable to load account location', error));
     };
     const retireEmptyEntries = () => {
       for (const [key, entry] of accounts) {
@@ -2231,6 +2238,7 @@
             location: null,
             generation,
             live: true,
+            recoverable: false,
           };
           accounts.set(entry.key, entry);
           entriesToStart.push(entry);
@@ -2258,9 +2266,21 @@
       return settings;
     };
     const getTargets = () => targets;
+    const retryRecoverable = () => {
+      if (!active) return 0;
+      let count = 0;
+      for (const entry of accounts.values()) {
+        if (!entry.recoverable || !isCurrent(entry) || entry.pending !== null) continue;
+        entry.recoverable = false;
+        entry.location = null;
+        startLookup(entry);
+        count += 1;
+      }
+      return count;
+    };
     const isActive = () => active;
 
-    return Object.freeze({ start, stop, processChange, setSettings, getTargets, isActive });
+    return Object.freeze({ start, stop, processChange, setSettings, retryRecoverable, getTargets, isActive });
   }
 
   const X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION = 1;
@@ -2726,9 +2746,10 @@
       return processor.getTargets();
     };
     const getTargets = () => (active ? processor.getTargets() : EMPTY$1);
+    const retryRecoverable = () => (active ? processor.retryRecoverable() : 0);
     const isActive = () => active;
 
-    return Object.freeze({ start, stop, rescan, getTargets, isActive });
+    return Object.freeze({ start, stop, rescan, retryRecoverable, getTargets, isActive });
   }
 
   const ACCOUNT_TARGET_ROUTE_SESSION_CONTROLLER_VERSION = 1;
@@ -2819,6 +2840,10 @@
       if (!active || records === null) return EMPTY;
       const targets = records.flatMap((record) => record.session.getTargets());
       return targets.length === 0 ? EMPTY : Object.freeze(targets);
+    };
+    const retryRecoverable = () => {
+      if (!active || records === null) return 0;
+      return records.reduce((count, record) => count + record.session.retryRecoverable(), 0);
     };
     const plannerOptions = () => (dependencies.hasBaseUrl ? { baseUrl: dependencies.baseUrl } : {});
 
@@ -3248,7 +3273,7 @@
     const getInFlightCount = () => (active ? broker.getInFlightCount() : 0);
     const isActive = () => active;
     return Object.freeze({
-      start, stop, reconcile, rescan, getRoute, getPlans, getTargets, getInFlightCount, isActive,
+      start, stop, reconcile, rescan, retryRecoverable, getRoute, getPlans, getTargets, getInFlightCount, isActive,
     });
   }
 
@@ -3555,8 +3580,15 @@
     return runtime;
   }
 
-  const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+  const X_ABOUT_ACCOUNT_OPERATION_NAME = 'AboutAccountQuery';
+
   const QUERY_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
+
+  function isValidXAboutAccountQueryId(value) {
+    return typeof value === 'string' && QUERY_ID_PATTERN.test(value);
+  }
+
+  const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
   const HEADER_NAMES$1 = Object.freeze([
     'authorization', 'x-csrf-token', 'x-twitter-active-user', 'x-twitter-auth-type',
     'x-twitter-client-language', 'x-guest-token', 'x-client-transaction-id',
@@ -3566,8 +3598,25 @@
 
   function metadataHeaderNames() { return HEADER_NAMES$1; }
 
+  function createMetadataAuthenticationFingerprint(headers) {
+    if (!isMetadataPlainObject(headers)) throw new TypeError('Invalid metadata authentication headers');
+    const fingerprint = Object.create(null);
+    for (const name of ['authorization', 'x-csrf-token', 'x-guest-token', 'x-twitter-auth-type']) {
+      if (Object.prototype.hasOwnProperty.call(headers, name)) {
+        const value = headers[name];
+        if (!validMetadataHeaderValue(value)) throw new TypeError('Invalid metadata authentication headers');
+        fingerprint[name] = value;
+      }
+    }
+    if (!Object.prototype.hasOwnProperty.call(fingerprint, 'authorization')
+      || !Object.prototype.hasOwnProperty.call(fingerprint, 'x-csrf-token')) {
+      throw new TypeError('Invalid metadata authentication headers');
+    }
+    return JSON.stringify(fingerprint);
+  }
+
   function validMetadataQueryId(value) {
-    return typeof value === 'string' && QUERY_ID_PATTERN.test(value);
+    return isValidXAboutAccountQueryId(value);
   }
 
   function validMetadataHeaderValue(value) {
@@ -3648,7 +3697,7 @@
   const CONTEXT_KEYS = Object.freeze(['version', 'signal']);
   const DESCRIPTOR_KEYS = Object.freeze(['url', 'headers']);
   const OPTION_KEYS = Object.freeze(['fetch', 'createRequest']);
-  const QUERY_NAMES = new Set(['variables', 'features', 'fieldToggles']);
+  const QUERY_NAMES = new Set(['variables']);
   const HEADER_NAMES = new Set([
     'authorization',
     'x-csrf-token',
@@ -3658,6 +3707,18 @@
     'x-guest-token',
     'x-client-transaction-id',
   ]);
+  function recoverableError(code) {
+    const error = new Error('X About Account request requires fresh metadata');
+    Object.defineProperty(error, 'code', { value: code, enumerable: false });
+    return error;
+  }
+  const diagnosticTimes = new Map();
+  function diagnose(code) {
+    const now = Date.now();
+    if (now - (diagnosticTimes.get(code) ?? 0) < 30_000) return;
+    diagnosticTimes.set(code, now);
+    try { console.warn(`[X Region Reveal & Block] ${code}`); } catch { /* local only */ }
+  }
 
   function isPlainObject(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -3747,7 +3808,7 @@
     });
     const [first, second, third, queryId, operation] = segments;
     if (first !== 'i' || second !== 'api' || third !== 'graphql'
-      || operation !== 'UserByScreenName' || !/^[A-Za-z0-9_-]{1,256}$/.test(queryId)) {
+      || operation !== X_ABOUT_ACCOUNT_OPERATION_NAME || !isValidXAboutAccountQueryId(queryId)) {
       throw new TypeError(DESCRIPTOR_ERROR);
     }
 
@@ -3769,14 +3830,15 @@
       parameters[name] = parseObjectParameter(decodedValue);
     }
     if (!hasOwn$2(parameters, 'variables')
-      || !hasOwn$2(parameters.variables, 'screen_name')
-      || parameters.variables.screen_name !== handle) throw new TypeError(DESCRIPTOR_ERROR);
+      || Reflect.ownKeys(parameters.variables).length !== 1
+      || !hasOwn$2(parameters.variables, 'screenName')
+      || parameters.variables.screenName !== handle) throw new TypeError(DESCRIPTOR_ERROR);
 
     const canonicalParameters = new URLSearchParams();
-    for (const name of ['variables', 'features', 'fieldToggles']) {
+    for (const name of ['variables']) {
       if (hasOwn$2(parameters, name)) canonicalParameters.set(name, JSON.stringify(parameters[name]));
     }
-    return `${url.origin}/i/api/graphql/${queryId}/UserByScreenName?${canonicalParameters}`;
+    return `${url.origin}/i/api/graphql/${queryId}/${X_ABOUT_ACCOUNT_OPERATION_NAME}?${canonicalParameters}`;
   }
 
   function canonicalizeHeaders(value) {
@@ -3800,6 +3862,7 @@
       throw new TypeError(DESCRIPTOR_ERROR);
     }
     headers.accept = 'application/json';
+    headers['accept-language'] = 'en-US,en;q=0.9';
     return headers;
   }
 
@@ -3834,7 +3897,7 @@
       const json = response.json;
       if (typeof ok !== 'boolean' || !Number.isInteger(status) || status < 100 || status > 599
         || typeof json !== 'function') throw new TypeError();
-      return { ok, json };
+      return { ok, status, json };
     } catch {
       throw new TypeError(RESPONSE_ERROR);
     }
@@ -3866,6 +3929,8 @@
     }
     if (typeof fetchDependency !== 'function') throw new TypeError('fetch must be a function');
     if (typeof createRequest !== 'function') throw new TypeError('createRequest must be a function');
+    const invalidateSnapshot = typeof createRequest.invalidateSnapshot === 'function'
+      ? createRequest.invalidateSnapshot : null;
 
     function loadPayload(identity, context) {
       const signal = validatePublicRequest(identity, context);
@@ -3925,7 +3990,24 @@
           throw isAborted(signal) ? abortError() : error;
         }
         if (isAborted(signal)) throw abortError();
-        if (!captured.ok) throw new Error('X About Account request failed');
+        if (!captured.ok) {
+          if ([400, 401, 403, 404].includes(captured.status)) {
+            const kind = captured.status === 401 || captured.status === 403 ? 'authentication' : 'query';
+            try { invalidateSnapshot?.(kind); } catch { /* Metadata invalidation is best effort. */ }
+          }
+          if (captured.status === 401 || captured.status === 403) {
+            diagnose('About Account lookup rejected because authentication became stale.');
+          } else if (captured.status === 400 || captured.status === 404) {
+            diagnose('About Account query ID rejected or obsolete.');
+          }
+          if (captured.status === 401 || captured.status === 403) {
+            throw recoverableError(X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION);
+          }
+          if (captured.status === 400 || captured.status === 404) {
+            throw recoverableError(X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY);
+          }
+          throw new Error('X About Account request failed');
+        }
         if (isAborted(signal)) throw abortError();
         let jsonResult;
         try { jsonResult = captured.json.call(response); } catch {
@@ -3949,7 +4031,7 @@
   ]);
   const hasOwn$1 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
   const SNAPSHOT_KEYS = Object.freeze([
-    'version', 'origin', 'queryId', 'variables', 'features', 'fieldToggles', 'headers',
+    'version', 'origin', 'queryId', 'headers',
   ]);
 
   function exactStringKeys(value, keys) {
@@ -3957,14 +4039,6 @@
     const ownKeys = Reflect.ownKeys(value);
     return ownKeys.length === keys.length && ownKeys.every((key) => typeof key === 'string')
       && keys.every((key) => hasOwn$1(value, key));
-  }
-
-  function containsScreenName(value) {
-    if (Array.isArray(value)) return value.some(containsScreenName);
-    if (value !== null && typeof value === 'object') {
-      return Object.keys(value).some((key) => key === 'screen_name' || containsScreenName(value[key]));
-    }
-    return false;
   }
 
   function validateOptions(options) {
@@ -3995,14 +4069,8 @@
       || candidate.version !== X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION
       || typeof candidate.origin !== 'string' || candidate.origin !== origin
       || typeof candidate.queryId !== 'string' || !validMetadataQueryId(candidate.queryId)
-      || !isMetadataPlainObject(candidate.variables)
-      || (candidate.features !== null && !isMetadataPlainObject(candidate.features))
-      || (candidate.fieldToggles !== null && !isMetadataPlainObject(candidate.fieldToggles))
       || !isMetadataPlainObject(candidate.headers)) throw new TypeError();
     const snapshot = copyAndValidateJsonValue(candidate, { requireObject: true });
-    if (containsScreenName(snapshot.variables)
-      || (snapshot.features !== null && containsScreenName(snapshot.features))
-      || (snapshot.fieldToggles !== null && containsScreenName(snapshot.fieldToggles))) throw new TypeError();
     const headerKeys = Reflect.ownKeys(snapshot.headers);
     if (headerKeys.some((key) => !metadataHeaderNames().includes(key))
       || !hasOwn$1(snapshot.headers, 'authorization') || !hasOwn$1(snapshot.headers, 'x-csrf-token')
@@ -4047,6 +4115,8 @@
     let listener = null;
     let startup = null;
     let snapshot = null;
+    let rejected = null;
+    let refreshWaiters = new Set();
     const report = (error) => { try { onError(error); } catch { /* Error boundary is isolated. */ } };
 
     function start() {
@@ -4061,7 +4131,14 @@
           const parsed = JSON.parse(detail);
           const normalized = normalizeSnapshot(parsed, dependencies.origin);
           if (!active || ownedGeneration !== generation) return;
+          if (rejected?.kind === 'authentication'
+            && createMetadataAuthenticationFingerprint(normalized.headers) === rejected.fingerprint) return;
+          if (rejected?.kind === 'query' && normalized.queryId === rejected.queryId) return;
           snapshot = normalized;
+          rejected = null;
+          const waiters = refreshWaiters;
+          refreshWaiters = new Set();
+          for (const resolve of waiters) resolve();
         } catch {
           if (active && ownedGeneration === generation) {
             report(new Error('Unable to accept X About Account request metadata'));
@@ -4115,6 +4192,10 @@
       active = false;
       generation += 1;
       snapshot = null;
+      rejected = null;
+      for (const resolve of refreshWaiters) resolve();
+      refreshWaiters.clear();
+      refreshWaiters = new Set();
       const ownedListener = listener;
       listener = null;
       startup = null;
@@ -4132,25 +4213,49 @@
         if (!validIdentity(identity) || !exactStringKeys(context, ['version'])
           || context.version !== X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION) throw new TypeError();
         const variables = Object.create(null);
-        variables.screen_name = identity.handle;
-        for (const key of Object.keys(snapshot.variables)) {
-          variables[key] = copyAndValidateJsonValue(snapshot.variables[key]);
-        }
+        variables.screenName = identity.handle;
         const parameters = new dependencies.URLSearchParams();
         parameters.set('variables', JSON.stringify(variables));
-        if (snapshot.features !== null) parameters.set('features', JSON.stringify(snapshot.features));
-        if (snapshot.fieldToggles !== null) parameters.set('fieldToggles', JSON.stringify(snapshot.fieldToggles));
         const headers = Object.create(null);
         for (const key of Object.keys(snapshot.headers)) headers[key] = snapshot.headers[key];
         deeplyFreezeMetadata(headers);
         return Object.freeze({
-          url: `${snapshot.origin}/i/api/graphql/${snapshot.queryId}/UserByScreenName?${parameters}`,
+          url: `${snapshot.origin}/i/api/graphql/${snapshot.queryId}/${X_ABOUT_ACCOUNT_OPERATION_NAME}?${parameters}`,
           headers,
         });
       } catch {
         throw new TypeError('Invalid X About Account request metadata request');
       }
     }
+
+    Object.defineProperty(createRequest, 'invalidateSnapshot', {
+      value: (kind) => {
+        if (snapshot === null) return;
+        rejected = kind === 'query'
+          ? { kind, queryId: snapshot.queryId }
+          : { kind: 'authentication',
+            fingerprint: createMetadataAuthenticationFingerprint(snapshot.headers) };
+        snapshot = null;
+      }, enumerable: false, configurable: false, writable: false,
+    });
+    Object.defineProperty(createRequest, 'waitForFreshSnapshot', {
+      value: (signal) => new Promise((resolve, reject) => {
+        if (snapshot !== null) { resolve(); return; }
+        let settled = false;
+        const finish = () => {
+          if (settled) return; settled = true; refreshWaiters.delete(finish);
+          try { signal?.removeEventListener('abort', cancel); } catch { /* best effort */ }
+          resolve();
+        };
+        const cancel = () => {
+          if (settled) return; settled = true; refreshWaiters.delete(finish);
+          const error = new Error('The operation was aborted'); error.name = 'AbortError'; reject(error);
+        };
+        refreshWaiters.add(finish);
+        try { signal?.addEventListener('abort', cancel, { once: true }); if (signal?.aborted) cancel(); }
+        catch { cancel(); }
+      }), enumerable: false, configurable: false, writable: false,
+    });
 
     return Object.freeze({ start, stop, createRequest, hasSnapshot: () => snapshot !== null, isActive: () => active });
   }
@@ -4491,6 +4596,16 @@
 
   const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 
+  function createDiagnostic(globalScope) {
+    const last = new Map();
+    return (code, level = 'info') => {
+      const now = Date.now();
+      if (now - (last.get(code) ?? 0) < 30_000) return;
+      last.set(code, now);
+      try { globalScope.console?.[level]?.(`[X Region Reveal & Block] ${code}`); } catch { /* local only */ }
+    };
+  }
+
   function usableExtensionApi(namespace) {
     try {
       const { runtime, storage } = namespace ?? {};
@@ -4534,7 +4649,8 @@
     let generation = 0;
     let pending = null;
     let lifecycle = null;
-    const report = () => { /* Raw production errors are deliberately discarded. */ };
+    const diagnostic = createDiagnostic(globalScope);
+    const report = () => diagnostic('Account processing encountered a lifecycle error.', 'warn');
 
     const owned = (state) => lifecycle === state && active && !state.claimed
       && generation === state.generation;
@@ -4593,6 +4709,7 @@
       if (pending === state) pending = null;
       cleanup(state);
       rejectStartup(state);
+      report();
     };
 
     const startRoute = (state) => {
@@ -4626,11 +4743,14 @@
         });
         state.routeCandidate = candidate;
         if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }
-        candidate.start();
+        const discovered = candidate.start();
         if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }
         state.routeController = candidate; state.routeCandidate = null;
         ready = true;
-        removeMetadata(state);
+        diagnostic('Metadata accepted and account processing started.');
+        if (Array.isArray(discovered) && discovered.length === 0) {
+          diagnostic('Account discovery started but no supported targets were found.', 'warn');
+        }
       } catch {
         if (candidate !== null && state.routeCandidate === null) state.routeCandidate = candidate;
         stopComponent(state, 'routeCandidate');
@@ -4670,13 +4790,17 @@
       lifecycle = state;
       pending = state;
       active = true; ready = false;
+      diagnostic('Waiting for X GraphQL authentication metadata.');
       const checkpoint = () => { if (!owned(state)) throw new Error('startup claimed'); };
       state.metadataListener = () => {
         if (!owned(state) || state.metadataCheckPending) return;
         state.metadataCheckPending = true;
         dependencies.Promise.resolve().then(() => {
           state.metadataCheckPending = false;
-          if (owned(state)) startRoute(state);
+          if (owned(state)) {
+            if (ready && state.bridge?.hasSnapshot()) state.routeController?.retryRecoverable();
+            else startRoute(state);
+          }
         });
       };
       state.pagehideListener = (event) => { if (event.persisted !== true && owned(state)) stop(); };

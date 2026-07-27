@@ -6,6 +6,8 @@ import {
 import { createAccountIdentity } from '../src/shared/account-identity.js';
 import { normalizeSettings } from '../src/shared/settings-schema.js';
 import { FakeDocument } from './helpers/fake-dom.js';
+import { X_ABOUT_ACCOUNT_RECOVERY_CODES } from '../src/shared/x-about-account-recovery.js';
+import { getAccountAction } from '../src/content/account-action-renderer.js';
 
 const payload = (location = 'Japan') => ({
   data: { user_result_by_screen_name: { result: { about_profile: { account_based_in: location } } } },
@@ -94,7 +96,7 @@ describe('account target processor API', () => {
     const { processor } = setup();
     expect(ACCOUNT_TARGET_PROCESSOR_VERSION).toBe(1);
     expect(Object.keys(processor)).toEqual([
-      'start', 'stop', 'processChange', 'setSettings', 'getTargets', 'isActive',
+      'start', 'stop', 'processChange', 'setSettings', 'retryRecoverable', 'getTargets', 'isActive',
     ]);
     expect(Object.isFrozen(processor)).toBe(true);
   });
@@ -238,6 +240,32 @@ describe('lookup, reconciliation, and races', () => {
     await settle();
     expect(errors).toEqual(['Unable to load account location']);
     expect(current.badgeContainer.textContent).toContain('unavailable');
+  });
+
+  it('presents unavailable then retries a visible recoverable account exactly once', async () => {
+    const recoverable = new Error('private');
+    Object.defineProperty(recoverable, 'code', {
+      value: X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION,
+    });
+    const loader = vi.fn()
+      .mockRejectedValueOnce(recoverable)
+      .mockResolvedValueOnce(payload('Canada'));
+    const current = target();
+    const { processor } = setup({
+      settings: { region: { highlight: ['NORTH_AMERICA'] } },
+      loadAboutAccountPayload: loader,
+    });
+    processor.start(); processor.processChange(change([current]));
+    await settle();
+    expect(current.badgeContainer.textContent).toContain('unavailable');
+    expect(processor.retryRecoverable()).toBe(1);
+    await settle();
+    expect(current.badgeContainer.textContent).toContain('🇨🇦');
+    expect(current.badgeContainer.textContent).toContain('North America');
+    expect(getAccountAction(current.accountContainer)).toBe('highlight');
+    expect(processor.retryRecoverable()).toBe(0);
+    expect(loader).toHaveBeenCalledTimes(2);
+    processor.stop();
   });
 
   it('validates atomically and rejects duplicate containers', () => {

@@ -7,15 +7,110 @@ import {
   X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE,
 } from '../src/shared/x-about-account-request-metadata-event.js';
 import { metadataFacades, observedHeaders, observedUrl } from './helpers/x-request-metadata-facade.js';
+import { X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID } from '../src/shared/x-about-account-query.js';
 
 describe('X About Account request capture', () => {
+  it('observes only after a successful original fetch and accepts relative generic GraphQL URLs', () => {
+    const order = [];
+    const fetch = vi.fn(() => { order.push('fetch'); return 'exact'; });
+    const { page, document } = metadataFacades(fetch);
+    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, (event) => {
+      order.push('metadata');
+      expect(JSON.parse(event.detail).queryId).toBe(X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID);
+    });
+    installXAboutAccountRequestCapture(page);
+    expect(page.fetch('/i/api/graphql/generic/HomeTimeline?variables=%7B%7D',
+      { headers: observedHeaders })).toBe('exact');
+    expect(order).toEqual(['fetch', 'metadata']);
+  });
+
+  it('does not republish metadata for volatile auxiliary-header changes', () => {
+    const { page, document } = metadataFacades(() => undefined);
+    const details = [];
+    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE,
+      (event) => details.push(event.detail));
+    installXAboutAccountRequestCapture(page);
+    const url = '/i/api/graphql/generic/HomeTimeline?variables=%7B%7D';
+    page.fetch(url, { headers: observedHeaders });
+    page.fetch(url, { headers: { ...observedHeaders, 'x-client-transaction-id': 'changed' } });
+    page.fetch(url, { headers: { ...observedHeaders, 'x-twitter-client-language': 'fr' } });
+    page.fetch(url, { headers: { ...observedHeaders, 'x-twitter-active-user': 'no' } });
+    expect(details).toHaveLength(1);
+  });
+
+  it('passively observes XHR only after successful open, headers, and send', () => {
+    const order = [];
+    class FakeXHR {
+      open(...args) { order.push(['open', ...args]); return 'opened'; }
+      setRequestHeader(...args) { order.push(['header', ...args]); return 'set'; }
+      send(...args) { order.push(['send', ...args]); return 'sent'; }
+    }
+    const originals = { open: FakeXHR.prototype.open,
+      setRequestHeader: FakeXHR.prototype.setRequestHeader, send: FakeXHR.prototype.send };
+    const { page, document } = metadataFacades(() => undefined);
+    page.XMLHttpRequest = FakeXHR;
+    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE,
+      () => order.push(['metadata']));
+    const controller = installXAboutAccountRequestCapture(page);
+    const xhr = new FakeXHR();
+    expect(xhr.open('GET', '/i/api/graphql/generic/HomeTimeline?x=1')).toBe('opened');
+    expect(xhr.setRequestHeader('authorization', 'Bearer test')).toBe('set');
+    xhr.setRequestHeader('x-csrf-token', 'csrf');
+    expect(xhr.send('untouched body')).toBe('sent');
+    expect(order.at(-2)[0]).toBe('send');
+    expect(order.at(-1)[0]).toBe('metadata');
+    controller.stop();
+    expect(FakeXHR.prototype.open).toBe(originals.open);
+    expect(FakeXHR.prototype.setRequestHeader).toBe(originals.setRequestHeader);
+    expect(FakeXHR.prototype.send).toBe(originals.send);
+  });
+
+  it('publishes nothing when original fetch or XHR send throws', () => {
+    const failure = new Error('exact failure');
+    class FakeXHR {
+      open() {} setRequestHeader() {} send() { throw failure; }
+    }
+    const fetch = vi.fn(() => { throw failure; });
+    const { page, document } = metadataFacades(fetch); page.XMLHttpRequest = FakeXHR;
+    const details = [];
+    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, (event) => details.push(event));
+    installXAboutAccountRequestCapture(page);
+    expect(() => page.fetch(observedUrl(), { headers: observedHeaders })).toThrow(failure);
+    const xhr = new FakeXHR(); xhr.open('GET', observedUrl());
+    xhr.setRequestHeader('authorization', 'Bearer test'); xhr.setRequestHeader('x-csrf-token', 'csrf');
+    expect(() => xhr.send()).toThrow(failure);
+    expect(details).toEqual([]);
+  });
+  it('preserves newer XHR methods and permits clean reinjection without stacking', () => {
+    class FakeXHR { open() { return 'open'; } setRequestHeader() {} send() { return 'send'; } }
+    const { page } = metadataFacades(() => undefined); page.XMLHttpRequest = FakeXHR;
+    const first = installXAboutAccountRequestCapture(page);
+    const retainedOpen = FakeXHR.prototype.open;
+    const newerSend = vi.fn(() => 'newer'); FakeXHR.prototype.send = newerSend;
+    first.stop();
+    expect(FakeXHR.prototype.send).toBe(newerSend);
+    expect(Reflect.apply(retainedOpen, new FakeXHR(), ['GET', observedUrl()])).toBe('open');
+    const second = installXAboutAccountRequestCapture(page);
+    expect(second).not.toBe(first);
+    expect(installXAboutAccountRequestCapture(page)).toBe(second);
+    second.stop();
+  });
+
+  it('does not add extension properties to observed XHR instances', () => {
+    class FakeXHR { open() {} setRequestHeader() {} send() {} }
+    const { page } = metadataFacades(() => undefined); page.XMLHttpRequest = FakeXHR;
+    installXAboutAccountRequestCapture(page);
+    const xhr = new FakeXHR(); const before = Reflect.ownKeys(xhr);
+    xhr.open('GET', observedUrl()); xhr.setRequestHeader('authorization', 'a'); xhr.send();
+    expect(Reflect.ownKeys(xhr)).toEqual(before);
+  });
   it('is versioned, idempotent, sanitizes metadata, and restores fetch', () => {
     const fetch = vi.fn(() => 'page-result');
     const { page, document } = metadataFacades(fetch);
     const details = [];
     document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, (event) => details.push(event.detail));
     const controller = installXAboutAccountRequestCapture(page);
-    expect(X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION).toBe(1);
+    expect(X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION).toBe(2);
     expect(Object.keys(controller)).toEqual(['stop', 'isActive', 'hasSnapshot']);
     expect(Object.isFrozen(controller)).toBe(true);
     expect(installXAboutAccountRequestCapture(page)).toBe(controller);
@@ -25,10 +120,9 @@ describe('X About Account request capture', () => {
     expect(fetch).toHaveBeenCalledWith(input, init);
     const snapshot = JSON.parse(details[0]);
     expect(Object.keys(snapshot)).toEqual([
-      'version', 'origin', 'queryId', 'variables', 'features', 'fieldToggles', 'headers',
+      'version', 'origin', 'queryId', 'headers',
     ]);
     expect(details[0]).not.toContain('Observed');
-    expect(snapshot.variables).not.toHaveProperty('screen_name');
     expect(snapshot.headers).not.toHaveProperty('cookie');
     page.fetch(input, init);
     expect(details).toHaveLength(1);
@@ -135,62 +229,6 @@ describe('X About Account request capture', () => {
     page.fetch(request);
     expect(details).toHaveLength(2);
     expect(JSON.parse(details[1]).queryId).toBe('request_query');
-  });
-
-  it.each(['a', 'i', 'user', 'MiXeD', '@Prefixed'])(
-    'removes short and normalized observed handle %s semantically', (handle) => {
-      const { page, document } = metadataFacades(() => 'unchanged');
-      const details = [];
-      document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, (event) => details.push(event.detail));
-      installXAboutAccountRequestCapture(page);
-      const url = new URL(observedUrl('semantic_query', handle));
-      const variables = JSON.parse(url.searchParams.get('variables'));
-      variables.unrelated = `token-containing-${handle}-value`;
-      url.searchParams.set('variables', JSON.stringify(variables));
-      page.fetch(url.href, { headers: { ...observedHeaders, authorization: `Bearer ${handle}-substring` } });
-      expect(details).toHaveLength(1);
-      expect(JSON.parse(details[0]).variables).not.toHaveProperty('screen_name');
-    },
-  );
-
-  it.each([
-    { nested: { screen_name: 'someone-else' } },
-    { nested: { value: 'observed' } },
-    { nested: { value: '@OBSERVED' } },
-  ])('rejects semantic account residue %#', (extraVariables) => {
-    const url = new URL(observedUrl());
-    url.searchParams.set('variables', JSON.stringify({
-      ...JSON.parse(url.searchParams.get('variables')), ...extraVariables,
-    }));
-    const { page } = metadataFacades(() => 'unchanged');
-    const capture = installXAboutAccountRequestCapture(page);
-    page.fetch(url.href, { headers: observedHeaders });
-    expect(capture.hasSnapshot()).toBe(false);
-  });
-
-  it('walks null-safe reusable graphs and rejects residue in features and field toggles', () => {
-    const accepted = new URL(observedUrl('null_safe', 'MiXeD'));
-    accepted.searchParams.set('variables', JSON.stringify({ screen_name: 'MiXeD', values: [null, true, 3] }));
-    accepted.searchParams.set('features', JSON.stringify({ nullable: null, text: 'prefix-mixed-suffix' }));
-    accepted.searchParams.set('fieldToggles', JSON.stringify({ values: [null, false] }));
-    const { page, document } = metadataFacades(() => 'unchanged');
-    const details = [];
-    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, (event) => details.push(event.detail));
-    installXAboutAccountRequestCapture(page);
-    page.fetch(accepted.href, { headers: observedHeaders });
-    expect(details).toHaveLength(1);
-
-    for (const [name, residue] of [
-      ['features', { nested: { value: '@MIXED' } }],
-      ['features', { nested: { screen_name: 'different' } }],
-      ['fieldToggles', { nested: { value: 'mixed' } }],
-      ['fieldToggles', { nested: { screen_name: 'different' } }],
-    ]) {
-      const rejected = new URL(observedUrl(`reject_${name}`, 'MiXeD'));
-      rejected.searchParams.set(name, JSON.stringify(residue));
-      page.fetch(rejected.href, { headers: observedHeaders });
-    }
-    expect(details).toHaveLength(1);
   });
 
   it('never invokes constructor Symbol.hasInstance hooks', () => {
@@ -565,4 +603,117 @@ describe('X About Account request capture', () => {
     expect(source).toContain('deactivateWrapper = null;');
     expect(source).not.toContain('wrapperState');
   });
+
+  it('reserves the pending controller before reading the XHR constructor', () => {
+    const { page } = metadataFacades(() => undefined);
+    let reentered; let reads = 0;
+    class FakeXHR { open() {} setRequestHeader() {} send() {} }
+    Object.defineProperty(page, 'XMLHttpRequest', { configurable: true, get() {
+      reads += 1; reentered = installXAboutAccountRequestCapture(page); return FakeXHR;
+    } });
+    const controller = installXAboutAccountRequestCapture(page);
+    expect(reentered).toBe(controller); expect(reads).toBe(1); controller.stop();
+  });
+
+  it.each(['open', 'setRequestHeader', 'send'])(
+    'returns the pending controller during XHR %s assignment', (observedName) => {
+      const { page } = metadataFacades(() => undefined);
+      const target = { open() {}, setRequestHeader() {}, send() {} };
+      let reentered; let controller;
+      const prototype = new Proxy(target, { set(object, name, value) {
+        Reflect.set(object, name, value);
+        if (name === observedName && reentered === undefined) {
+          reentered = installXAboutAccountRequestCapture(page);
+        }
+        return true;
+      } });
+      function FakeXHR() {} FakeXHR.prototype = prototype; page.XMLHttpRequest = FakeXHR;
+      controller = installXAboutAccountRequestCapture(page);
+      expect(reentered).toBe(controller); controller.stop();
+    },
+  );
+
+  it.each(['open', 'setRequestHeader', 'send'])(
+    'allows reentrant stop to claim pending XHR %s assignment', (observedName) => {
+      const { page } = metadataFacades(() => undefined);
+      const originals = { open() {}, setRequestHeader() {}, send() {} };
+      const target = { ...originals }; let claimed = false; let reserved;
+      const prototype = new Proxy(target, { set(object, name, value) {
+        Reflect.set(object, name, value);
+        if (name === observedName && !claimed) {
+          claimed = true; reserved = installXAboutAccountRequestCapture(page); reserved.stop();
+        }
+        return true;
+      } });
+      function FakeXHR() {} FakeXHR.prototype = prototype; page.XMLHttpRequest = FakeXHR;
+      expect(installXAboutAccountRequestCapture(page)).toBe(reserved);
+      expect(reserved.isActive()).toBe(false);
+      expect(target.open).toBe(originals.open);
+      expect(target.setRequestHeader).toBe(originals.setRequestHeader);
+      expect(target.send).toBe(originals.send);
+    },
+  );
+
+  it.each(['setRequestHeader', 'send'])(
+    'rolls back partial XHR installation when %s assignment fails', (failureName) => {
+      const { page } = metadataFacades(() => undefined);
+      const originals = { open() {}, setRequestHeader() {}, send() {} };
+      const target = { ...originals }; let failed = false;
+      const prototype = new Proxy(target, { set(object, name, value) {
+        if (name === failureName && value !== originals[name] && !failed) {
+          failed = true; throw new Error('assignment failed');
+        }
+        return Reflect.set(object, name, value);
+      } });
+      function FakeXHR() {} FakeXHR.prototype = prototype; page.XMLHttpRequest = FakeXHR;
+      expect(() => installXAboutAccountRequestCapture(page)).toThrow('Unable to install');
+      expect(target.open).toBe(originals.open);
+      expect(target.setRequestHeader).toBe(originals.setRequestHeader);
+      expect(target.send).toBe(originals.send);
+    },
+  );
+
+  it.each(['open', 'setRequestHeader', 'send'])(
+    'preserves a newer page-owned XHR %s method during stop', (name) => {
+      class FakeXHR { open() {} setRequestHeader() {} send() {} }
+      const { page } = metadataFacades(() => undefined); page.XMLHttpRequest = FakeXHR;
+      const controller = installXAboutAccountRequestCapture(page);
+      const newer = vi.fn(); FakeXHR.prototype[name] = newer; controller.stop();
+      expect(FakeXHR.prototype[name]).toBe(newer);
+    },
+  );
+
+
+  it('restores every owned XHR wrapper when listener registration fails', () => {
+    class FakeXHR { open() {} setRequestHeader() {} send() {} }
+    const originals = { open: FakeXHR.prototype.open,
+      setRequestHeader: FakeXHR.prototype.setRequestHeader, send: FakeXHR.prototype.send };
+    const { page, document } = metadataFacades(() => undefined); page.XMLHttpRequest = FakeXHR;
+    document.addEventListener = () => { throw new Error('listener failure'); };
+    expect(() => installXAboutAccountRequestCapture(page)).toThrow('Unable to install');
+    expect(FakeXHR.prototype.open).toBe(originals.open);
+    expect(FakeXHR.prototype.setRequestHeader).toBe(originals.setRequestHeader);
+    expect(FakeXHR.prototype.send).toBe(originals.send);
+  });
+
+  it('rolls back owned XHR wrappers after ownership readback fails', () => {
+    const { page } = metadataFacades(() => undefined);
+    const originals = { open() {}, setRequestHeader() {}, send() {} };
+    const target = { ...originals }; let openReads = 0; let installationStarted = false;
+    const prototype = new Proxy(target, {
+      set(object, name, value) { installationStarted = true; return Reflect.set(object, name, value); },
+      get(object, name, receiver) {
+        if (installationStarted && name === 'open' && (openReads += 1) === 1) {
+          throw new Error('readback failure');
+        }
+        return Reflect.get(object, name, receiver);
+      },
+    });
+    function FakeXHR() {} FakeXHR.prototype = prototype; page.XMLHttpRequest = FakeXHR;
+    expect(() => installXAboutAccountRequestCapture(page)).toThrow('Unable to install');
+    expect(target.open).toBe(originals.open);
+    expect(target.setRequestHeader).toBe(originals.setRequestHeader);
+    expect(target.send).toBe(originals.send);
+  });
+
 });
