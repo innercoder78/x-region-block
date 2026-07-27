@@ -21,18 +21,18 @@ X account settings or content.
 
 ## Automated verification
 
-Start manual testing from downloaded release assets; testers do not need Node.js, npm,
-or a local repository build. Before opening a browser, record the release/tag name,
-exact commit SHA, downloaded filename, and SHA-256 verification result from
-`SHA256SUMS.txt`. Also record the browser name and exact version, and whether the test
-used a downloaded package or a locally reproduced build.
+Start manual testing from GitHub's **Code → Download ZIP** archive or an optional
+browser-only Release asset; testers do not need Node.js, npm, or a local build. Record
+the exact commit SHA, archive name and origin, browser name, and exact browser version.
+For a Release asset, also verify and record its `SHA256SUMS.txt` result.
 
 Maintainers who are explicitly checking reproducibility may instead:
 
 1. Record the commit SHA with `git rev-parse HEAD`.
 2. Install exact dependencies with `npm ci --ignore-scripts --no-audit --no-fund`.
 3. Run `npm run verify:release`. This lints, tests, builds both browsers, validates the
-   builds, and performs the release audit without contacting X.
+   builds, performs the release audit, and verifies the committed Code ZIP layouts
+   without contacting X.
 4. Run `npm run package:release` and `npm run verify:packages` to reproduce and inspect
    the downloadable files.
 5. Copy command outcomes to the report. Automated checks cover repository contracts,
@@ -43,15 +43,16 @@ Maintainers who are explicitly checking reproducibility may instead:
 
 Perform every step separately in exact-version Chrome and Firefox and record evidence.
 
-- [ ] Confirm each downloaded archive matches `SHA256SUMS.txt`, then extract it. For a
-  local reproducibility test, confirm `dist/chrome` and `dist/firefox` were freshly
-  built from the recorded SHA.
+- [ ] Extract the Code ZIP, or confirm a Release archive matches `SHA256SUMS.txt` and
+  extract it. For a local reproducibility test, confirm `dist/chrome` and
+  `dist/firefox` were freshly built from the recorded SHA.
 - [ ] Chrome: open `chrome://extensions`, enable Developer mode, choose **Load
-  unpacked**, and select the extracted Chrome folder containing `manifest.json` (not an
-  enclosing folder or a source directory).
+  unpacked**, and for a Code ZIP select the extracted repository's top-level folder
+  containing `manifest.json`.
 - [ ] Firefox: open `about:debugging#/runtime/this-firefox`, choose **Load Temporary
-  Add-on**, and select the extracted Firefox `manifest.json`. This installation ends
-  when Firefox closes; permanent distribution requires a signed Firefox package.
+  Add-on**, and for a Code ZIP select the extracted `firefox/manifest.json`. This
+  installation ends when Firefox closes; permanent distribution requires a signed
+  Firefox package.
 - [ ] On a supported `https://x.com/` or `https://twitter.com/` document, use browser
   developer tools to confirm the isolated content bundle and injected page bundle
   start. Do not expose request details in screenshots or logs.

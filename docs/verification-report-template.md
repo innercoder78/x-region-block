@@ -7,10 +7,10 @@
 ## Test identity
 
 - Commit SHA tested: `NOT RECORDED`
-- Release/tag name: `NOT RECORDED`
+- Release/tag name (if applicable): `NOT RECORDED`
 - Downloaded filename: `NOT RECORDED`
-- SHA-256 verification result: `NOT RECORDED`
-- Package origin (downloaded release asset or locally reproduced build): `NOT RECORDED`
+- SHA-256 verification result (Release asset only): `NOT RECORDED`
+- Package origin (Code ZIP, Release asset, or locally reproduced build): `NOT RECORDED`
 - Browser name and exact version: `NOT RECORDED`
 - Operating system: `NOT RECORDED`
 - Extension build directory: `NOT RECORDED`
@@ -22,6 +22,7 @@
 | --- | --- | --- |
 | `npm ci --ignore-scripts --no-audit --no-fund` | Not run | |
 | `npm run verify:release` | Not run | |
+| `npm run verify:code-download` | Not run | Verifies the committed Code ZIP layouts. |
 | `npm run package:release` | Not run | Use only for local reproduction. |
 | `npm run verify:packages` | Not run | |
 
