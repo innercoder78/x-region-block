@@ -228,13 +228,16 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(() => globalScope.history.pushState({}, '', '/failed')).toThrow('simulated history failure');
   expect(transportCalls).toHaveLength(beforeNavigation);
   globalScope.history.pushState({}, '', '/openai/with_replies');
-  expect(transportCalls.length).toBeGreaterThan(beforeNavigation);
   const afterPush = transportCalls.length;
+  expect(afterPush).toBe(beforeNavigation + 1);
+  await settle();
   globalScope.history.replaceState({}, '', '/openai/status/1');
   expect(transportCalls.length).toBe(afterPush);
   globalScope.location.href = 'https://x.com/home';
   globalScope.dispatchEvent(new MetadataEvent('popstate'));
-  expect(transportCalls.length).toBe(afterPush);
+  const afterHome = transportCalls.length;
+  expect(afterHome).toBe(afterPush + 1);
+  expect(decodeURIComponent(transportCalls.at(-1).url)).toContain('"screen_name":"openai"');
   expect(observerInstances.some((observer) => observer.target === document)).toBe(true);
 
   runtime.stop();
@@ -244,6 +247,6 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(globalScope.history.pushState).toBe(originalPush);
   expect(storageListeners.size).toBe(0);
   expect(observerInstances.every((observer) => observer.disconnected)).toBe(true);
-  expect(transportCalls).toHaveLength(afterPush);
+  expect(transportCalls).toHaveLength(afterHome);
   expect(transportCalls.every(({ url }) => url.startsWith('https://x.com/'))).toBe(true);
 });
