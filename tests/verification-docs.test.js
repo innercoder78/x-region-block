@@ -7,7 +7,7 @@ const runbookRequirements = {
     /chrome:\s.*load\s+unpacked/is,
     /firefox:\s.*load temporary\s+add-on/is,
     /active but not\s+ready/i,
-    /eligible `?UserByScreenName`?/i,
+    /eligible `?AboutAccountQuery`?/i,
   ],
   'X surfaces and dynamic behavior': [
     /home timeline/i, /explore/i, /profile posts/i, /profile replies/i, /profile media/i,

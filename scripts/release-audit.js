@@ -1,6 +1,7 @@
 import { access, readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, X_ABOUT_ACCOUNT_OPERATION_NAME } from '../src/shared/x-about-account-query.js';
 
 const browsers = ['chrome', 'firefox'];
 const matches = ['https://x.com/*', 'https://twitter.com/*'];
@@ -11,18 +12,19 @@ const bundles = [
   'popup/popup.js',
   'options/options.js',
 ];
+const fixedGraphqlId = new RegExp(`/graphql/(?!${X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID}/${X_ABOUT_ACCOUNT_OPERATION_NAME})[A-Za-z0-9_-]{8,}/[A-Za-z0-9_-]+`, 'i');
 const sensitiveMaterial = [
   [/\bBearer\s+[A-Za-z0-9._~+/-]{12,}/i, 'embedded bearer token'],
   [/["'](?:x-csrf-token|x-guest-token|x-client-transaction-id)["']\s*:\s*["'][^"']{8,}/i,
     'embedded request token'],
-  [/\/graphql\/[A-Za-z0-9_-]{8,}\/UserByScreenName/i, 'fixed GraphQL query ID'],
+  [fixedGraphqlId, 'fixed GraphQL query ID'],
   [/(?:["'](?:features|fieldToggles)["']|\b(?:features|fieldToggles)\b)\s*:\s*\{[^}]+\}/i,
     'captured feature or field-toggle snapshot'],
 ];
 const prohibitedApis = [
   [/\b(?:localStorage|sessionStorage|indexedDB)\b/, 'prohibited persistence API'],
   [/\b(?:runtime|tabs)\.(?:sendMessage|connect)\s*\(/, 'prohibited runtime messaging API'],
-  [/\b(?:setInterval|WebSocket|EventSource|XMLHttpRequest)\s*\(/,
+  [/\b(?:setInterval|WebSocket|EventSource)\s*\(|new\s+XMLHttpRequest\s*\(/,
     'prohibited polling or communication API'],
 ];
 

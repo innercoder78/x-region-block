@@ -24,7 +24,7 @@ describe('metadata bridge and transport integration', () => {
       version: 1, signal: controller.signal,
     })).resolves.toBe(response);
     const [url, init] = transportFetch.mock.calls[0];
-    expect(decodeURIComponent(url)).toContain('"screen_name":"requested"');
+    expect(decodeURIComponent(url)).toContain('"screenName":"requested"');
     expect(url).not.toContain('Observed');
     expect(init).toMatchObject({
       method: 'GET', credentials: 'include', cache: 'no-store', redirect: 'error',

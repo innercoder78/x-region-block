@@ -148,7 +148,7 @@ describe('release audit', () => {
     ['remote HTML asset', 'popup/popup.html', '<script src="https://x.com/remote.js"></script>'],
     ['remote CSS asset', 'content/account-actions.css', 'body { background-image: url("https://twitter.com/remote.png"); }'],
     ['embedded request token', 'content/content-script.js', 'const h = { "x-csrf-token": "synthetic-token-value" };'],
-    ['fixed GraphQL query ID', 'content/content-script.js', 'const p = "/graphql/SYNTHETIC123/UserByScreenName";'],
+    ['fixed GraphQL query ID', 'content/content-script.js', 'const p = "/graphql/SYNTHETIC123/AboutAccountQuery";'],
     ['captured feature or field-toggle snapshot', 'content/content-script.js', 'const p = { "features": { enabled: true } };'],
     ['captured feature or field-toggle snapshot', 'content/content-script.js', 'const p = { features: { enabled: true } };'],
     ['captured feature or field-toggle snapshot', 'content/content-script.js', 'const p = { fieldToggles: { enabled: true } };'],

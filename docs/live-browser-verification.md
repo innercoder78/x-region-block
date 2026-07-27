@@ -58,8 +58,12 @@ Perform every step separately in exact-version Chrome and Firefox and record evi
   start. Do not expose request details in screenshots or logs.
 - [ ] When no valid snapshot has appeared, confirm the extension is active but not
   ready and has not processed account surfaces.
-- [ ] Confirm readiness begins only after an eligible `UserByScreenName` request is
-  observed and validated. Record only that the structural event occurred.
+- [ ] Confirm readiness begins after eligible ordinary X GraphQL authentication metadata
+  is observed and validated; it must not depend on a particular page operation. Record
+  only that metadata readiness occurred.
+- [ ] Confirm an eligible `AboutAccountQuery` can update the replaceable live query ID.
+- [ ] Confirm the first `AboutAccountQuery` lookup succeeds. Do not record its URL,
+  query string, headers, handle, payload, or returned location.
 
 ## X surfaces and dynamic behavior
 
@@ -80,6 +84,9 @@ missing location, unavailable location, and unknown/unrecognized location. Use `
 observed` if no suitable live account appears; this is not a pass and must remain an
 unresolved limitation.
 
+- [ ] Confirm a Canada result displays `🇨🇦` and “North America.”
+- [ ] Confirm a United States result displays `🇺🇸` and “North America.”
+
 ## Filtering and precedence
 
 Using reversible extension settings only, verify and record country hide, country
@@ -87,6 +94,12 @@ highlight, region hide, region highlight, the always-show country exception, acc
 allowlist, and existing show/highlight/hide precedence. Confirm badges remain visible
 where required, setting changes clean up prior presentation, and country, region,
 unknown-location, and exception behavior is unchanged. Restore the original settings.
+
+- [ ] Set North America to highlight and confirm matching surfaces use the existing
+  reversible highlight action.
+- [ ] Set the United States and Canada to hide in turn and confirm matching surfaces
+  use the existing hide action subject to always-show and allowlist precedence.
+- [ ] Restore the original settings and confirm prior hide/highlight presentation is removed.
 
 ## Settings and migration
 
@@ -100,13 +113,14 @@ unknown-location, and exception behavior is unchanged. Restore the original sett
 
 Verify structurally, without recording secrets:
 
-- [ ] No hardcoded query ID or authorization material is present.
+- [ ] Exactly one replaceable About Account fallback query ID is bundled and no
+  authentication token or unrelated fixed GraphQL query ID is present.
 - [ ] Page capture does not intercept request or response bodies.
 - [ ] Metadata transfer adds no runtime messaging and no external service receives it.
 - [ ] Stop clears metadata and account-location work; no cache remains.
 - [ ] Normal unload stops owned components; persisted back-forward-cache `pagehide`
   follows the documented preservation policy.
-- [ ] Fetch and History wrappers are restored when ownership can be proven.
+- [ ] Fetch, XMLHttpRequest, and History wrappers are restored when ownership can be proven.
 - [ ] Reload or reinjection produces no duplicate wrappers.
 
 ## Completion rules

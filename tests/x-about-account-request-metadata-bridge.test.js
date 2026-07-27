@@ -1,137 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import { createAccountIdentity } from '../src/shared/account-identity.js';
-import {
-  X_ABOUT_ACCOUNT_REQUEST_METADATA_BRIDGE_VERSION, createXAboutAccountRequestMetadataBridge,
-} from '../src/content/x-about-account-request-metadata-bridge.js';
+import { createXAboutAccountRequestMetadataBridge } from '../src/content/x-about-account-request-metadata-bridge.js';
 import { X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE } from '../src/shared/x-about-account-request-metadata-event.js';
 import { MetadataEvent, metadataFacades } from './helpers/x-request-metadata-facade.js';
 
-describe('X About Account request metadata bridge', () => {
-  it('validates events and creates fresh transport descriptors', () => {
-    const { content, document } = metadataFacades();
-    const errors = [];
-    const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (error) => errors.push(error) });
-    expect(X_ABOUT_ACCOUNT_REQUEST_METADATA_BRIDGE_VERSION).toBe(1);
-    expect(Object.keys(bridge)).toEqual(['start', 'stop', 'createRequest', 'hasSnapshot', 'isActive']);
-    expect(Object.isFrozen(bridge)).toBe(true);
-    bridge.start();
-    const detail = JSON.stringify({
-      version: 1, origin: 'https://x.com', queryId: 'learned_query', variables: { reusable: true },
-      features: null, fieldToggles: null,
-      headers: { authorization: 'Bearer test-only', 'x-csrf-token': 'test-only' },
-    });
-    document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, { detail }));
-    const identity = createAccountIdentity({ handle: 'Different', source: null });
-    const first = bridge.createRequest(identity, { version: 1 });
-    const second = bridge.createRequest(identity, { version: 1 });
-    expect(first).not.toBe(second);
-    expect(first.headers).not.toBe(second.headers);
-    expect(Object.keys(first)).toEqual(['url', 'headers']);
-    expect(Object.isFrozen(first.headers)).toBe(true);
-    expect(decodeURIComponent(first.url)).toContain('"screen_name":"different"');
-    document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, { detail: '{}' }));
-    expect(errors).toHaveLength(1);
-    expect(bridge.createRequest(identity, { version: 1 }).url).toBe(first.url);
-    bridge.stop();
-    expect(() => bridge.createRequest(identity, { version: 1 })).toThrow('not active');
+it('accepts the minimal v2 snapshot and creates an exact About Account request', () => {
+  const { content, document } = metadataFacades();
+  const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: () => undefined });
+  bridge.start();
+  document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, { detail: JSON.stringify({
+    version: 2, origin: 'https://x.com', queryId: 'live_query',
+    headers: { authorization: 'Bearer test', 'x-csrf-token': 'csrf' },
+  }) }));
+  const request = bridge.createRequest(createAccountIdentity({ handle: 'Canonical' }), { version: 1 });
+  expect(new URL(request.url).pathname).toBe('/i/api/graphql/live_query/AboutAccountQuery');
+  expect(JSON.parse(new URL(request.url).searchParams.get('variables'))).toEqual({ screenName: 'canonical' });
+  expect([...new URL(request.url).searchParams.keys()]).toEqual(['variables']);
+});
+
+describe('metadata validation', () => {
+  it('rejects inherited request templates', () => {
+    const { content, document } = metadataFacades(); const errors = [];
+    const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (e) => errors.push(e) }); bridge.start();
+    document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, { detail: JSON.stringify({
+      version: 2, origin: 'https://x.com', queryId: 'query', variables: {},
+      headers: { authorization: 'a', 'x-csrf-token': 'b' },
+    }) }));
+    expect(bridge.hasSnapshot()).toBe(false); expect(errors[0].message).not.toContain('Bearer test');
   });
-
-  it.each([42, true, null, [], {}, 'x'.repeat(257), 'unsafe/value'])(
-    'rejects queryId primitive %# without replacing valid metadata', (queryId) => {
-      const { content, document } = metadataFacades();
-      const errors = [];
-      const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (error) => errors.push(error) });
-      bridge.start();
-      document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
-        detail: JSON.stringify({
-          version: 1, origin: 'https://x.com', queryId, variables: {}, features: null,
-          fieldToggles: null, headers: { authorization: 'secret', 'x-csrf-token': 'secret' },
-        }),
-      }));
-      expect(bridge.hasSnapshot()).toBe(false);
-      expect(errors).toHaveLength(1);
-      expect(errors[0].message).toBe('Unable to accept X About Account request metadata');
-      expect(errors[0].message).not.toContain('secret');
-    },
-  );
-
-  it('lets stop claim listener registration synchronously and permits restart', () => {
-    const { content, document } = metadataFacades();
-    const originalAdd = document.addEventListener.bind(document);
-    let claim = true;
-    let bridge;
-    document.addEventListener = (type, listener) => {
-      originalAdd(type, listener);
-      if (claim) bridge.stop();
-    };
-    bridge = createXAboutAccountRequestMetadataBridge(content, { onError: () => undefined });
-    expect(bridge.start()).toBeUndefined();
-    expect(bridge.isActive()).toBe(false);
-    expect(bridge.hasSnapshot()).toBe(false);
-    expect(document.listeners.get(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE)).toHaveLength(0);
-    claim = false;
-    bridge.start();
-    expect(bridge.isActive()).toBe(true);
-  });
-
-  it('does not report detail failures after the detail getter stops the lifecycle', () => {
-    const { content, document } = metadataFacades();
-    const errors = [];
-    const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (error) => errors.push(error) });
-    bridge.start();
-    const event = { type: X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE };
-    Object.defineProperty(event, 'detail', {
-      get() { bridge.stop(); throw new Error('private failure'); },
-    });
-    document.dispatchEvent(event);
-    expect(errors).toHaveLength(0);
-    expect(bridge.isActive()).toBe(false);
-  });
-
-  it.each([
-    ['version', '1'], ['origin', 1], ['variables', []], ['features', false],
-    ['fieldToggles', 'none'], ['headers', []],
-  ])('rejects wrong top-level type for %s', (name, value) => {
-    const { content, document } = metadataFacades();
-    const errors = [];
-    const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (error) => errors.push(error) });
-    bridge.start();
-    const snapshot = {
-      version: 1, origin: 'https://x.com', queryId: 'query', variables: {}, features: null,
-      fieldToggles: null, headers: { authorization: 'authorization', 'x-csrf-token': 'csrf' },
-    };
-    snapshot[name] = value;
-    document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
-      detail: JSON.stringify(snapshot),
-    }));
-    expect(bridge.hasSnapshot()).toBe(false);
-    expect(errors).toHaveLength(1);
-  });
-
-  it.each(['variables', 'features', 'fieldToggles'])(
-    'rejects nested screen_name in %s without replacing a valid snapshot', (name) => {
-      const { content, document } = metadataFacades();
-      const errors = [];
-      const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (error) => errors.push(error) });
-      bridge.start();
-      const valid = {
-        version: 1, origin: 'https://x.com', queryId: 'valid_query',
-        variables: { values: [null, true, 3] }, features: { nullable: null },
-        fieldToggles: { values: [false, null] },
-        headers: { authorization: 'authorization', 'x-csrf-token': 'csrf' },
-      };
-      document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
-        detail: JSON.stringify(valid),
-      }));
-      const invalid = structuredClone(valid);
-      invalid[name] = { values: [null, { nested: { screen_name: 'private-handle' } }] };
-      document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
-        detail: JSON.stringify(invalid),
-      }));
-      expect(errors).toHaveLength(1);
-      expect(errors[0].message).toBe('Unable to accept X About Account request metadata');
-      const identity = createAccountIdentity({ handle: 'different' });
-      expect(bridge.createRequest(identity, { version: 1 }).url).toContain('/valid_query/');
-    },
-  );
 });

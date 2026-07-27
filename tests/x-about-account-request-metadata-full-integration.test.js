@@ -100,7 +100,7 @@ it('composes captured metadata through broker, parser, settings, badge, and acti
   expect(requestedIdentities).toHaveLength(1);
   expect(requestedIdentities[0].source).toBeNull();
   expect(transportFetch.mock.calls[0][1].signal).toBe(sharedControllers[0].signal);
-  expect(decodeURIComponent(transportFetch.mock.calls[0][0])).toContain('"screen_name":"openai"');
+  expect(decodeURIComponent(transportFetch.mock.calls[0][0])).toContain('"screenName":"openai"');
   expect(transportFetch.mock.calls[0][0]).not.toContain('Observed');
 
   const known = { data: { user_result_by_screen_name: { result: {

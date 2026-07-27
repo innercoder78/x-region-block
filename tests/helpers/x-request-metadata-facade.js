@@ -38,11 +38,9 @@ export function metadataFacades(fetch = () => Promise.resolve({})) {
 
 export function observedUrl(queryId = 'query_1', handle = 'Observed') {
   const parameters = new URLSearchParams({
-    variables: JSON.stringify({ screen_name: handle, withSafetyModeUserFields: true }),
-    features: JSON.stringify({ responsive_web_graphql_exclude_directive_enabled: true }),
-    fieldToggles: JSON.stringify({ withAuxiliaryUserLabels: false }),
+    variables: JSON.stringify({ screenName: handle }),
   });
-  return `https://x.com/i/api/graphql/${queryId}/UserByScreenName?${parameters}`;
+  return `https://x.com/i/api/graphql/${queryId}/AboutAccountQuery?${parameters}`;
 }
 
 export const observedHeaders = Object.freeze({

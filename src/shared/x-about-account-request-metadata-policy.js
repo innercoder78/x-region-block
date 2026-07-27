@@ -1,5 +1,5 @@
 const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-const QUERY_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
+import { isValidXAboutAccountQueryId } from './x-about-account-query.js';
 const HEADER_NAMES = Object.freeze([
   'authorization', 'x-csrf-token', 'x-twitter-active-user', 'x-twitter-auth-type',
   'x-twitter-client-language', 'x-guest-token', 'x-client-transaction-id',
@@ -10,7 +10,7 @@ export const METADATA_DETAIL_LIMIT = 65_536;
 export function metadataHeaderNames() { return HEADER_NAMES; }
 
 export function validMetadataQueryId(value) {
-  return typeof value === 'string' && QUERY_ID_PATTERN.test(value);
+  return isValidXAboutAccountQueryId(value);
 }
 
 export function validMetadataHeaderValue(value) {

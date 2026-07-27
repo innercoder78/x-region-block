@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION = 1;
+  const X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION = 2;
 
   const X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE =
     'x-region-block:about-account-request-metadata';
@@ -3555,8 +3555,15 @@
     return runtime;
   }
 
-  const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
+  const X_ABOUT_ACCOUNT_OPERATION_NAME = 'AboutAccountQuery';
+
   const QUERY_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
+
+  function isValidXAboutAccountQueryId(value) {
+    return typeof value === 'string' && QUERY_ID_PATTERN.test(value);
+  }
+
+  const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
   const HEADER_NAMES$1 = Object.freeze([
     'authorization', 'x-csrf-token', 'x-twitter-active-user', 'x-twitter-auth-type',
     'x-twitter-client-language', 'x-guest-token', 'x-client-transaction-id',
@@ -3567,7 +3574,7 @@
   function metadataHeaderNames() { return HEADER_NAMES$1; }
 
   function validMetadataQueryId(value) {
-    return typeof value === 'string' && QUERY_ID_PATTERN.test(value);
+    return isValidXAboutAccountQueryId(value);
   }
 
   function validMetadataHeaderValue(value) {
@@ -3648,7 +3655,7 @@
   const CONTEXT_KEYS = Object.freeze(['version', 'signal']);
   const DESCRIPTOR_KEYS = Object.freeze(['url', 'headers']);
   const OPTION_KEYS = Object.freeze(['fetch', 'createRequest']);
-  const QUERY_NAMES = new Set(['variables', 'features', 'fieldToggles']);
+  const QUERY_NAMES = new Set(['variables']);
   const HEADER_NAMES = new Set([
     'authorization',
     'x-csrf-token',
@@ -3658,6 +3665,13 @@
     'x-guest-token',
     'x-client-transaction-id',
   ]);
+  const diagnosticTimes = new Map();
+  function diagnose(code) {
+    const now = Date.now();
+    if (now - (diagnosticTimes.get(code) ?? 0) < 30_000) return;
+    diagnosticTimes.set(code, now);
+    try { console.warn(`[X Region Reveal & Block] ${code}`); } catch { /* local only */ }
+  }
 
   function isPlainObject(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -3747,7 +3761,7 @@
     });
     const [first, second, third, queryId, operation] = segments;
     if (first !== 'i' || second !== 'api' || third !== 'graphql'
-      || operation !== 'UserByScreenName' || !/^[A-Za-z0-9_-]{1,256}$/.test(queryId)) {
+      || operation !== X_ABOUT_ACCOUNT_OPERATION_NAME || !isValidXAboutAccountQueryId(queryId)) {
       throw new TypeError(DESCRIPTOR_ERROR);
     }
 
@@ -3769,14 +3783,15 @@
       parameters[name] = parseObjectParameter(decodedValue);
     }
     if (!hasOwn$2(parameters, 'variables')
-      || !hasOwn$2(parameters.variables, 'screen_name')
-      || parameters.variables.screen_name !== handle) throw new TypeError(DESCRIPTOR_ERROR);
+      || Reflect.ownKeys(parameters.variables).length !== 1
+      || !hasOwn$2(parameters.variables, 'screenName')
+      || parameters.variables.screenName !== handle) throw new TypeError(DESCRIPTOR_ERROR);
 
     const canonicalParameters = new URLSearchParams();
-    for (const name of ['variables', 'features', 'fieldToggles']) {
+    for (const name of ['variables']) {
       if (hasOwn$2(parameters, name)) canonicalParameters.set(name, JSON.stringify(parameters[name]));
     }
-    return `${url.origin}/i/api/graphql/${queryId}/UserByScreenName?${canonicalParameters}`;
+    return `${url.origin}/i/api/graphql/${queryId}/${X_ABOUT_ACCOUNT_OPERATION_NAME}?${canonicalParameters}`;
   }
 
   function canonicalizeHeaders(value) {
@@ -3834,7 +3849,7 @@
       const json = response.json;
       if (typeof ok !== 'boolean' || !Number.isInteger(status) || status < 100 || status > 599
         || typeof json !== 'function') throw new TypeError();
-      return { ok, json };
+      return { ok, status, json };
     } catch {
       throw new TypeError(RESPONSE_ERROR);
     }
@@ -3866,6 +3881,8 @@
     }
     if (typeof fetchDependency !== 'function') throw new TypeError('fetch must be a function');
     if (typeof createRequest !== 'function') throw new TypeError('createRequest must be a function');
+    const invalidateSnapshot = typeof createRequest.invalidateSnapshot === 'function'
+      ? createRequest.invalidateSnapshot : null;
 
     function loadPayload(identity, context) {
       const signal = validatePublicRequest(identity, context);
@@ -3925,7 +3942,17 @@
           throw isAborted(signal) ? abortError() : error;
         }
         if (isAborted(signal)) throw abortError();
-        if (!captured.ok) throw new Error('X About Account request failed');
+        if (!captured.ok) {
+          if ([400, 401, 403, 404].includes(captured.status)) {
+            try { invalidateSnapshot?.(); } catch { /* Authentication invalidation is best effort. */ }
+          }
+          if (captured.status === 401 || captured.status === 403) {
+            diagnose('About Account lookup rejected because authentication became stale.');
+          } else if (captured.status === 400 || captured.status === 404) {
+            diagnose('About Account query ID rejected or obsolete.');
+          }
+          throw new Error('X About Account request failed');
+        }
         if (isAborted(signal)) throw abortError();
         let jsonResult;
         try { jsonResult = captured.json.call(response); } catch {
@@ -3949,7 +3976,7 @@
   ]);
   const hasOwn$1 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
   const SNAPSHOT_KEYS = Object.freeze([
-    'version', 'origin', 'queryId', 'variables', 'features', 'fieldToggles', 'headers',
+    'version', 'origin', 'queryId', 'headers',
   ]);
 
   function exactStringKeys(value, keys) {
@@ -3957,14 +3984,6 @@
     const ownKeys = Reflect.ownKeys(value);
     return ownKeys.length === keys.length && ownKeys.every((key) => typeof key === 'string')
       && keys.every((key) => hasOwn$1(value, key));
-  }
-
-  function containsScreenName(value) {
-    if (Array.isArray(value)) return value.some(containsScreenName);
-    if (value !== null && typeof value === 'object') {
-      return Object.keys(value).some((key) => key === 'screen_name' || containsScreenName(value[key]));
-    }
-    return false;
   }
 
   function validateOptions(options) {
@@ -3995,14 +4014,8 @@
       || candidate.version !== X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION
       || typeof candidate.origin !== 'string' || candidate.origin !== origin
       || typeof candidate.queryId !== 'string' || !validMetadataQueryId(candidate.queryId)
-      || !isMetadataPlainObject(candidate.variables)
-      || (candidate.features !== null && !isMetadataPlainObject(candidate.features))
-      || (candidate.fieldToggles !== null && !isMetadataPlainObject(candidate.fieldToggles))
       || !isMetadataPlainObject(candidate.headers)) throw new TypeError();
     const snapshot = copyAndValidateJsonValue(candidate, { requireObject: true });
-    if (containsScreenName(snapshot.variables)
-      || (snapshot.features !== null && containsScreenName(snapshot.features))
-      || (snapshot.fieldToggles !== null && containsScreenName(snapshot.fieldToggles))) throw new TypeError();
     const headerKeys = Reflect.ownKeys(snapshot.headers);
     if (headerKeys.some((key) => !metadataHeaderNames().includes(key))
       || !hasOwn$1(snapshot.headers, 'authorization') || !hasOwn$1(snapshot.headers, 'x-csrf-token')
@@ -4132,25 +4145,24 @@
         if (!validIdentity(identity) || !exactStringKeys(context, ['version'])
           || context.version !== X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION) throw new TypeError();
         const variables = Object.create(null);
-        variables.screen_name = identity.handle;
-        for (const key of Object.keys(snapshot.variables)) {
-          variables[key] = copyAndValidateJsonValue(snapshot.variables[key]);
-        }
+        variables.screenName = identity.handle;
         const parameters = new dependencies.URLSearchParams();
         parameters.set('variables', JSON.stringify(variables));
-        if (snapshot.features !== null) parameters.set('features', JSON.stringify(snapshot.features));
-        if (snapshot.fieldToggles !== null) parameters.set('fieldToggles', JSON.stringify(snapshot.fieldToggles));
         const headers = Object.create(null);
         for (const key of Object.keys(snapshot.headers)) headers[key] = snapshot.headers[key];
         deeplyFreezeMetadata(headers);
         return Object.freeze({
-          url: `${snapshot.origin}/i/api/graphql/${snapshot.queryId}/UserByScreenName?${parameters}`,
+          url: `${snapshot.origin}/i/api/graphql/${snapshot.queryId}/${X_ABOUT_ACCOUNT_OPERATION_NAME}?${parameters}`,
           headers,
         });
       } catch {
         throw new TypeError('Invalid X About Account request metadata request');
       }
     }
+
+    Object.defineProperty(createRequest, 'invalidateSnapshot', {
+      value: () => { snapshot = null; }, enumerable: false, configurable: false, writable: false,
+    });
 
     return Object.freeze({ start, stop, createRequest, hasSnapshot: () => snapshot !== null, isActive: () => active });
   }
@@ -4491,6 +4503,16 @@
 
   const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 
+  function createDiagnostic(globalScope) {
+    const last = new Map();
+    return (code, level = 'info') => {
+      const now = Date.now();
+      if (now - (last.get(code) ?? 0) < 30_000) return;
+      last.set(code, now);
+      try { globalScope.console?.[level]?.(`[X Region Reveal & Block] ${code}`); } catch { /* local only */ }
+    };
+  }
+
   function usableExtensionApi(namespace) {
     try {
       const { runtime, storage } = namespace ?? {};
@@ -4534,7 +4556,8 @@
     let generation = 0;
     let pending = null;
     let lifecycle = null;
-    const report = () => { /* Raw production errors are deliberately discarded. */ };
+    const diagnostic = createDiagnostic(globalScope);
+    const report = () => diagnostic('Account processing encountered a lifecycle error.', 'warn');
 
     const owned = (state) => lifecycle === state && active && !state.claimed
       && generation === state.generation;
@@ -4593,6 +4616,7 @@
       if (pending === state) pending = null;
       cleanup(state);
       rejectStartup(state);
+      report();
     };
 
     const startRoute = (state) => {
@@ -4630,6 +4654,7 @@
         if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }
         state.routeController = candidate; state.routeCandidate = null;
         ready = true;
+        diagnostic('Metadata accepted and account processing started.');
         removeMetadata(state);
       } catch {
         if (candidate !== null && state.routeCandidate === null) state.routeCandidate = candidate;
@@ -4670,6 +4695,7 @@
       lifecycle = state;
       pending = state;
       active = true; ready = false;
+      diagnostic('Waiting for X GraphQL authentication metadata.');
       const checkpoint = () => { if (!owned(state)) throw new Error('startup claimed'); };
       state.metadataListener = () => {
         if (!owned(state) || state.metadataCheckPending) return;

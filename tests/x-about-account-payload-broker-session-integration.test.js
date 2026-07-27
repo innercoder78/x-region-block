@@ -62,8 +62,8 @@ function transportFor(fetch) {
   return createXAboutAccountRequestTransport({
     fetch,
     createRequest: (identity) => ({
-      url: `https://x.com/i/api/graphql/Injected_Integration_Id/UserByScreenName?${new URLSearchParams({
-        variables: JSON.stringify({ screen_name: identity.handle }),
+      url: `https://x.com/i/api/graphql/Injected_Integration_Id/AboutAccountQuery?${new URLSearchParams({
+        variables: JSON.stringify({ screenName: identity.handle }),
       })}`,
       headers: { authorization: 'test-only', 'x-csrf-token': 'test-only' },
     }),
@@ -249,8 +249,8 @@ it('cancels pending real transport work and never presents a stale response', as
 it('normalizes a real transport failure through processor presentation and retries fresh', async () => {
   const fetch = vi.fn(() => Promise.reject(new Error('private network detail')));
   const createRequest = vi.fn((identity) => ({
-    url: `https://x.com/i/api/graphql/Injected_Failure_Id/UserByScreenName?${new URLSearchParams({
-      variables: JSON.stringify({ screen_name: identity.handle }),
+    url: `https://x.com/i/api/graphql/Injected_Failure_Id/AboutAccountQuery?${new URLSearchParams({
+      variables: JSON.stringify({ screenName: identity.handle }),
     })}`,
     headers: { authorization: 'private auth', 'x-csrf-token': 'private csrf' },
   }));

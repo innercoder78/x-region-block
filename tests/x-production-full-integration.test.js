@@ -68,7 +68,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   const originalFetch = vi.fn((url, options) => {
     if (observingPageRequest) return 'page-result';
     transportCalls.push({ url, options });
-    const handle = JSON.parse(new URL(url).searchParams.get('variables')).screen_name;
+    const handle = JSON.parse(new URL(url).searchParams.get('variables')).screenName;
     let payload = { data: { user_result_by_screen_name: { result: {
       about_profile: { account_based_in: 'Japan' },
     } } } };
@@ -152,7 +152,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   await settle();
   expect(runtime.isReady()).toBe(true);
   expect(transportCalls).toHaveLength(1);
-  expect(decodeURIComponent(transportCalls[0].url)).toContain('"screen_name":"openai"');
+  expect(decodeURIComponent(transportCalls[0].url)).toContain('"screenName":"openai"');
   expect(transportCalls[0].url).not.toContain('Observed');
   expect(transportCalls[0].options).toMatchObject({
     credentials: 'include', cache: 'no-store', redirect: 'error', method: 'GET',
@@ -183,7 +183,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   await settle();
   expect(transportCalls).toHaveLength(2);
   expect(transportCalls[1].url).toContain('/latest_runtime_query/');
-  expect(decodeURIComponent(transportCalls[1].url)).toContain('"screen_name":"anthropic"');
+  expect(decodeURIComponent(transportCalls[1].url)).toContain('"screenName":"anthropic"');
   expect(transportCalls[1].url).not.toContain('LatestObserved');
   expect(transportCalls[1].options.headers.authorization).toBe('Bearer latest-test-only');
   expect(findLocationBadge(dynamicName)).not.toBeNull();
@@ -194,7 +194,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   for (const observer of routeObservers) observer.trigger();
   await settle();
   expect(transportCalls).toHaveLength(3);
-  expect(decodeURIComponent(transportCalls[2].url)).toContain('"screen_name":"google"');
+  expect(decodeURIComponent(transportCalls[2].url)).toContain('"screenName":"google"');
   document.children.splice(document.children.indexOf(dynamicTweet), 1);
   dynamicTweet.parentNode = null;
   for (const observer of routeObservers) observer.trigger();
@@ -237,7 +237,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   globalScope.dispatchEvent(new MetadataEvent('popstate'));
   const afterHome = transportCalls.length;
   expect(afterHome).toBe(afterPush + 1);
-  expect(decodeURIComponent(transportCalls.at(-1).url)).toContain('"screen_name":"openai"');
+  expect(decodeURIComponent(transportCalls.at(-1).url)).toContain('"screenName":"openai"');
   expect(observerInstances.some((observer) => observer.target === document)).toBe(true);
 
   runtime.stop();

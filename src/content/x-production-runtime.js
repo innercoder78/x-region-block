@@ -10,6 +10,16 @@ import { createXPageScriptInjector } from './x-page-script-injector.js';
 export const X_PRODUCTION_CONTENT_RUNTIME_VERSION = 1;
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 
+function createDiagnostic(globalScope) {
+  const last = new Map();
+  return (code, level = 'info') => {
+    const now = Date.now();
+    if (now - (last.get(code) ?? 0) < 30_000) return;
+    last.set(code, now);
+    try { globalScope.console?.[level]?.(`[X Region Reveal & Block] ${code}`); } catch { /* local only */ }
+  };
+}
+
 function usableExtensionApi(namespace) {
   try {
     const { runtime, storage } = namespace ?? {};
@@ -53,7 +63,8 @@ export function createXProductionContentRuntime(globalScope) {
   let generation = 0;
   let pending = null;
   let lifecycle = null;
-  const report = () => { /* Raw production errors are deliberately discarded. */ };
+  const diagnostic = createDiagnostic(globalScope);
+  const report = () => diagnostic('Account processing encountered a lifecycle error.', 'warn');
 
   const owned = (state) => lifecycle === state && active && !state.claimed
     && generation === state.generation;
@@ -150,6 +161,7 @@ export function createXProductionContentRuntime(globalScope) {
       if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }
       state.routeController = candidate; state.routeCandidate = null;
       ready = true;
+      diagnostic('Metadata accepted and account processing started.');
       removeMetadata(state);
     } catch {
       if (candidate !== null && state.routeCandidate === null) state.routeCandidate = candidate;
@@ -190,6 +202,7 @@ export function createXProductionContentRuntime(globalScope) {
     lifecycle = state;
     pending = state;
     active = true; ready = false;
+    diagnostic('Waiting for X GraphQL authentication metadata.');
     const checkpoint = () => { if (!owned(state)) throw new Error('startup claimed'); };
     state.metadataListener = () => {
       if (!owned(state) || state.metadataCheckPending) return;
