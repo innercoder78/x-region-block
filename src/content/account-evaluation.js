@@ -34,11 +34,7 @@ export function evaluateXAccountLink(link, observation, settings) {
   if (!hasOwn(observation, 'location')) {
     throw new TypeError('account observation location is required');
   }
-  const subjectInput = { identity, location: observation.location };
-  if (hasOwn(observation, 'languages')) subjectInput.languages = observation.languages;
-  if (hasOwn(observation, 'tags')) subjectInput.tags = observation.tags;
-
-  const evaluation = evaluateFilterSubject(subjectInput, settings);
+  const evaluation = evaluateFilterSubject({ identity, location: observation.location }, settings);
   const display = createLocationDisplayModel(evaluation.subject.location);
   return Object.freeze({
     version: ACCOUNT_EVALUATION_VERSION,

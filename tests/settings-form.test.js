@@ -8,16 +8,16 @@ describe('settings form conversion', () => {
   });
 
   it('converts every field without mutating the form model', () => {
-    const model = { countryHide: 'us, ca', countryHighlight: 'gb', countryAlwaysShow: 'nz', regionHide: ['AFRICA'], regionHighlight: ['ASIA'], languageHighlight: 'EN, fr', tagHighlight: 'News\nLocal', otherHide: ['hidden', 'missing'], otherHighlight: ['unavailable', 'unknown'], allowlist: 'UserOne,userTwo' };
+    const model = { countryHide: 'us, ca', countryHighlight: 'gb', countryAlwaysShow: 'nz', regionHide: ['AFRICA'], regionHighlight: ['ASIA'], otherHide: ['hidden', 'missing'], otherHighlight: ['unavailable', 'unknown'], allowlist: 'UserOne,userTwo' };
     const before = structuredClone(model);
-    expect(formModelToSettingsInput(model)).toEqual({ country: { hide: ['us', 'ca'], highlight: ['gb'], alwaysShow: ['nz'] }, region: { hide: ['AFRICA'], highlight: ['ASIA'] }, language: { highlight: ['EN', 'fr'] }, tag: { highlight: ['News', 'Local'] }, other: { hide: ['hidden', 'missing'], highlight: ['unavailable', 'unknown'] }, allowlist: ['UserOne', 'userTwo'] });
+    expect(formModelToSettingsInput(model)).toEqual({ country: { hide: ['us', 'ca'], highlight: ['gb'], alwaysShow: ['nz'] }, region: { hide: ['AFRICA'], highlight: ['ASIA'] }, other: { hide: ['hidden', 'missing'], highlight: ['unavailable', 'unknown'] }, allowlist: ['UserOne', 'userTwo'] });
     expect(model).toEqual(before);
   });
 
   it('populates every control from canonical settings without mutation', () => {
-    const settings = normalizeSettings({ country: { hide: ['us'], highlight: ['ca'], alwaysShow: ['gb'] }, region: { hide: ['AFRICA'], highlight: ['EUROPE'] }, language: { highlight: ['EN'] }, tag: { highlight: ['NEWS'] }, other: { hide: ['hidden', 'missing'], highlight: ['unavailable', 'unknown'] }, allowlist: ['CaseKey'] });
+    const settings = normalizeSettings({ country: { hide: ['us'], highlight: ['ca'], alwaysShow: ['gb'] }, region: { hide: ['AFRICA'], highlight: ['EUROPE'] }, other: { hide: ['hidden', 'missing'], highlight: ['unavailable', 'unknown'] }, allowlist: ['CaseKey'] });
     const model = settingsToFormModel(settings);
-    expect(model).toEqual({ countryHide: 'US', countryHighlight: 'CA', countryAlwaysShow: 'GB', regionHide: ['AFRICA'], regionHighlight: ['EUROPE'], languageHighlight: 'en', tagHighlight: 'news', otherHide: ['hidden', 'missing'], otherHighlight: ['unavailable', 'unknown'], allowlist: 'CaseKey' });
+    expect(model).toEqual({ countryHide: 'US', countryHighlight: 'CA', countryAlwaysShow: 'GB', regionHide: ['AFRICA'], regionHighlight: ['EUROPE'], otherHide: ['hidden', 'missing'], otherHighlight: ['unavailable', 'unknown'], allowlist: 'CaseKey' });
     model.regionHide.push('ASIA');
     expect(settings.region.hide).toEqual(['AFRICA']);
   });

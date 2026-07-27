@@ -3,7 +3,7 @@ import { createOptionsController } from '../src/options/options-controller.js';
 import { createDefaultSettings, normalizeSettings } from '../src/shared/settings-schema.js';
 
 function setup(overrides = {}) {
-  const model = { countryHide: 'bad input', countryHighlight: '', countryAlwaysShow: '', regionHide: [], regionHighlight: [], languageHighlight: '', tagHighlight: '', otherHide: [], otherHighlight: [], allowlist: '' };
+  const model = { countryHide: 'bad input', countryHighlight: '', countryAlwaysShow: '', regionHide: [], regionHighlight: [], otherHide: [], otherHighlight: [], allowlist: '' };
   const defaults = createDefaultSettings();
   const repository = { initializeSettings: vi.fn().mockResolvedValue(defaults), saveSettings: vi.fn().mockResolvedValue(defaults), resetSettings: vi.fn().mockResolvedValue(defaults), ...overrides };
   const view = { setEnabled: vi.fn(), setActionsEnabled: vi.fn(), showStatus: vi.fn(), readModel: vi.fn(() => structuredClone(model)), writeModel: vi.fn() };

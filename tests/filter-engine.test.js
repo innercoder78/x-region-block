@@ -12,7 +12,7 @@ const canada = createKnownLocation({
   countryCode: 'CA',
   countryName: 'Canada',
 });
-const subject = { allowlistKey: 'account-a', location: canada, languages: ['en'], tags: ['news'] };
+const subject = { allowlistKey: 'account-a', location: canada };
 
 describe('filter engine', () => {
   it('shows by default with empty or missing categories', () => {
@@ -59,10 +59,11 @@ describe('filter engine', () => {
     ).toBe('show');
   });
 
-  it('highlights matching geographic, language, or tag rules', () => {
+  it('highlights matching geographic rules and ignores removed rules and subject fields', () => {
     expect(decideFilterAction(subject, { country: { highlight: ['CA'] } })).toBe('highlight');
-    expect(decideFilterAction(subject, { language: { highlight: ['EN'] } })).toBe('highlight');
-    expect(decideFilterAction(subject, { tag: { highlight: ['NEWS'] } })).toBe('highlight');
+    expect(decideFilterAction({ ...subject, languages: ['en'], tags: ['news'] }, {
+      language: { highlight: ['en'] }, tag: { highlight: ['news'] },
+    })).toBe('show');
   });
 
   it('gives hide precedence over highlight', () => {
@@ -103,10 +104,10 @@ describe('filter engine', () => {
   });
 
   it('does not mutate inputs', () => {
-    const frozenSubject = Object.freeze({ location: canada, tags: Object.freeze(['news']) });
-    const settings = Object.freeze({ tag: Object.freeze({ highlight: Object.freeze(['news']) }) });
+    const frozenSubject = Object.freeze({ location: canada });
+    const settings = Object.freeze({ country: Object.freeze({ highlight: Object.freeze(['CA']) }) });
     expect(decideFilterAction(frozenSubject, settings)).toBe('highlight');
-    expect(settings.tag.highlight).toEqual(['news']);
+    expect(settings.country.highlight).toEqual(['CA']);
   });
 
   it('throws a clear validation error for malformed settings', () => {

@@ -2,7 +2,7 @@ import { LOCATION_STATUSES } from './location-model.js';
 
 export const FILTER_ACTIONS = Object.freeze({ SHOW: 'show', HIGHLIGHT: 'highlight', HIDE: 'hide' });
 
-const categories = ['country', 'region', 'language', 'tag', 'other'];
+const categories = ['country', 'region', 'other'];
 
 function rules(value, label) {
   if (value == null) return [];
@@ -34,7 +34,7 @@ const lower = (value) => value.toLowerCase();
  * Purely decides presentation for a subject. Malformed settings throw TypeError
  * rather than silently applying a potentially unsafe rule. Missing categories
  * and rule lists are empty. Supported schema:
- * country/region: { hide, highlight, alwaysShow }; language/tag: { highlight };
+ * country/region: { hide, highlight, alwaysShow };
  * other: { hide, highlight } (location statuses); allowlist: Array|Set.
  */
 export function decideFilterAction(subject = {}, settings = {}) {
@@ -69,13 +69,7 @@ export function decideFilterAction(subject = {}, settings = {}) {
   const highlighted =
     includes(rules(configured.country.highlight, 'country.highlight'), country, upper) ||
     includes(rules(configured.region.highlight, 'region.highlight'), region, upper) ||
-    (!known && includes(rules(configured.other.highlight, 'other.highlight'), location?.status, lower)) ||
-    (subject.languages ?? []).some((value) =>
-      includes(rules(configured.language.highlight, 'language.highlight'), value, lower),
-    ) ||
-    (subject.tags ?? []).some((value) =>
-      includes(rules(configured.tag.highlight, 'tag.highlight'), value, lower),
-    );
+    (!known && includes(rules(configured.other.highlight, 'other.highlight'), location?.status, lower));
 
   return highlighted ? FILTER_ACTIONS.HIGHLIGHT : FILTER_ACTIONS.SHOW;
 }

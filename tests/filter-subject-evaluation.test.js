@@ -8,9 +8,8 @@ const base = (location = {
   status: 'known', countryCode: 'CA', countryName: 'Canada',
 }) => ({
   identity: { handle: 'Account_A', source: 'profile' }, location,
-  languages: ['EN'], tags: ['News'],
 });
-const settings = (overrides = {}) => normalizeSettings({ schemaVersion: 1, ...overrides });
+const settings = (overrides = {}) => normalizeSettings({ schemaVersion: 2, ...overrides });
 
 describe('filter subject evaluation', () => {
   it.each([
@@ -18,13 +17,11 @@ describe('filter subject evaluation', () => {
     ['allowlist over region hide', base(), { allowlist: ['@account_a'], region: { hide: ['NORTH_AMERICA'] } }, 'show'],
     ['allowlist over unknown hide', base({ status: 'unknown' }), { allowlist: ['@account_a'], other: { hide: ['unknown'] } }, 'show'],
     ['always-show over country and region hides', base(), { country: { alwaysShow: ['CA'], hide: ['CA'] }, region: { hide: ['NORTH_AMERICA'] } }, 'show'],
-    ['country hide over highlight', base(), { country: { hide: ['CA'] }, tag: { highlight: ['news'] } }, 'hide'],
-    ['region hide over highlight', base(), { region: { hide: ['NORTH_AMERICA'] }, language: { highlight: ['en'] } }, 'hide'],
+    ['country hide over highlight', base(), { country: { hide: ['CA'], highlight: ['CA'] } }, 'hide'],
+    ['region hide over highlight', base(), { region: { hide: ['NORTH_AMERICA'], highlight: ['NORTH_AMERICA'] } }, 'hide'],
     ['unknown hide over highlight', base({ status: 'unknown' }), { other: { hide: ['unknown'], highlight: ['unknown'] } }, 'hide'],
     ['country highlight', base(), { country: { highlight: ['CA'] } }, 'highlight'],
     ['region highlight', base(), { region: { highlight: ['NORTH_AMERICA'] } }, 'highlight'],
-    ['language highlight', base(), { language: { highlight: ['en'] } }, 'highlight'],
-    ['tag highlight', base(), { tag: { highlight: ['news'] } }, 'highlight'],
     ['unknown highlight', base({ status: 'unknown' }), { other: { highlight: ['unknown'] } }, 'highlight'],
     ['default', base(), {}, 'show'],
   ])('%s', (_name, subject, configured, action) => {
@@ -44,7 +41,7 @@ describe('filter subject evaluation', () => {
   });
 
   it('returns only a deeply immutable subject and action without mutating settings', () => {
-    const canonical = settings({ tag: { highlight: ['news'] } });
+    const canonical = settings({ country: { highlight: ['CA'] } });
     const before = structuredClone(canonical);
     const evaluation = evaluateFilterSubject(base(), canonical);
     expect(Object.keys(evaluation)).toEqual(['subject', 'action']);
@@ -58,7 +55,7 @@ describe('filter subject evaluation', () => {
   });
 
   it('accepts a settings runtime snapshot directly and is structurally repeatable', async () => {
-    const canonical = settings({ language: { highlight: ['en'] } });
+    const canonical = settings({ country: { highlight: ['CA'] } });
     const runtime = createSettingsRuntime({
       repository: { initializeSettings: vi.fn().mockResolvedValue(canonical) },
       changeAdapter: { subscribe: vi.fn(() => vi.fn()) }, onError: vi.fn(),
@@ -67,7 +64,7 @@ describe('filter subject evaluation', () => {
     const first = evaluateFilterSubject(base(), snapshot);
     const second = evaluateFilterSubject(structuredClone(base()), snapshot);
     expect(first).toEqual(second);
-    expect(first.subject.languages).not.toBe(second.subject.languages);
+    expect(first.subject).not.toBe(second.subject);
     runtime.stop();
   });
 });

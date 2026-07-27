@@ -21,8 +21,7 @@ export function createOptionsView(document) {
   const form = document.querySelector('#settings-form');
   const textFields = {
     countryHide: document.querySelector('#country-hide'), countryHighlight: document.querySelector('#country-highlight'),
-    countryAlwaysShow: document.querySelector('#country-always-show'), languageHighlight: document.querySelector('#language-highlight'),
-    tagHighlight: document.querySelector('#tag-highlight'), allowlist: document.querySelector('#allowlist'),
+    countryAlwaysShow: document.querySelector('#country-always-show'), allowlist: document.querySelector('#allowlist'),
   };
   const regionChoices = Object.values(REGIONS).filter(({ code }) => code !== REGION_CODES.UNKNOWN).map(({ code, name }) => [code, name]);
   addChoices(document, document.querySelector('#region-hide'), 'regionHide', regionChoices);

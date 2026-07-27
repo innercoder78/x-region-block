@@ -28,7 +28,7 @@ describe('background settings initialization', () => {
       remove: vi.fn((key, callback) => callback()),
     };
     await expect(initializeBackgroundSettings({ chrome: { runtime: {}, storage: { local } } }))
-      .resolves.toMatchObject({ schemaVersion: 1 });
+      .resolves.toMatchObject({ schemaVersion: 2 });
   });
 
   it('rejects when extension storage is unavailable', async () => {

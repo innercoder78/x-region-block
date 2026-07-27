@@ -20,7 +20,7 @@ function anchor(href, baseURI = 'https://x.com/home') {
 const known = (countryCode = 'CA', countryName = 'Canada') => ({
   status: 'known', countryCode, countryName,
 });
-const settings = (overrides = {}) => normalizeSettings({ schemaVersion: 1, ...overrides });
+const settings = (overrides = {}) => normalizeSettings({ schemaVersion: 2, ...overrides });
 const evaluate = (observation = {}, configured = {}) => evaluateXAccountLink(
   anchor('/OpenAI'),
   { location: known(), ...observation },
@@ -142,7 +142,7 @@ describe('base URL ownership', () => {
 });
 
 describe('canonical subject, filter, and display composition', () => {
-  it('canonicalizes identity, location, languages, and tags without extra keys', () => {
+  it('canonicalizes identity and location without removed or extra keys', () => {
     const result = evaluate({
       location: { ...known(), rawLocation: ' Canada ', source: 'caller', secret: 'discard' },
       languages: [' EN ', 'fr', 'en'], tags: [' News ', 'TECH', 'news'], extra: 'discard',
@@ -153,10 +153,8 @@ describe('canonical subject, filter, and display composition', () => {
     expect(result.subject.location).toMatchObject({
       status: 'known', countryCode: 'CA', regionCode: 'NORTH_AMERICA',
     });
-    expect(result.subject.languages).toEqual(['en', 'fr']);
-    expect(result.subject.tags).toEqual(['news', 'tech']);
     expect(Object.keys(result.subject)).toEqual([
-      'identity', 'allowlistKey', 'location', 'languages', 'tags',
+      'identity', 'allowlistKey', 'location',
     ]);
     expect(JSON.stringify(result)).not.toMatch(/secret|discard/i);
   });
@@ -168,8 +166,6 @@ describe('canonical subject, filter, and display composition', () => {
     ['region hide', { region: { hide: ['NORTH_AMERICA'] }, tag: { highlight: ['news'] } }, 'hide'],
     ['country highlight', { country: { highlight: ['CA'] } }, 'highlight'],
     ['region highlight', { region: { highlight: ['NORTH_AMERICA'] } }, 'highlight'],
-    ['language highlight', { language: { highlight: ['en'] } }, 'highlight'],
-    ['tag highlight', { tag: { highlight: ['news'] } }, 'highlight'],
     ['default', {}, 'show'],
   ])('preserves %s precedence', (_name, configured, action) => {
     expect(evaluate({ languages: ['en'], tags: ['news'] }, configured).action).toBe(action);
@@ -213,14 +209,13 @@ describe('canonical subject, filter, and display composition', () => {
 
   it('propagates malformed observed values and settings', () => {
     expect(() => evaluate({ location: { status: 'invalid' } })).toThrow(TypeError);
-    expect(() => evaluate({ languages: 'en' })).toThrow('languages must be an array');
-    expect(() => evaluate({ tags: [null] })).toThrow('tags entries must be non-empty strings');
+    expect(evaluate({ languages: 'ignored', tags: [null] }).action).toBe('show');
     expect(() => evaluateXAccountLink(anchor('/OpenAI'), { location: known() }, { country: [] }))
       .toThrow(TypeError);
   });
 
   it('accepts a settings-runtime snapshot directly', async () => {
-    const snapshot = settings({ language: { highlight: ['en'] } });
+    const snapshot = settings({ country: { highlight: ['CA'] } });
     const runtime = createSettingsRuntime({
       repository: { initializeSettings: vi.fn().mockResolvedValue(snapshot) },
       changeAdapter: { subscribe: vi.fn(() => vi.fn()) },
