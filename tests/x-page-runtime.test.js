@@ -5,6 +5,13 @@ import {
 } from '../src/shared/x-page-runtime-event.js';
 import { X_PAGE_RUNTIME_VERSION, installXPageRuntime } from '../src/page/x-page-runtime.js';
 
+class TestCustomEvent extends Event {
+  constructor(type, options = {}) {
+    super(type, options);
+    this.detail = options.detail;
+  }
+}
+
 function page() {
   const document = new EventTarget();
   const history = {
@@ -12,7 +19,7 @@ function page() {
     replaceState() {},
   };
   return {
-    document, history, Event, CustomEvent,
+    document, history, Event, CustomEvent: TestCustomEvent,
     URL, URLSearchParams, Headers, Request,
     location: { origin: 'https://x.com' },
     fetch: vi.fn(() => Promise.resolve()),
