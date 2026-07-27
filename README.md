@@ -1,258 +1,123 @@
 # X Region Reveal & Block
 
-This repository contains the development foundation for a browser extension,
-including versioned local settings, an options-page settings editor, and
-content-script runtime settings synchronization. It also includes an isolated,
-safe DOM renderer for plain-text country and region location badges, with
-idempotent extension ownership, updates, and cleanup. The renderer is not
-connected to live X pages, so users cannot see these badges on X yet.
+X Region Reveal & Block is a Manifest V3 browser extension that reveals the country or
+region returned by X's About Account request and applies the user's configured show,
+highlight, or hide action to discovered account surfaces. The extension remains at
+version `0.0.1` and is not release-ready.
 
-An isolated account-link reader safely uses the raw `href` attribute of one
-explicitly supplied anchor to extract a canonical identity from supported X and
-Twitter links. It does not automatically read account links or scan a document
-or timeline.
+## Production composition
 
-An isolated account-evaluation pipeline composes one explicitly supplied
-account link, a caller-supplied location and optional observed languages and
-tags with a settings snapshot. It returns a deeply immutable canonical filter
-subject, filter action, and location-display descriptor.
+The Chrome and Firefox content scripts run at `document_start` on `https://x.com/*`
+and `https://twitter.com/*`. The isolated content runtime starts the memory-only
+metadata bridge before injecting the web-accessible classic page bundle. The page
+runtime transactionally installs the existing navigation signal and About Account
+request-metadata capture. A no-detail same-document request/ready/error/stop event
+protocol detects an existing page runtime, reports startup, and cleans up both page
+wrappers without page-global markers or runtime messaging.
 
-An isolated, versioned one-account presentation coordinator composes that
-evaluation pipeline with location-badge rendering for an explicitly supplied
-link and badge container. It safely removes stale owned badges for non-account
-links and preserves an existing badge when evaluation fails. The coordinator
-is not connected to live X pages and does not apply highlight or hide actions.
+Page injection and settings initialization proceed after the bridge starts. Account
+processing deliberately waits until injection and settings startup have completed and
+the bridge holds its first valid metadata snapshot. The extension may therefore be
+active but not ready until X makes an eligible `UserByScreenName` request. Invalid
+metadata events are only wake-up signals and cannot start processing.
 
-A versioned, static X account-surface selector policy now supports isolated
-discovery of presentation targets within one explicitly supplied DOM root.
-Discovery uses conservative ambiguity handling, isolates nested tweets, and
-resolves canonical identities through the existing account-link reader. The
-conservative initial selectors have not been verified against every live X
-layout, and discovery is not connected to live content-script startup.
+Once metadata is available, production startup composes the real request transport and
+dynamic route-session controller with the current `document` as its explicit target
+root. The controller continues to own its payload broker, route planning, sessions,
+parser, settings evaluation, badge renderer, account-action renderer, mutation
+observers, and independent broker and consumer abort controllers. It reconciles the
+current route after successful `pushState` and `replaceState` calls and native
+`popstate`, and mutation-driven discovery processes targets added to supported account
+surfaces.
 
-An isolated, mutation-driven account-target observer wraps that static boundary
-with an initial scan and coalesced mutation rescanning. It emits immutable
-added, updated, removed, and reordered target changes, preserves stable records
-for unchanged targets, and clears its transient in-memory target tracking when
-stopped. The observer requires an explicitly supplied observer factory and is
-not connected to content-script startup. It performs no location or account
-lookup, presentation, highlighting, hiding, or blocking. Its underlying
-selector policy has not yet been verified across every live X layout.
+The transport creates every request from the bridge's latest valid snapshot, uses the
+shared cancellation signal, included credentials, `no-store`, and rejected redirects,
+and returns the response payload to the existing parser. The page capture observes the
+outgoing request only; it does not intercept or capture response bodies.
 
-An isolated version 1 account-target processing coordinator consumes those
-explicit observer changes and composes canonical About Account parsing with
-account presentation. It groups only currently active canonical accounts,
-deduplicates their dependency-injected payload lookups, rejects stale results
-across target and lifecycle changes, and reevaluates resolved targets when the
-canonical settings snapshot changes without repeating a lookup. Targets that
-disappear are cancelled and cleaned up, and all transient account, location,
-request, and DOM state is cleared when processing stops.
+## Privacy and lifecycle
 
-The processor now uses an ownership-safe version 1 account-action renderer to apply and clean up reversible `show`, `highlight`, and `hide` decisions on explicitly supplied account containers. A single `data-x-region-block-account-action` attribute represents highlight or hide, while show is represented by its absence. Minimal manifest-loaded CSS highlights with a non-layout-changing outline and hides only through the exact owned attribute selector; it has no effect until the processor applies a recognized value. Location badges continue to render for every action. Profile actions currently apply only to the profile surface container returned by the existing selector policy.
+Request query templates, query IDs, permitted headers, and authorization material stay
+in memory. The extension does not read `document.cookie`, use runtime messaging, or
+persist accounts, payloads, parsed locations, queries, headers, or authorization
+material. It contains no hardcoded query ID, bearer token, CSRF token, guest token,
+transaction ID, feature snapshot, or field-toggle snapshot. It does not poll and does
+not add a resolved payload or location cache.
 
-An isolated version 1 account-target session now composes one explicitly chosen
-root and one canonical source with an already-started settings runtime, the
-observer, the processor, and dependency-injected location loading. It
-coordinates initial scanning, mutation processing, settings reevaluation,
-manual rescanning, cleanup, and restart, with lifecycle-generation guards that
-ignore stale callbacks. The session never starts or stops the settings runtime
-and is not connected to content-script startup. The caller must choose the root
-and source; route detection and root selection remain unimplemented. Timeline
-and reply intentionally continue to share the fixed tweet selector.
+Normal content-runtime stop removes its metadata-readiness and page-lifecycle listeners,
+stops route sessions and broker work, clears bridge metadata, stops settings, and asks
+the injected page runtime to remove request-capture and navigation wrappers. A
+back-forward-cache `pagehide` preserves the lifecycle when `persisted` is true; other
+`pagehide` events stop it.
 
-The coordinator and session have no real X transport or hardcoded query ID, read no
-authentication data, and are not connected to content-script startup. About Account request transport, query-ID discovery,
-production authorization composition, live content-script session startup,
-route-aware root and source orchestration, broker-to-session production wiring,
-badge styling, blocking
-live X content, and end-to-end browser verification remain unimplemented.
-There is no cross-session cache. Live X layout compatibility and end-to-end
-browser behavior remain unverified.
+## Existing policies and components
 
-An isolated version 1 X About Account payload broker now provides active-only
-cross-session deduplication by canonical handle and account ID. It gives each
-consumer an independent promise and cancellation path, uses a source-neutral
-identity for the dependency-injected underlying request, and cancels that shared
-request only after its final consumer leaves. Entries are removed immediately on
-resolution, rejection, final cancellation, or stop; no resolved payload or parsed
-location cache is retained. Future orchestration must start one broker, pass its
-loader to sessions, stop all sessions, and stop the broker last.
+The production controller reuses the versioned account identity, country and region,
+location parsing, route classification and planning, selector, discovery, processor,
+session, payload-broker, presentation, filter-precedence, settings-schema, migration,
+and storage-repository contracts. Known, hidden, missing, unavailable, and unknown
+locations retain their established behavior. Allowlist and always-show exceptions,
+badge rendering, and reversible show, highlight, and hide actions are unchanged.
 
-The broker performs no X request, hardcodes no query ID, and reads no authentication
-data. It is not connected to content-script startup, sessions are not automatically
-connected to it, and route/root orchestration remains unimplemented. Production About
-Account transport wiring, query-ID discovery, production authorization composition, live
-content-script startup, route-aware root/source orchestration, broker-to-session
-production wiring, badge styling, and end-to-end browser verification remain
-unimplemented. Live X behavior remains unverified.
+Settings are stored through the extension's established local-storage adapters. No
+other production data uses extension storage. Chrome and Firefox manifests request only
+the `storage` permission, request no host permissions, and expose only
+`page/page-script.js` to the existing X and Twitter match patterns.
 
-An isolated version 1 About Account request transport now exposes a frozen,
-broker-compatible `loadPayload(identity, context)` loader. It obtains a complete
-request descriptor synchronously from its caller, strictly validates an X or Twitter
-`UserByScreenName` GraphQL endpoint, its account-bound JSON query parameters, and a
-closed header allowlist, and reconstructs the URL and headers before invoking only
-the injected fetch function. The GET uses included credentials, `no-store`, rejected
-redirects, and the broker's exact shared abort signal. Response and JSON failures are
-normalized at privacy-safe boundaries, while successful JSON is returned unchanged
-for the existing parser; the transport performs no response interpretation, caching,
-or persistence.
-Endpoint validation examines the exact supplied pathname before URL normalization,
-rejecting fragments and literal, encoded, or mixed dot segments rather than accepting
-a pathname repaired by the platform URL parser.
+### Component architecture
 
-The transport is deliberately not wired into production. An isolated version 1
-page-world capture can observe an existing, exact same-origin X or Twitter
-`UserByScreenName` GET without modifying the request or capturing its response. It
-removes the observed handle and publishes only the reusable query template and a
-closed selection of request headers as a transient JSON-string same-document event.
-Capture is deliberately observational: accessor-backed request options, inherited
-request options, one-shot header iterators, and other forms that cannot be inspected
-without extra observable behavior are forwarded unchanged without metadata capture.
-It retains only the latest valid snapshot in memory and supports replay. The matching
-isolated version 1 content-world bridge treats every event as untrusted, validates and
-deeply copies it, and exposes a synchronous transport-compatible
-`createRequest(identity, context)` which constructs fresh descriptors for canonical
-source-neutral identities. Stopping clears metadata; neither boundary reads cookies,
-persists data, uses runtime messaging, modifies the network request, or starts
-automatically.
+Account identity normalization safely canonicalizes supported X and Twitter account
+references. The account-link reader consumes an explicitly supplied anchor, while the
+selector and discovery layers identify conservative profile, timeline, reply, search,
+notification, and related account targets. The mutation-driven target observer emits
+stable added, updated, removed, and reordered records and clears its transient tracking
+on stop.
 
-The same-document event is not a secrecy boundary from X's page world, which already
-originates the request. Metadata is never sent to another origin or external service.
-Query IDs, feature flags, headers, and authorization material are learned only from an
-eligible request already made by the current document; none are embedded. Live X
-request shapes and header availability remain unverified, so the bridge may remain
-unavailable until X makes an eligible request. Production page-script injection, root
-acquisition, route-controller startup, transport composition, live Chrome/Firefox
-verification, and release hardening remain unimplemented. No live request template or
-authorization material is included.
+Each account-target session composes discovery with the processor, settings snapshots,
+About Account location parsing, badge presentation, and reversible show, highlight, and
+hide actions. The processor groups active canonical accounts, rejects stale lifecycle
+results, reevaluates resolved targets after settings changes without another lookup,
+and cleans targets which disappear. The dynamic route-session controller classifies
+navigation URLs, creates the existing route plans, reuses compatible sessions, and
+keeps one active-only payload broker across route changes.
 
-An isolated version 1 account-target session group now composes one shared
-broker with several caller-supplied explicit root/source session plans. It
-starts the broker before sessions, stops sessions in reverse order before the
-broker, shares in-flight lookups across roots and sources, supports manual
-rescanning and clean restart, rolls back partial startup, and uses lifecycle
-generations to reject stale callbacks. It retains no resolved payload or
-location cache. The settings runtime must already be started and the group
-never starts or stops it; the underlying transport remains dependency-injected.
+The payload broker deduplicates only current work, gives each consumer an independent
+cancellation path, and aborts shared work after its final consumer leaves. Entries are
+removed on resolution, rejection, cancellation, or stop, so it introduces no resolved
+payload or parsed-location cache. The transport obtains a fresh request descriptor from
+the bridge for every request, validates the endpoint and closed header allowlist, and
+passes successful JSON unchanged to the established parser.
 
-An isolated version 1 X route classifier now accepts only an explicitly supplied,
-conservatively validated absolute HTTPS X or Twitter URL. It returns a minimal
-immutable descriptor for home, explore, profile sections (including replies),
-status, search, or notifications, and retains no raw URL, query, or hash data.
-Classification uses the conservatively validated supplied path spelling rather
-than a URL parser's repaired or dot-segment-normalized pathname.
-
-An isolated version 1 route planner deterministically converts that descriptor
-and one explicit caller-supplied root into immutable account-target session
-plans. Profile plans are ordered first; status pages receive only one reply plan
-to avoid duplicate scanning of the timeline/reply shared tweet selector.
-
-The classifier itself does not observe navigation, and root acquisition and selection
-remain caller responsibilities. The classifier and planner are not connected to
-content-script startup; isolated dynamic route reconciliation is documented below.
-Neither module retains a route, root, account, payload, or location cache. The
-conservative route and selector policies have not been verified against every
-live X layout, and live browser behavior remains unverified.
-
-Production navigation wiring, automatic root acquisition, and session startup remain
-caller concerns and are not implemented. The
-group is not connected to content-script startup. No real X request, query ID,
-authentication handling, or persistent account data exists, and live X layout
-and end-to-end browser behavior remain unverified. Real About Account transport,
-query-ID discovery, production authorization composition, live content-script
-startup, production navigation wiring, automatic root
-acquisition, badge styling, and end-to-end browser verification all remain
-unimplemented; this repository is not production-ready.
-
-The pure shared models include canonical X account-handle normalization and safe
-parsing of X and Twitter account references, a canonical immutable filter-subject
-model, and a pure subject-to-filter-action evaluation boundary. They also provide
-country flag-emoji generation, a canonical immutable location-display descriptor,
-and distinct presentation labels for hidden, missing, unavailable, and unknown
-locations. Automatic observer startup, route-aware observer selection, location
-lookup or detection, automatic account presentation, applying highlight or hide
-actions, badge styling, blocking live X content, and end-to-end browser
-verification remain unimplemented. The pure models also include a complete static ISO alpha-2
-registry, a versioned deterministic country-to-region policy, and automatic
-region enrichment for known country locations.
-
-## X About Account location parsing
-
-The repository includes version 1 of a deterministic English country-name policy covering
-all 249 supported country codes, with short canonical display names and explicit safe
-aliases for common variants. A pure version 1 parser accepts caller-supplied X About
-Account payloads and converts the exact observed `account_based_in` path into canonical
-known, missing, unavailable, or unknown immutable location results. It deliberately does
-not use `location_accurate` for classification and retains only the trimmed raw country
-name for known or unknown results; other account, request, authentication, and response
-metadata is discarded. The parser never produces a hidden location.
-
-The observed response shape is a versioned observation, not an official stable API. No X
-request, query-ID discovery, authentication-data reading, page integration, content-script
-integration, live location lookup, or automatic account presentation is implemented.
-Memory-only authorization handling, live observer and processor startup, badge styling, blocking live X content, and end-to-end browser verification
-also remain unimplemented.
+The page capture observes an eligible same-origin `UserByScreenName` GET without
+modifying it or reading its response. It removes the observed handle before publishing
+the reusable template. The isolated-world bridge treats the same-document event as
+untrusted input, validates and deeply copies it, and substitutes each canonical target
+handle only when creating a fresh transport descriptor.
 
 ## Development
 
-Install dependencies with `npm ci`, then run the complete validation suite:
+Install exact dependencies and run the full validation suite:
 
 ```sh
+npm ci --ignore-scripts --no-audit --no-fund
 npm run check
 ```
 
-Individual commands are available for linting (`npm run lint`), testing
-(`npm test`), and building unpacked Chrome and Firefox extensions
-(`npm run build:chrome` and `npm run build:firefox`). Unpacked browser builds are
-written to `dist/chrome` and `dist/firefox`; each generated directory contains
-its own root `manifest.json`.
+Individual commands are available as `npm run lint`, `npm test`, `npm run build`, and
+`npm run validate:build`. Generated unpacked builds are written beneath `dist/` and are
+not committed.
 
-Live X layout compatibility and end-to-end browser behavior remain unverified. This repository is not production-ready. No real About Account transport, query-ID discovery, production authorization composition, live content-script session startup, route-aware root and source orchestration, broker-to-session production wiring, badge styling, or end-to-end browser verification is implemented. No persistent account/location storage exists.
+Tests use injected fake page/browser facades and do not contact X, Twitter, or any other
+external service. Production composition is not live-X certification and performs no
+real user-facing or external action during tests.
 
-## Isolated navigation and dynamic route sessions
+## Current limitations
 
-Version 1 page-world navigation signaling can be installed explicitly to wrap
-`history.pushState` and `history.replaceState`. Each successful call dispatches the
-single `x-region-block:navigation` DOM event with no detail. The installer owns and
-conditionally restores only its exact wrappers. Installation is transactional, and a
-wrapper retained behind a newer page wrapper remains a safe original-method delegate
-after stop while signaling stays disabled. If current history ownership cannot be read,
-the installer performs no restoration write rather than risk replacing a page-owned
-accessor. Version 1 content-world navigation
-observation listens for that event and native `popstate`, reads the live URL for each
-signal, and retains no raw URL after synchronous delivery. Registration-time lifecycle
-invalidation rolls back every listener that may have been installed before a clean retry.
-
-Version 1 of the dynamic account-target route-session controller classifies each
-explicit navigation URL and applies the existing route planner to an explicitly
-supplied root. One broker remains active across route changes. Sessions are reused by
-canonical plan identity and reordered into planner order; added sessions start before
-obsolete sessions stop so compatible in-flight consumers can transfer without an
-avoidable shared-request abort. Unsupported routes remove every session while leaving
-the broker and navigation observer ready for a later supported route. Reentrant signals
-retain only the latest navigation while synchronous reconciliation is in progress. No
-resolved payload or parsed location cache is introduced. Starting candidates are owned
-before their startup call, final stop still cleans them before the broker, and explicit
-record states prevent callbacks from rolled-back or retired sessions reaching a later
-route or lifecycle. Candidate errors remain buffered across the complete route transaction
-and are forwarded only after every addition succeeds and the desired route commits.
-Each reconciliation retains its own candidate ownership until the synchronous transaction
-unwinds, so reentrant final stop prevents later candidates and adopts in-progress cleanup.
-Record-scoped cleanup attribution preserves nested cleanup failures while navigation stops
-first, every session stops exactly once, and the broker stops last. Pending compatible
-consumers can therefore transfer between route sessions without aborting the shared request.
-Navigation-observer creation has its own startup transaction: factory and reflective-method
-work is lifecycle-checked, navigation and error callbacks remain buffered until the observer
-starts and the initial route commits, and only the latest startup navigation is then applied.
-Reentrant final stop claims this startup work, adopts any safely stoppable returned observer,
-discards buffered callbacks, stops the observer before the broker, and starts no route session.
-
-These boundaries remain isolated: the page entrypoint does not install the signal, the
-page script is not injected, and the content script starts neither the observer nor the
-route controller. A root must still be supplied explicitly; automatic root acquisition,
-real About Account transport, query-ID discovery, production authorization composition,
-production page-signal injection, production content route-controller startup, badge
-styling and live-layout compatibility fixes, and end-to-end Chrome and Firefox
-verification remain MVP work. Route and selector compatibility has not been verified
-against every live X layout, end-to-end browser behavior remains unverified, and the
-extension is not production-ready.
+- Live X selectors remain unverified.
+- Live GraphQL query shapes remain unverified.
+- Header and authorization availability remain unverified.
+- The extension may remain inactive until X makes an eligible request.
+- X interface changes may break discovery or capture.
+- Live Chrome and Firefox behavior has not yet been manually verified.
+- Release packaging and hardening remain incomplete.
+- The extension is not release-ready until the next verification pull request.

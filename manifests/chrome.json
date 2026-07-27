@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "X Region Reveal & Block",
   "version": "0.0.1",
-  "description": "Development foundation for a future X region reveal and block extension; user-facing features are not implemented yet.",
+  "description": "Development integration for account-region badges and configured actions on supported X and Twitter documents.",
   "permissions": ["storage"],
   "background": {
     "service_worker": "background/service-worker.js"
@@ -14,7 +14,14 @@
         "https://twitter.com/*"
       ],
       "js": ["content/content-script.js"],
-      "css": ["content/account-actions.css"]
+      "css": ["content/account-actions.css"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page/page-script.js"],
+      "matches": ["https://x.com/*", "https://twitter.com/*"]
     }
   ],
   "action": {
