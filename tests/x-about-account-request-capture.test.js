@@ -100,16 +100,24 @@ describe('X About Account request capture', () => {
     expect(capture.hasSnapshot()).toBe(false);
   });
 
-  it.each([
-    () => Object.entries(observedHeaders).filter(([name]) => name !== 'cookie'),
-    () => new Headers(observedHeaders),
-  ])('captures repeatable safe header forms', (headersFactory) => {
+  it('captures branded native Headers', () => {
     const { page, document } = metadataFacades(() => 'unchanged');
     const details = [];
     document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, (event) => details.push(event.detail));
     installXAboutAccountRequestCapture(page);
-    page.fetch(observedUrl(), { headers: headersFactory() });
+    page.fetch(observedUrl(), { headers: new Headers(observedHeaders) });
     expect(details).toHaveLength(1);
+  });
+
+  it('forwards standard tuple arrays without capture or iteration', () => {
+    const headers = [['authorization', 'authorization'], ['x-csrf-token', 'csrf']];
+    const fetch = vi.fn(() => 'unchanged');
+    const { page } = metadataFacades(fetch);
+    const capture = installXAboutAccountRequestCapture(page);
+    const init = { headers };
+    expect(page.fetch(observedUrl(), init)).toBe('unchanged');
+    expect(capture.hasSnapshot()).toBe(false);
+    expect(fetch.mock.calls[0][1]).toBe(init);
   });
 
   it('uses intrinsic URL and Request properties instead of own shadows', () => {
@@ -326,5 +334,105 @@ describe('X About Account request capture', () => {
     expect(active).not.toBe(stopped);
     expect(active.isActive()).toBe(true);
     active.stop();
+  });
+
+  it.each(['setter', 'readback', 'listener'])(
+    'keeps capture disabled when fetch runs during pending %s work', (phase) => {
+      const original = vi.fn(() => 'delegated');
+      const { page, document } = metadataFacades(original);
+      const details = [];
+      document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, (event) => details.push(event.detail));
+      let storedFetch = original;
+      let reads = 0;
+      Object.defineProperty(page, 'fetch', {
+        configurable: true,
+        get() {
+          reads += 1;
+          if (phase === 'readback' && reads === 2) storedFetch(observedUrl(), { headers: observedHeaders });
+          return storedFetch;
+        },
+        set(value) {
+          storedFetch = value;
+          if (phase === 'setter') value(observedUrl(), { headers: observedHeaders });
+        },
+      });
+      const originalAdd = document.addEventListener.bind(document);
+      document.addEventListener = (type, listener) => {
+        if (phase === 'listener' && type === X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE) {
+          page.fetch(observedUrl(), { headers: observedHeaders });
+        }
+        originalAdd(type, listener);
+      };
+      const controller = installXAboutAccountRequestCapture(page);
+      expect(controller.isActive()).toBe(true);
+      expect(controller.hasSnapshot()).toBe(false);
+      expect(details).toHaveLength(0);
+      expect(original).toHaveBeenCalledTimes(1);
+      controller.stop();
+    },
+  );
+
+  it('rolls back pending fetch invocation when listener registration throws', () => {
+    const original = vi.fn(() => 'delegated');
+    const { page, document } = metadataFacades(original);
+    let pendingController;
+    document.addEventListener = (type) => {
+      if (type === X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE) {
+        pendingController = installXAboutAccountRequestCapture(page);
+        page.fetch(observedUrl(), { headers: observedHeaders });
+        throw new Error('registration failure');
+      }
+    };
+    expect(() => installXAboutAccountRequestCapture(page)).toThrow(
+      'Unable to install X About Account request capture',
+    );
+    expect(pendingController.isActive()).toBe(false);
+    expect(pendingController.hasSnapshot()).toBe(false);
+    expect(page.fetch).toBe(original);
+    expect(original).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a stopped pending reservation until the outer installer unwinds', () => {
+    const original = vi.fn(() => 'delegated');
+    const { page } = metadataFacades(original);
+    let storedFetch = original;
+    const nested = [];
+    let claimed = false;
+    Object.defineProperty(page, 'fetch', {
+      configurable: true,
+      get() { return storedFetch; },
+      set(value) {
+        storedFetch = value;
+        if (!claimed) {
+          claimed = true;
+          const first = installXAboutAccountRequestCapture(page);
+          first.stop();
+          nested.push(first, installXAboutAccountRequestCapture(page));
+        }
+      },
+    });
+    const outer = installXAboutAccountRequestCapture(page);
+    expect(nested).toEqual([outer, outer]);
+    expect(outer.isActive()).toBe(false);
+    expect(storedFetch).toBe(original);
+    const later = installXAboutAccountRequestCapture(page);
+    expect(later).not.toBe(outer);
+    expect(later.isActive()).toBe(true);
+    later.stop();
+  });
+
+  it('releases the page facade from retained controller methods after stop', () => {
+    const original = vi.fn(() => 'delegated');
+    const { page } = metadataFacades(original);
+    const revocable = Proxy.revocable(page, {});
+    const controller = installXAboutAccountRequestCapture(revocable.proxy);
+    const retainedWrapper = page.fetch;
+    controller.stop();
+    revocable.revoke();
+    expect(controller.stop()).toBeUndefined();
+    expect(controller.isActive()).toBe(false);
+    expect(controller.hasSnapshot()).toBe(false);
+    expect(retainedWrapper('input')).toBe('delegated');
+    expect(original).toHaveBeenCalledWith('input');
   });
 });
