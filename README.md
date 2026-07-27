@@ -64,6 +64,36 @@ other production data uses extension storage. Chrome and Firefox manifests reque
 the `storage` permission, request no host permissions, and expose only
 `page/page-script.js` to the existing X and Twitter match patterns.
 
+### Component architecture
+
+Account identity normalization safely canonicalizes supported X and Twitter account
+references. The account-link reader consumes an explicitly supplied anchor, while the
+selector and discovery layers identify conservative profile, timeline, reply, search,
+notification, and related account targets. The mutation-driven target observer emits
+stable added, updated, removed, and reordered records and clears its transient tracking
+on stop.
+
+Each account-target session composes discovery with the processor, settings snapshots,
+About Account location parsing, badge presentation, and reversible show, highlight, and
+hide actions. The processor groups active canonical accounts, rejects stale lifecycle
+results, reevaluates resolved targets after settings changes without another lookup,
+and cleans targets which disappear. The dynamic route-session controller classifies
+navigation URLs, creates the existing route plans, reuses compatible sessions, and
+keeps one active-only payload broker across route changes.
+
+The payload broker deduplicates only current work, gives each consumer an independent
+cancellation path, and aborts shared work after its final consumer leaves. Entries are
+removed on resolution, rejection, cancellation, or stop, so it introduces no resolved
+payload or parsed-location cache. The transport obtains a fresh request descriptor from
+the bridge for every request, validates the endpoint and closed header allowlist, and
+passes successful JSON unchanged to the established parser.
+
+The page capture observes an eligible same-origin `UserByScreenName` GET without
+modifying it or reading its response. It removes the observed handle before publishing
+the reusable template. The isolated-world bridge treats the same-document event as
+untrusted input, validates and deeply copies it, and substitutes each canonical target
+handle only when creating a fresh transport descriptor.
+
 ## Development
 
 Install exact dependencies and run the full validation suite:

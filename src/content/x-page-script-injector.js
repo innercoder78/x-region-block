@@ -6,87 +6,179 @@ import {
 export const X_PAGE_SCRIPT_INJECTOR_VERSION = 1;
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 
+function usableRuntime(namespace) {
+  try { return typeof namespace?.runtime?.getURL === 'function' ? namespace.runtime : null; }
+  catch { return null; }
+}
+
 export function createXPageScriptInjector(globalScope) {
   let dependencies;
   try {
-    const { document, Event, Promise: PromiseConstructor } = globalScope;
+    const { document, Event, Promise: PromiseConstructor, MutationObserver } = globalScope;
     const origin = globalScope.location.origin;
-    const root = document.documentElement;
     const add = document.addEventListener;
     const remove = document.removeEventListener;
     const dispatch = document.dispatchEvent;
     const createElement = document.createElement;
-    const runtime = globalScope.browser?.runtime ?? globalScope.chrome?.runtime;
-    const getURL = runtime.getURL;
-    if (!supportedOrigins.has(origin) || !root || typeof Event !== 'function'
-      || typeof PromiseConstructor !== 'function' || typeof add !== 'function'
+    const runtime = usableRuntime(globalScope.browser) ?? usableRuntime(globalScope.chrome);
+    const getURL = runtime?.getURL;
+    if (!supportedOrigins.has(origin) || document === null || typeof document !== 'object'
+      || typeof Event !== 'function' || typeof PromiseConstructor !== 'function'
+      || typeof MutationObserver !== 'function' || typeof add !== 'function'
       || typeof remove !== 'function' || typeof dispatch !== 'function'
-      || typeof createElement !== 'function' || typeof root.appendChild !== 'function'
-      || typeof getURL !== 'function') throw new Error();
-    dependencies = { document, root, Event, Promise: PromiseConstructor, add, remove, dispatch,
-      createElement, runtime, getURL };
+      || typeof createElement !== 'function' || typeof getURL !== 'function') throw new Error();
+    dependencies = { document, Event, Promise: PromiseConstructor, MutationObserver,
+      add, remove, dispatch, createElement, runtime, getURL };
   } catch { throw new TypeError('Invalid X page script injector global scope'); }
+
   let active = false;
   let generation = 0;
   let pending = null;
-  let mayHaveRuntime = false;
-
-  const event = (type) => new dependencies.Event(type, {
+  const createEvent = (type) => new dependencies.Event(type, {
     bubbles: false, cancelable: false, composed: false,
   });
+  const owned = (state) => pending === state && generation === state.lifecycle && !state.claimed;
+  const removeScript = (script) => {
+    try { script.remove(); }
+    catch { try { script.parentNode?.removeChild(script); } catch { /* best effort */ } }
+  };
   const cleanup = (state) => {
-    try { Reflect.apply(dependencies.remove, dependencies.document, [X_PAGE_RUNTIME_READY_EVENT_TYPE, state.ready]); } catch { /* best effort */ }
-    try { Reflect.apply(dependencies.remove, dependencies.document, [X_PAGE_RUNTIME_ERROR_EVENT_TYPE, state.error]); } catch { /* best effort */ }
-    if (state.script) {
-      state.script.onload = null; state.script.onerror = null;
-      try { state.script.remove(); } catch { try { state.script.parentNode?.removeChild(state.script); } catch { /* best effort */ } }
-      state.script = null;
+    if (state.readyMayBeAdded) {
+      state.readyMayBeAdded = false;
+      try { Reflect.apply(dependencies.remove, dependencies.document,
+        [X_PAGE_RUNTIME_READY_EVENT_TYPE, state.ready]); } catch { /* best effort */ }
+    }
+    if (state.errorMayBeAdded) {
+      state.errorMayBeAdded = false;
+      try { Reflect.apply(dependencies.remove, dependencies.document,
+        [X_PAGE_RUNTIME_ERROR_EVENT_TYPE, state.error]); } catch { /* best effort */ }
+    }
+    const observer = state.observer;
+    state.observer = null;
+    try { observer?.disconnect(); } catch { /* best effort */ }
+    const script = state.script;
+    state.script = null;
+    if (script) {
+      try { script.onload = null; } catch { /* best effort */ }
+      try { script.onerror = null; } catch { /* best effort */ }
+      removeScript(script);
     }
   };
+  const settle = (state, success) => {
+    if (state.settled) return;
+    state.settled = true;
+    cleanup(state);
+    if (pending === state) pending = null;
+    if (success && !state.claimed && generation === state.lifecycle) {
+      active = true;
+      state.resolve();
+    } else {
+      active = false;
+      state.reject(new Error('Unable to inject X page runtime'));
+    }
+  };
+
   const start = () => {
-    if (pending) return pending.promise;
+    if (pending !== null) return pending.promise;
     if (active) return dependencies.Promise.resolve();
-    const lifecycle = ++generation;
-    const state = { script: null, settled: false, ready: null, error: null, cancel: null, promise: null };
+    const state = {
+      lifecycle: generation + 1, claimed: false, settled: false, probeDispatched: false,
+      readyMayBeAdded: false, errorMayBeAdded: false, observer: null, script: null,
+      resolve: null, reject: null, ready: null, error: null, promise: null,
+    };
     state.promise = new dependencies.Promise((resolve, reject) => {
-      const settle = (success) => {
-        if (state.settled) return;
-        state.settled = true; cleanup(state);
-        if (pending === state) pending = null;
-        if (success && generation === lifecycle) { active = true; mayHaveRuntime = true; resolve(); }
-        else { active = false; reject(new Error('Unable to inject X page runtime')); }
-      };
-      state.ready = () => settle(true);
-      state.error = () => settle(false);
-      state.cancel = () => settle(false);
-      try {
-        Reflect.apply(dependencies.add, dependencies.document, [X_PAGE_RUNTIME_READY_EVENT_TYPE, state.ready]);
-        Reflect.apply(dependencies.add, dependencies.document, [X_PAGE_RUNTIME_ERROR_EVENT_TYPE, state.error]);
-        Reflect.apply(dependencies.dispatch, dependencies.document, [event(X_PAGE_RUNTIME_REQUEST_EVENT_TYPE)]);
-        if (state.settled) return;
-        const url = Reflect.apply(dependencies.getURL, dependencies.runtime, ['page/page-script.js']);
-        if (typeof url !== 'string' || !/^(?:chrome|moz)-extension:/.test(url)) throw new Error();
-        const script = Reflect.apply(dependencies.createElement, dependencies.document, ['script']);
-        state.script = script; script.src = url; script.async = false;
-        script.onerror = () => settle(false);
-        script.onload = () => dependencies.Promise.resolve().then(() => {
-          if (!state.settled && generation === lifecycle) settle(false);
-        });
-        Reflect.apply(dependencies.root.appendChild, dependencies.root, [script]);
-      } catch { settle(false); }
+      state.resolve = resolve; state.reject = reject;
     });
-    if (!state.settled) pending = state;
+    generation = state.lifecycle;
+    pending = state;
+    state.ready = () => { if (owned(state)) settle(state, true); };
+    state.error = () => { if (owned(state)) settle(state, false); };
+    const checkpoint = () => {
+      if (!owned(state)) throw new Error('startup claimed');
+    };
+    const insert = () => {
+      checkpoint();
+      const root = dependencies.document.documentElement;
+      checkpoint();
+      if (root === null || root === undefined) return false;
+      if (typeof root.appendChild !== 'function') throw new Error('invalid insertion root');
+      const observer = state.observer;
+      state.observer = null;
+      try { observer?.disconnect(); } catch { /* insertion can continue */ }
+      checkpoint();
+      Reflect.apply(root.appendChild, root, [state.script]);
+      if (!owned(state)) { removeScript(state.script); checkpoint(); }
+      return true;
+    };
+    try {
+      state.readyMayBeAdded = true;
+      Reflect.apply(dependencies.add, dependencies.document,
+        [X_PAGE_RUNTIME_READY_EVENT_TYPE, state.ready]);
+      if (!owned(state)) {
+        try { Reflect.apply(dependencies.remove, dependencies.document,
+          [X_PAGE_RUNTIME_READY_EVENT_TYPE, state.ready]); } catch { /* best effort */ }
+      }
+      checkpoint();
+      state.errorMayBeAdded = true;
+      Reflect.apply(dependencies.add, dependencies.document,
+        [X_PAGE_RUNTIME_ERROR_EVENT_TYPE, state.error]);
+      if (!owned(state)) {
+        try { Reflect.apply(dependencies.remove, dependencies.document,
+          [X_PAGE_RUNTIME_ERROR_EVENT_TYPE, state.error]); } catch { /* best effort */ }
+      }
+      checkpoint();
+      state.probeDispatched = true;
+      Reflect.apply(dependencies.dispatch, dependencies.document,
+        [createEvent(X_PAGE_RUNTIME_REQUEST_EVENT_TYPE)]);
+      checkpoint();
+      const url = Reflect.apply(dependencies.getURL, dependencies.runtime, ['page/page-script.js']);
+      checkpoint();
+      if (typeof url !== 'string' || !/^(?:chrome|moz)-extension:/.test(url)) throw new Error();
+      const script = Reflect.apply(dependencies.createElement, dependencies.document, ['script']);
+      checkpoint();
+      if (script === null || (typeof script !== 'object' && typeof script !== 'function')) throw new Error();
+      state.script = script;
+      script.src = url;
+      checkpoint();
+      script.async = false;
+      checkpoint();
+      script.onerror = () => { if (owned(state)) settle(state, false); };
+      checkpoint();
+      script.onload = () => {
+        if (!owned(state)) return;
+        dependencies.Promise.resolve().then(() => {
+          if (owned(state)) settle(state, false);
+        });
+      };
+      checkpoint();
+      if (!insert()) {
+        const observer = new dependencies.MutationObserver(() => {
+          if (!owned(state)) return;
+          try { insert(); } catch { if (owned(state)) settle(state, false); }
+        });
+        if (!owned(state)) { try { observer.disconnect(); } catch { /* best effort */ } }
+        checkpoint();
+        state.observer = observer;
+        observer.observe(dependencies.document, { childList: true });
+        checkpoint();
+        insert();
+      }
+    } catch { if (!state.settled) settle(state, false); }
     return state.promise;
   };
+
   const stop = () => {
-    const shouldSignal = active || mayHaveRuntime || pending?.script !== null;
-    active = false; mayHaveRuntime = false; generation += 1;
     const state = pending;
-    if (state) {
-      state.cancel();
+    const shouldSignal = active || state?.probeDispatched === true;
+    active = false;
+    generation += 1;
+    if (state !== null) {
+      state.claimed = true;
+      settle(state, false);
     }
     if (shouldSignal) {
-      try { Reflect.apply(dependencies.dispatch, dependencies.document, [event(X_PAGE_RUNTIME_STOP_EVENT_TYPE)]); } catch { /* best effort */ }
+      try { Reflect.apply(dependencies.dispatch, dependencies.document,
+        [createEvent(X_PAGE_RUNTIME_STOP_EVENT_TYPE)]); } catch { /* best effort */ }
     }
   };
   return Object.freeze({ start, stop, isActive: () => active });

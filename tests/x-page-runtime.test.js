@@ -79,4 +79,25 @@ describe('X page runtime', () => {
     expect(errors[0].type).toBe(X_PAGE_RUNTIME_ERROR_EVENT_TYPE);
     expect(errors[0].bubbles).toBe(false);
   });
+
+  it('returns the pending controller to a reentrant call and permits a clean retry', () => {
+    const scope = page();
+    const originalAdd = scope.document.addEventListener.bind(scope.document);
+    let pending;
+    let reentered = false;
+    scope.document.addEventListener = (...args) => {
+      if (!reentered) {
+        reentered = true;
+        pending = installXPageRuntime(scope);
+        expect(pending.isActive()).toBe(false);
+        pending.stop();
+      }
+      return originalAdd(...args);
+    };
+    expect(() => installXPageRuntime(scope)).toThrow('Unable to install X page runtime');
+    scope.document.addEventListener = originalAdd;
+    const retried = installXPageRuntime(scope);
+    expect(retried.isActive()).toBe(true);
+    retried.stop();
+  });
 });

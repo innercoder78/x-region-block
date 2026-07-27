@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "X Region Reveal & Block",
   "version": "0.0.1",
-  "description": "Reveals account regions and applies configured account actions on supported X and Twitter pages.",
+  "description": "Development integration for account-region badges and configured actions on supported X and Twitter documents.",
   "permissions": ["storage"],
   "background": {
     "scripts": ["background/service-worker.js"]
