@@ -105,6 +105,9 @@ page-world capture can observe an existing, exact same-origin X or Twitter
 `UserByScreenName` GET without modifying the request or capturing its response. It
 removes the observed handle and publishes only the reusable query template and a
 closed selection of request headers as a transient JSON-string same-document event.
+Capture is deliberately observational: accessor-backed request options, inherited
+request options, one-shot header iterators, and other forms that cannot be inspected
+without extra observable behavior are forwarded unchanged without metadata capture.
 It retains only the latest valid snapshot in memory and supports replay. The matching
 isolated version 1 content-world bridge treats every event as untrusted, validates and
 deeply copies it, and exposes a synchronous transport-compatible

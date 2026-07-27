@@ -1,29 +1,32 @@
 const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-export const METADATA_LIMIT = 65_536;
-export const QUERY_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
-export const HEADER_NAMES = Object.freeze([
+const QUERY_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
+const HEADER_NAMES = Object.freeze([
   'authorization', 'x-csrf-token', 'x-twitter-active-user', 'x-twitter-auth-type',
   'x-twitter-client-language', 'x-guest-token', 'x-client-transaction-id',
 ]);
-export const SNAPSHOT_KEYS = Object.freeze([
-  'version', 'origin', 'queryId', 'variables', 'features', 'fieldToggles', 'headers',
-]);
 
-export function isPlainObject(value) {
+export const METADATA_DETAIL_LIMIT = 65_536;
+
+export function metadataHeaderNames() { return HEADER_NAMES; }
+
+export function validMetadataQueryId(value) {
+  return typeof value === 'string' && QUERY_ID_PATTERN.test(value);
+}
+
+export function validMetadataHeaderValue(value) {
+  return typeof value === 'string' && value.length > 0 && ![...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+}
+
+export function isMetadataPlainObject(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === null || prototype === Object.prototype;
 }
 
-export function exactStringKeys(value, keys) {
-  if (!isPlainObject(value)) return false;
-  const ownKeys = Reflect.ownKeys(value);
-  return ownKeys.length === keys.length
-    && ownKeys.every((key) => typeof key === 'string')
-    && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
-}
-
-export function copyJsonSafe(value) {
+export function copyAndValidateJsonValue(value, options = undefined) {
   let count = 0;
   const ancestors = new Set();
   function copy(candidate, depth) {
@@ -36,16 +39,15 @@ export function copyJsonSafe(value) {
       if (candidate.length > 16_384) throw new TypeError();
       return candidate;
     }
-    if (depth > 12 || (typeof candidate !== 'object') || ancestors.has(candidate)) throw new TypeError();
-    if (!Array.isArray(candidate) && !isPlainObject(candidate)) throw new TypeError();
+    if (depth > 12 || typeof candidate !== 'object' || ancestors.has(candidate)) throw new TypeError();
+    if (!Array.isArray(candidate) && !isMetadataPlainObject(candidate)) throw new TypeError();
     const keys = Reflect.ownKeys(candidate);
     if (keys.some((key) => typeof key !== 'string' || FORBIDDEN_KEYS.has(key))) throw new TypeError();
     count += Array.isArray(candidate) ? candidate.length : keys.length;
     if (count > 4_096) throw new TypeError();
     if (Array.isArray(candidate)
-      && (keys.length !== candidate.length + 1 || keys.some((key) => key !== 'length' && !/^(?:0|[1-9]\d*)$/.test(key)))) {
-      throw new TypeError();
-    }
+      && (keys.length !== candidate.length + 1
+        || keys.some((key) => key !== 'length' && !/^(?:0|[1-9]\d*)$/.test(key)))) throw new TypeError();
     ancestors.add(candidate);
     const output = Array.isArray(candidate) ? [] : Object.create(null);
     if (Array.isArray(candidate)) {
@@ -64,20 +66,15 @@ export function copyJsonSafe(value) {
     ancestors.delete(candidate);
     return output;
   }
-  return copy(value, 0);
+  const copied = copy(value, 0);
+  if (options?.requireObject === true && !isMetadataPlainObject(copied)) throw new TypeError();
+  return copied;
 }
 
-export function deepFreeze(value) {
+export function deeplyFreezeMetadata(value) {
   if (value && typeof value === 'object') {
-    for (const key of Object.keys(value)) deepFreeze(value[key]);
+    for (const key of Object.keys(value)) deeplyFreezeMetadata(value[key]);
     Object.freeze(value);
   }
   return value;
-}
-
-export function validHeaderValue(value) {
-  return typeof value === 'string' && value.length > 0 && ![...value].some((character) => {
-    const code = character.charCodeAt(0);
-    return code <= 31 || code === 127;
-  });
 }

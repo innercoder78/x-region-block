@@ -5,7 +5,8 @@ import {
   X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION,
 } from '../shared/x-about-account-request-metadata-event.js';
 import {
-  HEADER_NAMES, METADATA_LIMIT, QUERY_ID_PATTERN, copyJsonSafe, isPlainObject, validHeaderValue,
+  METADATA_DETAIL_LIMIT, copyAndValidateJsonValue, metadataHeaderNames,
+  validMetadataHeaderValue, validMetadataQueryId,
 } from '../shared/x-about-account-request-metadata-policy.js';
 
 export const X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION = 1;
@@ -13,42 +14,128 @@ export const X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION = 1;
 const installations = new WeakMap();
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+const isPlainObject = (value) => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === null || prototype === Object.prototype;
+};
 const containsControl = (value) => [...value].some((character) => {
   const code = character.charCodeAt(0);
   return code <= 31 || code === 127;
 });
 
+function dataProperty(value, name) {
+  if (!isPlainObject(value)) throw new TypeError();
+  const descriptor = Object.getOwnPropertyDescriptor(value, name);
+  if (descriptor) {
+    if (!hasOwn(descriptor, 'value')) throw new TypeError();
+    return { supplied: descriptor.value !== undefined, value: descriptor.value };
+  }
+  let prototype = Object.getPrototypeOf(value);
+  while (prototype !== null) {
+    if (Object.getOwnPropertyDescriptor(prototype, name)) throw new TypeError();
+    prototype = Object.getPrototypeOf(prototype);
+  }
+  return { supplied: false, value: undefined };
+}
+
+function safeArrayHeaders(value) {
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !hasOwn(length, 'value') || !Number.isSafeInteger(length.value)) throw new TypeError();
+  const output = [];
+  for (let index = 0; index < length.value; index += 1) {
+    const tupleDescriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!tupleDescriptor || !hasOwn(tupleDescriptor, 'value') || !Array.isArray(tupleDescriptor.value)) throw new TypeError();
+    const tuple = tupleDescriptor.value;
+    const tupleLength = Object.getOwnPropertyDescriptor(tuple, 'length');
+    const first = Object.getOwnPropertyDescriptor(tuple, '0');
+    const second = Object.getOwnPropertyDescriptor(tuple, '1');
+    if (!tupleLength || tupleLength.value !== 2 || !first || !second
+      || !hasOwn(first, 'value') || !hasOwn(second, 'value')
+      || typeof first.value !== 'string' || typeof second.value !== 'string') throw new TypeError();
+    output.push([first.value, second.value]);
+  }
+  return output;
+}
+
+function safeRecordHeaders(value) {
+  if (!isPlainObject(value)) throw new TypeError();
+  const output = Object.create(null);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string') throw new TypeError();
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !hasOwn(descriptor, 'value') || typeof descriptor.value !== 'string') throw new TypeError();
+    output[key] = descriptor.value;
+  }
+  return output;
+}
+
+function normalizeHeaders(state, source) {
+  if (source instanceof state.Headers) {
+    const headers = Object.create(null);
+    for (const name of metadataHeaderNames()) {
+      const value = Reflect.apply(state.headersGet, source, [name]);
+      if (value !== null) headers[name] = value;
+    }
+    return headers;
+  }
+  const safeSource = Array.isArray(source) ? safeArrayHeaders(source) : safeRecordHeaders(source);
+  const copied = new state.Headers(safeSource);
+  const headers = Object.create(null);
+  for (const name of metadataHeaderNames()) {
+    const value = Reflect.apply(state.headersGet, copied, [name]);
+    if (value !== null) headers[name] = value;
+  }
+  return headers;
+}
+
 function parseParameter(component) {
   const separator = component.indexOf('=');
   const encodedName = separator < 0 ? component : component.slice(0, separator);
   const encodedValue = separator < 0 ? '' : component.slice(separator + 1);
-  return [
-    decodeURIComponent(encodedName.replace(/\+/g, ' ')),
-    decodeURIComponent(encodedValue.replace(/\+/g, ' ')),
-  ];
+  return [decodeURIComponent(encodedName.replace(/\+/g, ' ')),
+    decodeURIComponent(encodedValue.replace(/\+/g, ' '))];
+}
+
+function containsObservedAccount(value, canonicalHandle) {
+  if (typeof value === 'string') {
+    const normalized = value.toLowerCase();
+    return normalized === canonicalHandle || normalized === `@${canonicalHandle}`;
+  }
+  if (Array.isArray(value)) return value.some((item) => containsObservedAccount(item, canonicalHandle));
+  for (const key of Object.keys(value)) {
+    if (key === 'screen_name' || containsObservedAccount(value[key], canonicalHandle)) return true;
+  }
+  return false;
 }
 
 function captureSnapshot(state, input, init) {
   let request = null;
   let suppliedUrl;
   if (typeof input === 'string') suppliedUrl = input;
-  else if (input instanceof state.URL) suppliedUrl = input.href;
+  else if (input instanceof state.URL) suppliedUrl = Reflect.apply(state.urlHref, input, []);
   else if (input instanceof state.Request) {
     request = input;
-    suppliedUrl = request.url;
+    suppliedUrl = Reflect.apply(state.requestUrl, input, []);
   } else return;
   if (typeof suppliedUrl !== 'string' || suppliedUrl.trim() !== suppliedUrl
     || !suppliedUrl.startsWith('https://') || containsControl(suppliedUrl)
     || suppliedUrl.includes('\\') || suppliedUrl.includes('#')) return;
-  if (init !== undefined && (init === null || (typeof init !== 'object' && typeof init !== 'function'))) return;
-  const initMethod = init === undefined ? undefined : init.method;
-  const method = initMethod !== undefined ? initMethod : (request ? request.method : 'GET');
-  if (typeof method !== 'string' || method.toUpperCase() !== 'GET') return;
+
+  let method = request ? Reflect.apply(state.requestMethod, request, []) : 'GET';
+  let headerSource = request ? Reflect.apply(state.requestHeaders, request, []) : undefined;
+  if (init !== undefined) {
+    const methodProperty = dataProperty(init, 'method');
+    const headersProperty = dataProperty(init, 'headers');
+    if (methodProperty.supplied) method = methodProperty.value;
+    if (headersProperty.supplied) headerSource = headersProperty.value;
+  }
+  if (typeof method !== 'string' || method.toUpperCase() !== 'GET' || headerSource === undefined) return;
 
   const supplied = /^https:\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?$/.exec(suppliedUrl);
   if (!supplied) return;
   const [, authority, rawPath, rawQuery] = supplied;
-  if (rawPath === '' || rawPath.endsWith('/') || rawPath.includes('//') || rawQuery === undefined) return;
+  if (!rawPath || rawPath.endsWith('/') || rawPath.includes('//') || rawQuery === undefined || rawQuery === '') return;
   const url = new state.URL(suppliedUrl);
   if (url.origin !== state.origin || authority !== url.host || url.username || url.password || url.port) return;
   const rawSegments = rawPath.slice(1).split('/');
@@ -62,56 +149,41 @@ function captureSnapshot(state, input, init) {
   });
   const [first, second, third, queryId, operation] = segments;
   if (first !== 'i' || second !== 'api' || third !== 'graphql'
-    || operation !== 'UserByScreenName' || !QUERY_ID_PATTERN.test(queryId)) return;
+    || operation !== 'UserByScreenName' || !validMetadataQueryId(queryId)) return;
 
   const parameters = Object.create(null);
   for (const component of rawQuery.split('&')) {
     const [name, value] = parseParameter(component);
     if (!['variables', 'features', 'fieldToggles'].includes(name) || hasOwn(parameters, name)) return;
     const parsed = JSON.parse(value);
-    if (!isPlainObject(parsed)) return;
-    parameters[name] = copyJsonSafe(parsed);
+    parameters[name] = copyAndValidateJsonValue(parsed, { requireObject: true });
   }
   if (!hasOwn(parameters, 'variables') || !hasOwn(parameters.variables, 'screen_name')) return;
-  const observedHandle = parameters.variables.screen_name;
-  normalizeXHandle(observedHandle);
+  const canonicalObservedHandle = normalizeXHandle(parameters.variables.screen_name);
   delete parameters.variables.screen_name;
+  if (containsObservedAccount(parameters.variables, canonicalObservedHandle)) return;
 
-  let headerSource;
-  const initHeaders = init === undefined ? undefined : init.headers;
-  headerSource = initHeaders !== undefined ? initHeaders : (request ? request.headers : undefined);
-  const normalizedHeaders = new state.Headers(headerSource);
-  const headers = Object.create(null);
-  for (const name of HEADER_NAMES) {
-    const value = normalizedHeaders.get(name);
-    if (value !== null) {
-      if (!validHeaderValue(value)) return;
-      headers[name] = value;
-    }
+  const headers = normalizeHeaders(state, headerSource);
+  for (const [name, value] of Object.entries(headers)) {
+    if (!validMetadataHeaderValue(value) || !metadataHeaderNames().includes(name)) return;
   }
   if (!hasOwn(headers, 'authorization') || !hasOwn(headers, 'x-csrf-token')) return;
-  const snapshot = {
-    version: X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION,
-    origin: state.origin,
-    queryId,
+  const serialized = JSON.stringify({
+    version: X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION, origin: state.origin, queryId,
     variables: parameters.variables,
     features: hasOwn(parameters, 'features') ? parameters.features : null,
     fieldToggles: hasOwn(parameters, 'fieldToggles') ? parameters.fieldToggles : null,
     headers,
-  };
-  const serialized = JSON.stringify(snapshot);
-  if (serialized.length > METADATA_LIMIT || serialized.includes(observedHandle)) return;
-  if (serialized === state.snapshot) return;
+  });
+  if (serialized.length > METADATA_DETAIL_LIMIT || serialized === state.snapshot) return;
   state.snapshot = serialized;
-  publish(state);
+  state.publish();
 }
 
-function publish(state) {
-  if (!state.active || state.snapshot === null) return;
-  const event = new state.CustomEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
-    detail: state.snapshot, bubbles: false, cancelable: false, composed: false,
-  });
-  state.document.dispatchEvent(event);
+function intrinsicGetter(constructor, name) {
+  const descriptor = Object.getOwnPropertyDescriptor(constructor.prototype, name);
+  if (!descriptor || typeof descriptor.get !== 'function') throw new TypeError();
+  return descriptor.get;
 }
 
 export function installXAboutAccountRequestCapture(globalScope) {
@@ -131,59 +203,65 @@ export function installXAboutAccountRequestCapture(globalScope) {
     const Headers = globalScope.Headers;
     const Request = globalScope.Request;
     const origin = location.origin;
+    const urlHref = intrinsicGetter(URL, 'href');
+    const requestUrl = intrinsicGetter(Request, 'url');
+    const requestMethod = intrinsicGetter(Request, 'method');
+    const requestHeaders = intrinsicGetter(Request, 'headers');
+    const headersGet = Headers.prototype.get;
     if (typeof fetch !== 'function' || !supportedOrigins.has(origin)
-      || typeof Event !== 'function' || typeof CustomEvent !== 'function' || typeof URL !== 'function'
-      || typeof URLSearchParams !== 'function' || typeof Headers !== 'function' || typeof Request !== 'function'
+      || typeof Event !== 'function' || typeof CustomEvent !== 'function'
+      || typeof URLSearchParams !== 'function' || typeof headersGet !== 'function'
       || typeof document.addEventListener !== 'function'
       || typeof document.removeEventListener !== 'function' || typeof document.dispatchEvent !== 'function') throw new TypeError();
-    state = { globalScope, fetch, document, Event, CustomEvent, URL, URLSearchParams, Headers, Request, origin, active: true, snapshot: null };
+    state = { scope: globalScope, fetch, document, CustomEvent, URL, Headers, Request, origin,
+      urlHref, requestUrl, requestMethod, requestHeaders, headersGet, snapshot: null, active: true };
   } catch {
     throw new TypeError('Invalid X About Account request capture global scope');
   }
 
+  const wrapperState = { active: true, capture: (...args) => captureSnapshot(state, ...args), fetch: state.fetch };
   const wrapper = function wrappedXAboutAccountFetch(...args) {
-    if (state.active) {
-      try { captureSnapshot(state, args[0], args[1]); } catch { /* Page fetch is authoritative. */ }
+    if (wrapperState.active) {
+      try { wrapperState.capture(args[0], args[1]); } catch { /* Unsafe metadata is ignored. */ }
     }
-    return Reflect.apply(state.fetch, this, args);
+    return Reflect.apply(wrapperState.fetch, this, args);
   };
-  state.wrapper = wrapper;
-  const replay = () => {
-    if (state.active) {
-      try { publish(state); } catch { /* Replay is best effort. */ }
-    }
+  const replay = () => { if (state?.active) { try { state.publish(); } catch { /* Best effort. */ } } };
+  state.publish = () => {
+    if (!state.active || state.snapshot === null) return;
+    state.document.dispatchEvent(new state.CustomEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
+      detail: state.snapshot, bubbles: false, cancelable: false, composed: false,
+    }));
   };
-  state.replay = replay;
 
-  function stop() {
-    if (!state.active) return;
-    state.active = false;
-    state.snapshot = null;
-    try { state.document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay); } catch { /* Cleanup is best effort. */ }
-    installations.delete(globalScope);
-    try {
-      if (globalScope.fetch === wrapper) globalScope.fetch = state.fetch;
-    } catch { /* Never overwrite unverifiable ownership. */ }
+  function release() {
+    if (!state) return;
+    const owned = state;
+    owned.active = false;
+    owned.snapshot = null;
+    wrapperState.active = false;
+    wrapperState.capture = null;
+    try { owned.document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay); } catch { /* Cleanup is best effort. */ }
+    installations.delete(owned.scope);
+    try { if (owned.scope.fetch === wrapper) owned.scope.fetch = owned.fetch; } catch { /* Ownership unverified. */ }
+    state = null;
   }
-  const controller = Object.freeze({ stop, isActive: () => state.active, hasSnapshot: () => state.snapshot !== null });
-  state.controller = controller;
+  const controller = Object.freeze({ stop: release, isActive: () => state?.active === true,
+    hasSnapshot: () => state?.snapshot !== null && state?.snapshot !== undefined });
   let listenerAttempted = false;
   try {
-    globalScope.fetch = wrapper;
-    if (globalScope.fetch !== wrapper) throw new TypeError();
+    state.scope.fetch = wrapper;
+    if (state.scope.fetch !== wrapper) throw new TypeError();
     listenerAttempted = true;
     state.document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay);
-    installations.set(globalScope, controller);
-    if (installations.get(globalScope) !== controller) throw new TypeError();
+    installations.set(state.scope, controller);
+    if (installations.get(state.scope) !== controller) throw new TypeError();
     return controller;
   } catch {
-    state.active = false;
-    state.snapshot = null;
-    if (listenerAttempted) {
-      try { state.document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_REQUEST_EVENT_TYPE, replay); } catch { /* Roll back all safe steps. */ }
+    if (!listenerAttempted && state) {
+      // release still performs every safe rollback step.
     }
-    try { if (globalScope.fetch === wrapper) globalScope.fetch = state.fetch; } catch { /* Ownership unverified. */ }
-    installations.delete(globalScope);
+    release();
     throw new Error('Unable to install X About Account request capture');
   }
 }
