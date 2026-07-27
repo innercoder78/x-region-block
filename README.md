@@ -107,17 +107,34 @@ Individual commands are available as `npm run lint`, `npm test`, `npm run build`
 `npm run validate:build`. Generated unpacked builds are written beneath `dist/` and are
 not committed.
 
+For the reproducible automated release gate, run:
+
+```sh
+npm run verify:release
+```
+
+That command runs lint and synthetic tests, freshly builds Chrome and Firefox, applies
+the existing build validation, and runs the static `npm run audit:release` checks for
+manifest, asset, endpoint, source-map, sensitive-material, and prohibited-API
+invariants. These checks cover deterministic repository and generated-output contracts;
+they do not exercise a browser or contact X.
+
+Real-browser work must follow the [live-browser verification runbook](docs/live-browser-verification.md)
+and be recorded in a copy of the [verification report template](docs/verification-report-template.md).
+The committed report defaults to **Not run**. Automated success is not evidence that
+the extension is release-ready.
+
 Tests use injected fake page/browser facades and do not contact X, Twitter, or any other
 external service. Production composition is not live-X certification and performs no
 real user-facing or external action during tests.
 
 ## Current limitations
 
-- Live X selectors remain unverified.
-- Live GraphQL query shapes remain unverified.
-- Header and authorization availability remain unverified.
+- Live X selectors remain unverified until a completed real-browser report exists.
+- Live GraphQL request shapes remain unverified until a completed report exists.
+- Live header and authorization availability remain unverified until a completed report exists.
 - The extension may remain inactive until X makes an eligible request.
 - X interface changes may break discovery or capture.
-- Live Chrome and Firefox behavior has not yet been manually verified.
+- Live Chrome and Firefox behavior remains unverified until a real report is completed.
 - Release packaging and hardening remain incomplete.
-- The extension is not release-ready until the next verification pull request.
+- Passing automated checks alone does not make the extension release-ready.

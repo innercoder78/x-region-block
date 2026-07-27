@@ -12,9 +12,11 @@
     "build:firefox": "rollup --config config/rollup.config.js --environment BROWSER:firefox",
     "build": "npm run clean && npm run build:chrome && npm run build:firefox",
     "validate:build": "node scripts/validate-build.js",
+    "audit:release": "node scripts/release-audit.js",
     "lint": "eslint --config config/eslint.config.js .",
     "test": "vitest run",
-    "check": "npm run lint && npm test && npm run build && npm run validate:build"
+    "check": "npm run lint && npm test && npm run build && npm run validate:build",
+    "verify:release": "npm run check && npm run audit:release"
   },
   "devDependencies": {
     "@eslint/js": "9.32.0",
