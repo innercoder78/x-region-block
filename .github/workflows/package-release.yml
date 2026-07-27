@@ -1,0 +1,66 @@
+name: Package release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the selected commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541dca1515407b8e9af47d1d33e95f
+        with:
+          node-version: 18
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify, build, and package
+        run: npm run verify:distribution
+
+      - name: Confirm version tag metadata
+        if: github.event_name == 'push'
+        run: node scripts/verify-tag-version.js "${GITHUB_REF_NAME}"
+
+      - name: Select immutable release identity
+        id: release
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            short_sha="${GITHUB_SHA:0:12}"
+            echo "tag=testing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${short_sha}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=--prerelease" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish exact tested assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            $PRERELEASE \
+            --title "$RELEASE_TAG" \
+            --notes "Unsigned testing build for Chrome and Firefox. Download the browser-specific archive; Firefox permanent distribution requires signing." \
+            artifacts/*

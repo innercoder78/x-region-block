@@ -94,6 +94,32 @@ the reusable template. The isolated-world bridge treats the same-document event 
 untrusted input, validates and deeply copies it, and substitutes each canonical target
 handle only when creating a fresh transport descriptor.
 
+## Download and install
+
+Download the browser-specific testing asset from the repository's **Releases** page.
+Do **not** use GitHub's automatic “Source code” ZIP as an installable extension: it is
+the project source, not a ready-built browser package. Users and testers need no
+Node.js, npm commands, or repository build commands.
+
+### Chrome
+
+1. Download `x-region-block-chrome-0.0.1.zip`.
+2. Extract the ZIP.
+3. Open `chrome://extensions`.
+4. Enable **Developer mode**.
+5. Choose **Load unpacked**.
+6. Select the extracted folder containing `manifest.json`.
+
+### Firefox testing
+
+1. Download `x-region-block-firefox-0.0.1.zip`.
+2. Extract the ZIP.
+3. Open `about:debugging#/runtime/this-firefox`.
+4. Choose **Load Temporary Add-on**.
+5. Select the extracted `manifest.json`.
+6. Remember that this temporary installation ends when Firefox closes. Normal
+   permanent distribution will require a signed Firefox package.
+
 ## Development
 
 Install exact dependencies and run the full validation suite:
@@ -106,6 +132,10 @@ npm run check
 Individual commands are available as `npm run lint`, `npm test`, `npm run build`, and
 `npm run validate:build`. Generated unpacked builds are written beneath `dist/` and are
 not committed.
+
+Maintainers can reproduce the downloadable archives and checksums with
+`npm run package:release`, then inspect them with `npm run verify:packages`. Generated
+packages are written beneath ignored `artifacts/` and are not committed.
 
 For the reproducible automated release gate, run:
 
@@ -136,5 +166,5 @@ real user-facing or external action during tests.
 - The extension may remain inactive until X makes an eligible request.
 - X interface changes may break discovery or capture.
 - Live Chrome and Firefox behavior remains unverified until a real report is completed.
-- Release packaging and hardening remain incomplete.
+- Release assets remain unsigned testing packages rather than browser-store releases.
 - Passing automated checks alone does not make the extension release-ready.
