@@ -35,11 +35,11 @@ describe('settings repository', () => {
   it.each([
     ['unversioned', { country: { hide: ['us'] } }],
     ['version zero', { schemaVersion: 0, region: { highlight: ['EUROPE'] } }],
-    ['current partial', { schemaVersion: 1, language: { highlight: [' EN '] } }],
+    ['version one with removed fields', { schemaVersion: 1, language: { highlight: [' EN '] }, tag: { highlight: ['news'] }, allowlist: ['kept'] }],
   ])('migrates and writes canonical %s settings', async (name, value) => {
     const storage = fakeStorage({ [SETTINGS_STORAGE_KEY]: value });
     const result = await createSettingsRepository(storage).initializeSettings();
-    expect(result.schemaVersion).toBe(1);
+    expect(result.schemaVersion).toBe(2);
     if (name === 'version zero') expect(result.region.highlight).toEqual(['EUROPE']);
     expect(storage.set).toHaveBeenCalledOnce();
     expect(storage.data[SETTINGS_STORAGE_KEY]).toEqual(result);
@@ -87,7 +87,7 @@ describe('settings repository', () => {
 
   it.each([
     ['malformed', { schemaVersion: 1, allowlist: 'user' }],
-    ['future', { schemaVersion: 2 }],
+    ['future', { schemaVersion: 3 }],
     ['unsupported country', { schemaVersion: 1, country: { hide: ['ZZ'] } }],
   ])('rejects %s stored settings without writing', async (name, value) => {
     const storage = fakeStorage({ [SETTINGS_STORAGE_KEY]: value });
@@ -111,7 +111,7 @@ describe('settings repository', () => {
     const storage = fakeStorage();
     await createSettingsRepository(storage).saveSettings({ accountId: '1', cookies: ['x'], requestMetadata: {} });
     expect(Object.keys(storage.data[SETTINGS_STORAGE_KEY])).toEqual([
-      'schemaVersion', 'country', 'region', 'language', 'tag', 'other', 'allowlist',
+      'schemaVersion', 'country', 'region', 'other', 'allowlist',
     ]);
   });
 });

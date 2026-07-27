@@ -8,25 +8,6 @@ function isPlainObject(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
-function normalizeObservedValues(value, name) {
-  if (value === undefined) return Object.freeze([]);
-  if (!Array.isArray(value)) throw new TypeError(`${name} must be an array`);
-
-  const normalized = [];
-  const seen = new Set();
-  for (const entry of value) {
-    if (typeof entry !== 'string' || entry.trim() === '') {
-      throw new TypeError(`${name} entries must be non-empty strings`);
-    }
-    const canonical = entry.trim().toLowerCase();
-    if (!seen.has(canonical)) {
-      seen.add(canonical);
-      normalized.push(canonical);
-    }
-  }
-  return Object.freeze(normalized);
-}
-
 /** Creates the minimal, deeply immutable input accepted by the filter engine. */
 export function createFilterSubject(input) {
   if (!isPlainObject(input)) throw new TypeError('filter subject input must be a plain object');
@@ -39,8 +20,6 @@ export function createFilterSubject(input) {
     identity,
     allowlistKey: identity.allowlistKey,
     location,
-    languages: normalizeObservedValues(input.languages, 'languages'),
-    tags: normalizeObservedValues(input.tags, 'tags'),
   });
 }
 

@@ -1,7 +1,7 @@
 import { getRegion, REGION_CODES } from './regions.js';
 import { normalizeCountryCode } from './country-regions.js';
 
-export const SETTINGS_SCHEMA_VERSION = 1;
+export const SETTINGS_SCHEMA_VERSION = 2;
 
 const OTHER_STATUSES = new Set(['hidden', 'missing', 'unavailable', 'unknown']);
 
@@ -12,7 +12,7 @@ function isPlainObject(value) {
 }
 
 function freezeSettings(settings) {
-  for (const category of ['country', 'region', 'language', 'tag', 'other']) {
+  for (const category of ['country', 'region', 'other']) {
     for (const values of Object.values(settings[category])) Object.freeze(values);
     Object.freeze(settings[category]);
   }
@@ -25,8 +25,6 @@ function emptySettings() {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     country: { hide: [], highlight: [], alwaysShow: [] },
     region: { hide: [], highlight: [] },
-    language: { highlight: [] },
-    tag: { highlight: [] },
     other: { hide: [], highlight: [] },
     allowlist: [],
   };
@@ -103,10 +101,7 @@ export function normalizeSettings(input) {
 
   const country = category(input, 'country');
   const region = category(input, 'region');
-  const language = category(input, 'language');
-  const tag = category(input, 'tag');
   const other = category(input, 'other');
-  const normalizeText = (value, name) => stringValue(value, name, (entry) => entry.toLowerCase());
   const settings = emptySettings();
 
   settings.country.hide = unique(list(country.hide, 'country.hide'), countryCode, 'country.hide');
@@ -126,12 +121,6 @@ export function normalizeSettings(input) {
     regionCode,
     'region.highlight',
   );
-  settings.language.highlight = unique(
-    list(language.highlight, 'language.highlight'),
-    normalizeText,
-    'language.highlight',
-  );
-  settings.tag.highlight = unique(list(tag.highlight, 'tag.highlight'), normalizeText, 'tag.highlight');
   settings.other.hide = unique(list(other.hide, 'other.hide'), otherStatus, 'other.hide');
   settings.other.highlight = unique(
     list(other.highlight, 'other.highlight'),
@@ -147,7 +136,7 @@ export function normalizeSettings(input) {
   return freezeSettings(settings);
 }
 
-/** Migrates only the defined unversioned/version-0 shape into the current schema. */
+/** Migrates supported legacy shapes into the current canonical schema. */
 export function migrateSettings(input) {
   if (input === undefined || input === null) return createDefaultSettings();
   if (!isPlainObject(input)) throw new TypeError('settings must be a plain object');

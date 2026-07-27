@@ -27,7 +27,7 @@ function anchor(href, baseURI = 'https://x.com/home') {
 const known = (countryCode = 'CA', countryName = 'Canada', extra = {}) => ({
   status: 'known', countryCode, countryName, ...extra,
 });
-const settings = (overrides = {}) => normalizeSettings({ schemaVersion: 1, ...overrides });
+const settings = (overrides = {}) => normalizeSettings({ schemaVersion: 2, ...overrides });
 const present = (container, observation = {}, configured = {}) => presentXAccountLink(
   anchor('/OpenAI'), container, { location: known(), ...observation }, settings(configured),
 );
@@ -41,7 +41,6 @@ describe('account presentation boundary', () => {
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.subject.identity)).toBe(true);
     expect(Object.isFrozen(result.subject.location)).toBe(true);
-    expect(Object.isFrozen(result.subject.languages)).toBe(true);
     expect(Object.isFrozen(result.display.region)).toBe(true);
     expect(Object.values(result)).not.toContain(container);
   });
@@ -167,8 +166,6 @@ describe('cleanup, atomicity, and updates', () => {
     [{ location: known('ZZ', 'Invalid') }, settings()],
     [{ location: known('CA', 'Canada', { regionCode: 'ASIA' }) }, settings()],
     [{ location: known(), source: 'secret' }, settings()],
-    [{ location: known(), languages: 'en' }, settings()],
-    [{ location: known(), tags: [null] }, settings()],
     [{ location: known() }, { country: [] }],
   ])('preserves the complete DOM when evaluation throws', (observation, configured) => {
     const { container } = createContainer();

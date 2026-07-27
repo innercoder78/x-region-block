@@ -10,11 +10,9 @@ import {
 } from '../src/shared/settings-schema.js';
 
 const shape = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   country: { hide: [], highlight: [], alwaysShow: [] },
   region: { hide: [], highlight: [] },
-  language: { highlight: [] },
-  tag: { highlight: [] },
   other: { hide: [], highlight: [] },
   allowlist: [],
 };
@@ -33,13 +31,11 @@ const knownSubject = {
     countryName: 'Canada',
     regionCode: 'NORTH_AMERICA',
   }),
-  languages: ['en'],
-  tags: ['news'],
 };
 
 describe('settings schema defaults', () => {
-  it('exports schema version 1 and the complete canonical default shape', () => {
-    expect(SETTINGS_SCHEMA_VERSION).toBe(1);
+  it('exports schema version 2 and the complete canonical default shape', () => {
+    expect(SETTINGS_SCHEMA_VERSION).toBe(2);
     expect(DEFAULT_SETTINGS).toEqual(shape);
     expect(createDefaultSettings()).toEqual(shape);
   });
@@ -90,13 +86,11 @@ describe('settings normalization', () => {
     expect(() => normalizeSettings({ region: { hide: [entry] } })).toThrow(TypeError);
   });
 
-  it('trims and lowercases language and tag rules', () => {
+  it('discards removed and unknown properties, even when malformed', () => {
     const result = normalizeSettings({
-      language: { highlight: [' EN ', 'fr', 'en'] },
-      tag: { highlight: [' News ', 'TECH', 'news'] },
+      language: { highlight: 'EN' }, tag: null, languages: ['en'], tags: ['news'],
     });
-    expect(result.language.highlight).toEqual(['en', 'fr']);
-    expect(result.tag.highlight).toEqual(['news', 'tech']);
+    expect(result).toEqual(shape);
   });
 
   it('keeps every unknown-location status distinct and rejects known', () => {
@@ -136,9 +130,7 @@ describe('settings normalization', () => {
     'settings',
     { country: [] },
     { region: null },
-    { tag: { highlight: 'news' } },
     { allowlist: new Set(['user']) },
-    { language: { highlight: [''] } },
   ])('rejects recognized malformed data %#', (input) => {
     expect(() => normalizeSettings(input)).toThrow(TypeError);
   });
@@ -159,21 +151,38 @@ describe('settings migration', () => {
     expect(migrateSettings(null)).toEqual(shape);
   });
 
-  it('migrates unversioned and explicit version-0 settings', () => {
+  it('migrates unversioned and explicit version-0 settings while discarding removed rules', () => {
     expect(migrateSettings({ country: { hide: ['ca'] } }).country.hide).toEqual(['CA']);
-    const explicit = migrateSettings({ schemaVersion: 0, tag: { highlight: [' News '] } });
-    expect(explicit.schemaVersion).toBe(1);
-    expect(explicit.tag.highlight).toEqual(['news']);
+    const explicit = migrateSettings({ schemaVersion: 0, tag: { highlight: ['News'] } });
+    expect(explicit).toEqual(shape);
+  });
+
+  it('migrates version 1 and preserves location rules and allowlist only', () => {
+    const result = migrateSettings({
+      schemaVersion: 1,
+      country: { hide: ['ca'], highlight: ['GB'], alwaysShow: ['NZ'] },
+      region: { hide: ['AFRICA'], highlight: ['EUROPE'] },
+      language: { highlight: ['en'] }, tag: { highlight: ['news'] },
+      other: { hide: ['missing'], highlight: ['unknown'] }, allowlist: ['@Account'],
+    });
+    expect(result).toEqual({
+      ...shape,
+      country: { hide: ['CA'], highlight: ['GB'], alwaysShow: ['NZ'] },
+      region: { hide: ['AFRICA'], highlight: ['EUROPE'] },
+      other: { hide: ['missing'], highlight: ['unknown'] }, allowlist: ['@Account'],
+    });
+    expect(result).not.toHaveProperty('language');
+    expect(result).not.toHaveProperty('tag');
   });
 
   it('normalizes current settings and drops unsupported fields', () => {
-    expect(migrateSettings({ schemaVersion: 1, unsupported: true, allowlist: [' A '] })).toEqual({
+    expect(migrateSettings({ schemaVersion: 2, unsupported: true, allowlist: [' A '] })).toEqual({
       ...shape,
       allowlist: ['A'],
     });
   });
 
-  it.each([-1, 2])('rejects unsupported schema version %j', (schemaVersion) => {
+  it.each([-1, 3])('rejects unsupported schema version %j', (schemaVersion) => {
     expect(() => migrateSettings({ schemaVersion })).toThrow(RangeError);
   });
 

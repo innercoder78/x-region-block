@@ -13,7 +13,7 @@ const payload = (value, include = true) => {
 };
 const parse = (value, include) => parseXAboutAccountLocationPayload(payload(value, include));
 const identity = { handle: 'OpenAI' };
-const settings = (value = {}) => normalizeSettings({ schemaVersion: 1, ...value });
+const settings = (value = {}) => normalizeSettings({ schemaVersion: 2, ...value });
 const anchor = () => ({
   tagName: 'A', ownerDocument: { baseURI: 'https://x.com/' },
   getAttribute: (name) => name === 'href' ? '/OpenAI' : null,
