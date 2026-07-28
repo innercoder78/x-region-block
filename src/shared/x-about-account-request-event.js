@@ -11,7 +11,7 @@ const ID = /^[A-Za-z0-9_-]{16,64}$/;
 const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
 const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC', 'NETWORK',
   'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
-  'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
+  'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'BRIDGE_TIMEOUT', 'UNKNOWN']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
   && Object.getPrototypeOf(value) === Object.prototype;

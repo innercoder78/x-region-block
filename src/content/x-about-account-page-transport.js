@@ -63,7 +63,7 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
       if (!active || !entry.started || pending.get(entry.id) !== entry) return;
       entry.attemptTimer = null; entry.started = false; inFlight = Math.max(0, inFlight - 1);
       dispatchCancellation(entry.id);
-      pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE'));
+      pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('BRIDGE_TIMEOUT'));
       schedule();
     }, BRIDGE_TIMEOUT);
     schedule();

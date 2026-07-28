@@ -158,9 +158,9 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(transportCalls).toHaveLength(1);
   expect(decodeURIComponent(transportCalls[0].url)).toContain('"screenName":"openai"');
   expect(transportCalls[0].url).not.toContain('Observed');
-  expect(transportCalls[0].options).toMatchObject({
-    credentials: 'include', cache: 'no-store', redirect: 'error', method: 'GET',
-  });
+  expect(transportCalls[0].options).toMatchObject({ credentials: 'include', method: 'GET' });
+  expect(transportCalls[0].options).not.toHaveProperty('cache');
+  expect(transportCalls[0].options).not.toHaveProperty('redirect');
   expect(transportCalls[0].options.signal).toBeDefined();
   await settle();
   expect(findLocationBadge(targets.profile)).not.toBeNull();
@@ -349,7 +349,7 @@ it('recovers a visible production target only after a different live query ID', 
 });
 
 it.each([
-  ['NETWORK', 'network request failed'], ['PAGE_BRIDGE_UNAVAILABLE', 'request bridge unavailable'],
+  ['NETWORK', 'network request failed'], ['BRIDGE_TIMEOUT', 'request bridge timed out'],
   ['INVALID_PAYLOAD', 'response payload was invalid'], ['HTTP_401', 'authentication metadata rejected'],
   ['HTTP_404', 'query ID rejected'], ['HTTP_429', 'rate limited'], ['HTTP_5XX', 'server request failed'],
 ])('preserves %s through the real production processing diagnostic path', async (code, expected) => {
@@ -357,7 +357,7 @@ it.each([
     region: { hide: [], highlight: [] }, language: { highlight: [] }, tag: { highlight: [] },
     other: { hide: [], highlight: [] }, allowlist: [] };
   const response = () => {
-    if (code === 'PAGE_BRIDGE_UNAVAILABLE') return new Promise(() => {});
+    if (code === 'BRIDGE_TIMEOUT') return new Promise(() => {});
     if (code === 'NETWORK') return Promise.reject(new Error('private-network-secret'));
     if (code === 'INVALID_PAYLOAD') return Promise.resolve({ ok: true, status: 200, json: () => undefined });
     const status = { HTTP_401: 401, HTTP_404: 404, HTTP_429: 429, HTTP_5XX: 500 }[code];
@@ -367,7 +367,7 @@ it.each([
   context.capture('/i/api/graphql/generic/HomeTimeline?diagnostic=1', observedHeaders);
   await settle();
   if (code === 'NETWORK' || code === 'HTTP_5XX') await vi.advanceTimersByTimeAsync(3_500);
-  else if (code === 'PAGE_BRIDGE_UNAVAILABLE') await vi.advanceTimersByTimeAsync(30_000);
+  else if (code === 'BRIDGE_TIMEOUT') await vi.advanceTimersByTimeAsync(30_500);
   else if (code === 'HTTP_429') await vi.advanceTimersByTimeAsync(60_500);
   else if (code === 'HTTP_401') {
     context.capture('/i/api/graphql/generic/HomeTimeline?fresh=1', {

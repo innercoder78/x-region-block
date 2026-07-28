@@ -40,7 +40,7 @@ describe('global About Account page scheduler', () => {
     await vi.advanceTimersByTimeAsync(200);
     expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(5);
     await vi.advanceTimersByTimeAsync(30_000);
-    await expect(promises[1]).rejects.toMatchObject({ code: 'PAGE_BRIDGE_UNAVAILABLE' });
+    await expect(promises[1]).rejects.toMatchObject({ code: 'BRIDGE_TIMEOUT' });
     expect(document.events.some(({ event }) => event.type === X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE && typeof event.detail === 'string')).toBe(true);
     controllers.forEach((controller) => controller.abort()); transport.stop();
     await expect(promises[0]).resolves.toEqual({ ok: true });
@@ -243,7 +243,7 @@ describe('global About Account page scheduler', () => {
     void second.catch(() => {});
     if (path === 'timeout') {
       await vi.advanceTimersByTimeAsync(30_000);
-      await expect(first).rejects.toMatchObject({ code: 'PAGE_BRIDGE_UNAVAILABLE' });
+      await expect(first).rejects.toMatchObject({ code: 'BRIDGE_TIMEOUT' });
       expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).length)
         .toBeGreaterThan(1);
     } else if (path === 'consumer') {

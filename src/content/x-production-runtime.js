@@ -22,6 +22,7 @@ function createDiagnostic(globalScope) {
 }
 const DIAGNOSTICS = Object.freeze({
   DISCOVERY: 'Account target discovery failed.', PAGE_BRIDGE: 'About Account request bridge unavailable.',
+  BRIDGE_TIMEOUT: 'About Account request bridge timed out.',
   METADATA: 'About Account metadata handling failed.', QUEUE: 'About Account request queue failed.',
   METADATA_SYNC: 'About Account metadata synchronization failed.',
   HTTP_400: 'About Account request was rejected (HTTP 400).', HTTP_401: 'About Account authentication metadata rejected.',

@@ -11,13 +11,17 @@ const cyclicPayload = {}; cyclicPayload.self = cyclicPayload;
 describe('MAIN-world About Account executor', () => {
   it('accepts a distinct-realm serialized command and uses the captured original fetch', async () => {
     const fetch = vi.fn(() => Promise.resolve({ ok: true, status: 200,
-      json: () => Promise.resolve({ country: 'Canada' }) }));
+      json: () => Promise.resolve({ data: { user_result_by_screen_name: { result: {
+        about_profile: { account_based_in: 'United States' },
+      } } } }) }));
     const { page, document } = metadataFacades(fetch);
     page.AbortController = AbortController;
     const responses = [];
     document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
     const capture = installXAboutAccountRequestCapture(page);
-    page.fetch('/i/api/graphql/live_query/AboutAccountQuery?variables=%7B%7D', { headers: observedHeaders });
+    page.fetch('/i/api/graphql/live_query/AboutAccountQuery?variables=%7B%7D', { headers: {
+      ...observedHeaders, 'x-client-transaction-id': 'request-specific-stale-value',
+    } });
     fetch.mockClear();
     const executor = installXAboutAccountRequestExecutor(page, capture);
     const detail = vm.runInNewContext(`JSON.stringify({version:1,id:"opaque_request_0001",handle:"OpenAI",metadataRevision:1})`);
@@ -27,9 +31,14 @@ describe('MAIN-world About Account executor', () => {
     const [url, options] = fetch.mock.calls[0];
     expect(url).toMatch(/^https:\/\/x\.com\/i\/api\/graphql\/live_query\/AboutAccountQuery\?/);
     expect(JSON.parse(new URL(url).searchParams.get('variables'))).toEqual({ screenName: 'OpenAI' });
-    expect(options).toMatchObject({ credentials: 'include', cache: 'no-store', redirect: 'error' });
+    expect(options).toMatchObject({ credentials: 'include' });
+    expect(options).not.toHaveProperty('cache');
+    expect(options).not.toHaveProperty('redirect');
+    expect(options.headers).not.toHaveProperty('x-client-transaction-id');
     expect(typeof responses[0]).toBe('string');
-    expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({ ok: true, payload: { country: 'Canada' } });
+    expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({
+      ok: true, payload: { version: 1, accountBasedIn: 'United States' },
+    });
     executor.stop(); capture.stop();
   });
 

@@ -29,6 +29,14 @@ it('exports the versioned parser contract', () => {
   expect(X_ABOUT_ACCOUNT_LOCATION_SOURCE).toBe('x-about-account');
 });
 
+it.each([
+  [{ version: 1, accountBasedIn: 'United States' }, 'known'],
+  [{ version: 1, accountBasedIn: null }, 'missing'],
+  [{ version: 1, accountBasedIn: 'Atlantis' }, 'unknown'],
+])('parses compact MAIN-world result %j', (value, status) => {
+  expect(parseXAboutAccountLocationPayload(value).status).toBe(status);
+});
+
 describe('payload validation', () => {
   it.each([null, undefined, [], 1, 'x', true, () => {}, new (class Example {})()])(
     'rejects non-plain payload %s', (value) => expect(() => parseXAboutAccountLocationPayload(value))
