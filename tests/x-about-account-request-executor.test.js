@@ -5,6 +5,7 @@ import { installXAboutAccountRequestExecutor } from '../src/page/x-about-account
 import { X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE,
   parseAboutAccountResponseDetail, serializeAboutAccountRequest } from '../src/shared/x-about-account-request-event.js';
 import { metadataFacades, MetadataEvent, observedHeaders } from './helpers/x-request-metadata-facade.js';
+const cyclicPayload = {}; cyclicPayload.self = cyclicPayload;
 
 describe('MAIN-world About Account executor', () => {
   it('accepts a distinct-realm serialized command and uses the captured original fetch', async () => {
@@ -55,6 +56,43 @@ describe('MAIN-world About Account executor', () => {
       { detail: serializeAboutAccountRequest('opaque_request_0002', 'OpenAI') }));
     await Promise.resolve(); await Promise.resolve();
     expect(parseAboutAccountResponseDetail(responses.at(-1))).toMatchObject({ ok: false, code: 'NETWORK' });
+    executor.stop(); capture.stop();
+  });
+
+  it.each([
+    ['undefined', undefined], ['function', () => {}], ['symbol', Symbol('payload')],
+    ['function property', { invalid: () => {} }], ['cyclic', cyclicPayload],
+  ])('converts an invalid successful %s payload into INVALID_PAYLOAD', async (name, payload) => {
+    const fetch = vi.fn().mockReturnValueOnce('ordinary').mockResolvedValueOnce({
+      ok: true, status: 200, json: () => Promise.resolve(payload),
+    });
+    const { page, document } = metadataFacades(fetch); page.AbortController = AbortController;
+    const capture = installXAboutAccountRequestCapture(page);
+    page.fetch('/i/api/graphql/generic/HomeTimeline?x=1', { headers: observedHeaders });
+    const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
+    document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
+    document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
+      { detail: serializeAboutAccountRequest(`opaque_invalid_${name.replace(/\s/g, '_')}`, 'OpenAI') }));
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(responses).toHaveLength(1);
+    expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({ ok: false, code: 'INVALID_PAYLOAD' });
+    executor.stop(); capture.stop();
+  });
+
+  it('contains an unexpected parsed-request failure as one UNKNOWN response', async () => {
+    const fetch = vi.fn(() => 'ordinary'); const { page, document } = metadataFacades(fetch);
+    class ThrowingAbortController { constructor() { throw new Error('private internal exception'); } }
+    page.AbortController = ThrowingAbortController;
+    const capture = installXAboutAccountRequestCapture(page);
+    page.fetch('/i/api/graphql/generic/HomeTimeline?x=1', { headers: observedHeaders });
+    const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
+    document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
+    expect(() => document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
+      { detail: serializeAboutAccountRequest('opaque_unexpected_01', 'OpenAI') }))).not.toThrow();
+    await Promise.resolve();
+    expect(responses).toHaveLength(1);
+    expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({ ok: false, code: 'UNKNOWN' });
+    expect(responses[0]).not.toContain('private internal exception');
     executor.stop(); capture.stop();
   });
 });

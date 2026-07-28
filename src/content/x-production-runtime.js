@@ -35,6 +35,8 @@ const DIAGNOSTICS = Object.freeze({
 function diagnosticCategory(error) {
   const code = typeof error?.code === 'string' ? error.code : '';
   if (Object.hasOwn(DIAGNOSTICS, code)) return code;
+  if (code === 'PAGE_BRIDGE_UNAVAILABLE') return 'PAGE_BRIDGE';
+  if (code === 'NO_METADATA') return 'METADATA';
   const message = typeof error?.message === 'string' ? error.message : '';
   if (/metadata/i.test(message)) return 'METADATA';
   if (/discover|target change/i.test(message)) return 'DISCOVERY';

@@ -146,8 +146,9 @@ function captureSnapshot(state, input, init = undefined, suppliedXhrHeaders = un
   if (operation === X_ABOUT_ACCOUNT_OPERATION_NAME) {
     if (queryId === state.rejectedQueryId) return;
     state.liveQueryId = queryId;
+    state.rejectedQueryId = null;
   }
-  if (state.rejectedQueryId !== null && state.liveQueryId === state.rejectedQueryId) return;
+  if (state.rejectedQueryId !== null) return;
   const publicationKey = JSON.stringify([
     authenticationFingerprint,
     state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID,

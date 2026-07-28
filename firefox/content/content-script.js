@@ -1972,6 +1972,27 @@
     'handle', 'displayHandle', 'profileUrl', 'accountId', 'allowlistKey', 'source',
   ]);
   const UPDATED_KEYS = Object.freeze(['previous', 'current']);
+  const DIAGNOSTIC_CODES = new Set(['PAGE_BRIDGE_UNAVAILABLE', 'NETWORK', 'INVALID_RESPONSE',
+    'INVALID_PAYLOAD', 'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX']);
+  const DIAGNOSTIC_MESSAGES = Object.freeze({
+    PAGE_BRIDGE_UNAVAILABLE: 'About Account request bridge unavailable.',
+    NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
+    INVALID_PAYLOAD: 'About Account response payload was invalid.', HTTP_400: 'About Account request rejected.',
+    HTTP_401: 'About Account authentication metadata rejected.', HTTP_403: 'About Account authentication metadata rejected.',
+    HTTP_404: 'About Account query ID rejected.', HTTP_429: 'About Account lookup rate limited.',
+    HTTP_5XX: 'About Account server request failed.',
+  });
+
+  function sanitizedDiagnosticError(error, fallback) {
+    const code = typeof error?.code === 'string' && DIAGNOSTIC_CODES.has(error.code) ? error.code : null;
+    const diagnostic = new Error(code === null ? fallback : DIAGNOSTIC_MESSAGES[code]);
+    if (code !== null) Object.defineProperty(diagnostic, 'code', { value: code, enumerable: false });
+    const status = error?.status;
+    if (code !== null && Number.isInteger(status) && status >= 100 && status <= 599) {
+      Object.defineProperty(diagnostic, 'status', { value: status, enumerable: false });
+    }
+    return diagnostic;
+  }
 
   function hasExactlyOwnKeys(value, keys) {
     if (!isPlainObject$1(value)) return false;
@@ -2137,12 +2158,7 @@
       entry.location = createUnavailableLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
       entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
         || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
-      const diagnostic = error?.code === 'INVALID_PAYLOAD' ? 'About Account response payload was invalid.'
-        : error?.code === 'NETWORK' || error?.code === 'HTTP_5XX' ? 'About Account network request failed.'
-          : error?.code === 'PAGE_BRIDGE_UNAVAILABLE' ? 'About Account request bridge unavailable.'
-            : error?.code === 'HTTP_429' ? 'About Account lookup rate limited; scheduler cooldown exhausted.'
-              : message;
-      report(new Error(diagnostic));
+      report(sanitizedDiagnosticError(error, message));
       presentEntry(entry);
     };
     const startLookup = (entry) => {
@@ -4044,6 +4060,10 @@
     const queue = []; const pending = new Map(); const waitingMetadata = new Set();
     const dispatch = (type, detail) => document.dispatchEvent(new CustomEvent(type,
       { detail, bubbles: false, cancelable: false, composed: false }));
+    const dispatchCancellation = (id) => {
+      try { dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(id)); }
+      catch { /* Cancellation cleanup never depends on page event delivery. */ }
+    };
     const schedule = () => {
       if (!active || scheduleTimer !== null || rejectedState !== null || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
       const wait = Math.max(0, cooldownUntil - now(), START_INTERVAL - (now() - lastStart));
@@ -4062,7 +4082,7 @@
       entry.attemptTimer = setTimer(() => {
         if (!active || !entry.started || pending.get(entry.id) !== entry) return;
         entry.attemptTimer = null; entry.started = false; inFlight = Math.max(0, inFlight - 1);
-        dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(entry.id));
+        dispatchCancellation(entry.id);
         pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE'));
         schedule();
       }, BRIDGE_TIMEOUT);
@@ -4158,8 +4178,7 @@
           waitingMetadata.delete(entry);
           if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
           if (entry.delayTimer !== null) { clearTimer(entry.delayTimer); entry.delayTimer = null; }
-          if (entry.started) { inFlight = Math.max(0, inFlight - 1);
-            dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(id)); }
+          if (entry.started) { inFlight = Math.max(0, inFlight - 1); dispatchCancellation(id); }
           entry.cleanup(); reject(abortError()); schedule();
         };
         entry.cleanup = () => context.signal.removeEventListener('abort', cancel);
@@ -4175,7 +4194,7 @@
         entry.cancelled = true; entry.cleanup();
         if (entry.attemptTimer !== null) clearTimer(entry.attemptTimer);
         if (entry.delayTimer !== null) clearTimer(entry.delayTimer);
-        if (entry.started) dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(entry.id));
+        if (entry.started) dispatchCancellation(entry.id);
         entry.reject(abortError());
       }
       pending.clear(); waitingMetadata.clear(); queue.length = 0; inFlight = 0;
@@ -4542,6 +4561,8 @@
   function diagnosticCategory(error) {
     const code = typeof error?.code === 'string' ? error.code : '';
     if (Object.hasOwn(DIAGNOSTICS, code)) return code;
+    if (code === 'PAGE_BRIDGE_UNAVAILABLE') return 'PAGE_BRIDGE';
+    if (code === 'NO_METADATA') return 'METADATA';
     const message = typeof error?.message === 'string' ? error.message : '';
     if (/metadata/i.test(message)) return 'METADATA';
     if (/discover|target change/i.test(message)) return 'DISCOVERY';

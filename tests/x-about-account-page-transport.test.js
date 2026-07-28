@@ -7,6 +7,9 @@ import { X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
   serializeAboutAccountResponse } from '../src/shared/x-about-account-request-event.js';
 
 class Event { constructor(type, init = {}) { this.type = type; this.detail = init.detail; } }
+class ThrowCancelEvent extends Event {
+  constructor(type, init) { if (type === X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE) throw new Error('cancel dispatch'); super(type, init); }
+}
 class Document {
   constructor() { this.listeners = new Map(); this.events = []; }
   addEventListener(type, listener) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); }
@@ -113,5 +116,73 @@ describe('global About Account page scheduler', () => {
     }
     networkController.abort(); await expect(networkPromise).rejects.toMatchObject({ name: 'AbortError' });
     networkTransport.stop();
+  });
+
+  it.each(['timeout', 'consumer', 'stop'])(
+    'finishes cleanup when %s cancellation dispatch throws', async (path) => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: ThrowCancelEvent },
+      { recoveryState: recovery() });
+    const firstController = new AbortController();
+    const first = transport.loadPayload(identity('first'), context(firstController.signal));
+    void first.catch(() => {});
+    const secondController = new AbortController();
+    const second = transport.loadPayload(identity('second'), context(secondController.signal));
+    void second.catch(() => {});
+    if (path === 'timeout') {
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(first).rejects.toMatchObject({ code: 'PAGE_BRIDGE_UNAVAILABLE' });
+      expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).length)
+        .toBeGreaterThan(1);
+    } else if (path === 'consumer') {
+      expect(() => firstController.abort()).not.toThrow();
+      await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+      await vi.advanceTimersByTimeAsync(200);
+      expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).length)
+        .toBeGreaterThan(1);
+    } else {
+      expect(() => transport.stop()).not.toThrow();
+      await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+      await expect(second).rejects.toMatchObject({ name: 'AbortError' });
+    }
+    secondController.abort(); firstController.abort(); transport.stop();
+    await Promise.allSettled([first, second]);
+    },
+  );
+
+  it('merges near-simultaneous 429 responses into the latest cooldown without a retry storm', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event }, { recoveryState: recovery() });
+    const controllers = ['one', 'two', 'three'].map(() => new AbortController());
+    const promises = ['one', 'two', 'three'].map((handle, index) =>
+      transport.loadPayload(identity(handle), context(controllers[index].signal)));
+    promises.forEach((promise) => { void promise.catch(() => {}); });
+    await vi.advanceTimersByTimeAsync(400);
+    const initial = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
+    expect(initial.map(({ time }) => time)).toEqual([0, 200, 400]);
+    for (const [index, retryAfterMs] of [60_000, 90_000, 75_000].entries()) {
+      const request = parseAboutAccountRequestDetail(initial[index].event.detail);
+      document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+        id: request.id, ok: false, code: 'HTTP_429', status: 429, retryAfterMs,
+      }) }));
+    }
+    await vi.advanceTimersByTimeAsync(89_999);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(400);
+    const retried = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
+    expect(retried.slice(3).map(({ time }) => time)).toEqual([90_400, 90_600, 90_800]);
+    for (const event of retried.slice(3)) {
+      const request = parseAboutAccountRequestDetail(event.event.detail);
+      document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+        id: request.id, ok: false, code: 'HTTP_429', status: 429, retryAfterMs: 1,
+      }) }));
+    }
+    await Promise.allSettled(promises);
+    await vi.runAllTimersAsync();
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(6);
+    transport.stop();
   });
 });

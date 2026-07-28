@@ -206,8 +206,9 @@
     if (operation === X_ABOUT_ACCOUNT_OPERATION_NAME) {
       if (queryId === state.rejectedQueryId) return;
       state.liveQueryId = queryId;
+      state.rejectedQueryId = null;
     }
-    if (state.rejectedQueryId !== null && state.liveQueryId === state.rejectedQueryId) return;
+    if (state.rejectedQueryId !== null) return;
     const publicationKey = JSON.stringify([
       authenticationFingerprint,
       state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID,
@@ -489,6 +490,27 @@
       return JSON.stringify(value) === input ? value : null;
     } catch { return null; }
   };
+  const validateJsonValue = (value, ancestors = new Set(), depth = 0) => {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+    if (typeof value === 'number') { if (!Number.isFinite(value)) throw new TypeError(); return; }
+    if (typeof value !== 'object' || depth > 32 || ancestors.has(value)) throw new TypeError();
+    const array = Array.isArray(value);
+    if (!array && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
+      throw new TypeError();
+    }
+    const keys = Reflect.ownKeys(value);
+    if (keys.some((key) => typeof key !== 'string')) throw new TypeError();
+    if (array && (keys.length !== value.length + 1
+      || keys.some((key) => key !== 'length' && !/^(?:0|[1-9]\d*)$/.test(key)))) throw new TypeError();
+    ancestors.add(value);
+    for (const key of keys) {
+      if (key === 'length' && array) continue;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !own(descriptor, 'value') || (!array && descriptor.enumerable !== true)) throw new TypeError();
+      validateJsonValue(descriptor.value, ancestors, depth + 1);
+    }
+    ancestors.delete(value);
+  };
 
   function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
   function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
@@ -505,6 +527,9 @@
       && validOpaqueRequestId(value.id) ? { version: value.version, id: value.id } : null;
   }
   function serializeAboutAccountResponse(value) {
+    if (value?.ok === true) {
+      try { validateJsonValue(value.payload); } catch { throw new TypeError('Invalid response'); }
+    }
     const canonical = value?.ok === true
       ? { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value.id, ok: true, payload: value.payload }
       : { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value?.id, ok: false,
@@ -554,9 +579,10 @@
     const request = async (event) => {
       const command = parseAboutAccountRequestDetail(event?.detail);
       if (!active || command === null || requests.has(command.id)) return;
-      const controller = new AbortController();
-      requests.set(command.id, controller);
+      let controller = null;
       try {
+        controller = new AbortController();
+        requests.set(command.id, controller);
         const metadata = readPrivateXAboutAccountSnapshot(capture);
         if (!metadata || metadata.origin !== location.origin || !isValidXAboutAccountQueryId(metadata.queryId)) {
           fail(command.id, 'NO_METADATA'); return;
@@ -601,6 +627,10 @@
         let payload;
         try { payload = await Reflect.apply(json, response, []); } catch { fail(command.id, 'INVALID_PAYLOAD'); return; }
         if (!emit({ id: command.id, ok: true, payload })) fail(command.id, 'INVALID_PAYLOAD');
+      } catch {
+        let aborted = false;
+        try { aborted = controller?.signal?.aborted === true; } catch { /* unexpected failure */ }
+        fail(command.id, aborted ? 'ABORTED' : 'UNKNOWN');
       } finally { requests.delete(command.id); }
     };
     const cancel = (event) => {

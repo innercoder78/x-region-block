@@ -27,6 +27,27 @@ const canonicalParse = (input, limit) => {
     return JSON.stringify(value) === input ? value : null;
   } catch { return null; }
 };
+const validateJsonValue = (value, ancestors = new Set(), depth = 0) => {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+  if (typeof value === 'number') { if (!Number.isFinite(value)) throw new TypeError(); return; }
+  if (typeof value !== 'object' || depth > 32 || ancestors.has(value)) throw new TypeError();
+  const array = Array.isArray(value);
+  if (!array && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
+    throw new TypeError();
+  }
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== 'string')) throw new TypeError();
+  if (array && (keys.length !== value.length + 1
+    || keys.some((key) => key !== 'length' && !/^(?:0|[1-9]\d*)$/.test(key)))) throw new TypeError();
+  ancestors.add(value);
+  for (const key of keys) {
+    if (key === 'length' && array) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !own(descriptor, 'value') || (!array && descriptor.enumerable !== true)) throw new TypeError();
+    validateJsonValue(descriptor.value, ancestors, depth + 1);
+  }
+  ancestors.delete(value);
+};
 
 export function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
 export function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
@@ -51,6 +72,9 @@ export function parseAboutAccountCancelDetail(input) {
     && validOpaqueRequestId(value.id) ? { version: value.version, id: value.id } : null;
 }
 export function serializeAboutAccountResponse(value) {
+  if (value?.ok === true) {
+    try { validateJsonValue(value.payload); } catch { throw new TypeError('Invalid response'); }
+  }
   const canonical = value?.ok === true
     ? { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value.id, ok: true, payload: value.payload }
     : { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value?.id, ok: false,

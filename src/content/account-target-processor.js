@@ -37,6 +37,27 @@ const IDENTITY_KEYS = Object.freeze([
   'handle', 'displayHandle', 'profileUrl', 'accountId', 'allowlistKey', 'source',
 ]);
 const UPDATED_KEYS = Object.freeze(['previous', 'current']);
+const DIAGNOSTIC_CODES = new Set(['PAGE_BRIDGE_UNAVAILABLE', 'NETWORK', 'INVALID_RESPONSE',
+  'INVALID_PAYLOAD', 'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX']);
+const DIAGNOSTIC_MESSAGES = Object.freeze({
+  PAGE_BRIDGE_UNAVAILABLE: 'About Account request bridge unavailable.',
+  NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
+  INVALID_PAYLOAD: 'About Account response payload was invalid.', HTTP_400: 'About Account request rejected.',
+  HTTP_401: 'About Account authentication metadata rejected.', HTTP_403: 'About Account authentication metadata rejected.',
+  HTTP_404: 'About Account query ID rejected.', HTTP_429: 'About Account lookup rate limited.',
+  HTTP_5XX: 'About Account server request failed.',
+});
+
+function sanitizedDiagnosticError(error, fallback) {
+  const code = typeof error?.code === 'string' && DIAGNOSTIC_CODES.has(error.code) ? error.code : null;
+  const diagnostic = new Error(code === null ? fallback : DIAGNOSTIC_MESSAGES[code]);
+  if (code !== null) Object.defineProperty(diagnostic, 'code', { value: code, enumerable: false });
+  const status = error?.status;
+  if (code !== null && Number.isInteger(status) && status >= 100 && status <= 599) {
+    Object.defineProperty(diagnostic, 'status', { value: status, enumerable: false });
+  }
+  return diagnostic;
+}
 
 function hasExactlyOwnKeys(value, keys) {
   if (!isPlainObject(value)) return false;
@@ -202,12 +223,7 @@ export function createXAccountTargetProcessor(options) {
     entry.location = createUnavailableLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
     entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
       || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
-    const diagnostic = error?.code === 'INVALID_PAYLOAD' ? 'About Account response payload was invalid.'
-      : error?.code === 'NETWORK' || error?.code === 'HTTP_5XX' ? 'About Account network request failed.'
-        : error?.code === 'PAGE_BRIDGE_UNAVAILABLE' ? 'About Account request bridge unavailable.'
-          : error?.code === 'HTTP_429' ? 'About Account lookup rate limited; scheduler cooldown exhausted.'
-            : message;
-    report(new Error(diagnostic));
+    report(sanitizedDiagnosticError(error, message));
     presentEntry(entry);
   };
   const startLookup = (entry) => {

@@ -28,6 +28,10 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
   const queue = []; const pending = new Map(); const waitingMetadata = new Set();
   const dispatch = (type, detail) => document.dispatchEvent(new CustomEvent(type,
     { detail, bubbles: false, cancelable: false, composed: false }));
+  const dispatchCancellation = (id) => {
+    try { dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(id)); }
+    catch { /* Cancellation cleanup never depends on page event delivery. */ }
+  };
   const schedule = () => {
     if (!active || scheduleTimer !== null || rejectedState !== null || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
     const wait = Math.max(0, cooldownUntil - now(), START_INTERVAL - (now() - lastStart));
@@ -46,7 +50,7 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     entry.attemptTimer = setTimer(() => {
       if (!active || !entry.started || pending.get(entry.id) !== entry) return;
       entry.attemptTimer = null; entry.started = false; inFlight = Math.max(0, inFlight - 1);
-      dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(entry.id));
+      dispatchCancellation(entry.id);
       pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE'));
       schedule();
     }, BRIDGE_TIMEOUT);
@@ -142,8 +146,7 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
         waitingMetadata.delete(entry);
         if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
         if (entry.delayTimer !== null) { clearTimer(entry.delayTimer); entry.delayTimer = null; }
-        if (entry.started) { inFlight = Math.max(0, inFlight - 1);
-          dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(id)); }
+        if (entry.started) { inFlight = Math.max(0, inFlight - 1); dispatchCancellation(id); }
         entry.cleanup(); reject(abortError()); schedule();
       };
       entry.cleanup = () => context.signal.removeEventListener('abort', cancel);
@@ -159,7 +162,7 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
       entry.cancelled = true; entry.cleanup();
       if (entry.attemptTimer !== null) clearTimer(entry.attemptTimer);
       if (entry.delayTimer !== null) clearTimer(entry.delayTimer);
-      if (entry.started) dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(entry.id));
+      if (entry.started) dispatchCancellation(entry.id);
       entry.reject(abortError());
     }
     pending.clear(); waitingMetadata.clear(); queue.length = 0; inFlight = 0;

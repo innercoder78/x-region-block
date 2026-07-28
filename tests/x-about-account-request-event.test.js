@@ -41,4 +41,12 @@ describe('string-only About Account event protocol', () => {
       expect(parseAboutAccountResponseDetail(input)).toBeNull();
     }
   });
+
+  it('rejects successful payloads that JSON would omit or silently alter', () => {
+    const cyclic = {}; cyclic.self = cyclic;
+    for (const payload of [undefined, () => {}, Symbol('value'), cyclic,
+      { omitted: undefined }, { callable: () => {} }, { symbolic: Symbol('value') }]) {
+      expect(() => serializeAboutAccountResponse({ id, ok: true, payload })).toThrow('Invalid response');
+    }
+  });
 });

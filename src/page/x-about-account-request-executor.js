@@ -42,9 +42,10 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
   const request = async (event) => {
     const command = parseAboutAccountRequestDetail(event?.detail);
     if (!active || command === null || requests.has(command.id)) return;
-    const controller = new AbortController();
-    requests.set(command.id, controller);
+    let controller = null;
     try {
+      controller = new AbortController();
+      requests.set(command.id, controller);
       const metadata = readPrivateXAboutAccountSnapshot(capture);
       if (!metadata || metadata.origin !== location.origin || !isValidXAboutAccountQueryId(metadata.queryId)) {
         fail(command.id, 'NO_METADATA'); return;
@@ -89,6 +90,10 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
       let payload;
       try { payload = await Reflect.apply(json, response, []); } catch { fail(command.id, 'INVALID_PAYLOAD'); return; }
       if (!emit({ id: command.id, ok: true, payload })) fail(command.id, 'INVALID_PAYLOAD');
+    } catch {
+      let aborted = false;
+      try { aborted = controller?.signal?.aborted === true; } catch { /* unexpected failure */ }
+      fail(command.id, aborted ? 'ABORTED' : 'UNKNOWN');
     } finally { requests.delete(command.id); }
   };
   const cancel = (event) => {
