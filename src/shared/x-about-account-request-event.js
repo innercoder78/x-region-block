@@ -5,6 +5,7 @@ export const X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE = 'x-region-block:about-account
 export const X_ABOUT_ACCOUNT_COMMAND_LIMIT = 256;
 export const X_ABOUT_ACCOUNT_RESPONSE_LIMIT = 262_144;
 export const X_ABOUT_ACCOUNT_RETRY_LIMIT = 300_000;
+export const X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT = 2_147_483_647;
 
 const ID = /^[A-Za-z0-9_-]{16,64}$/;
 const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
@@ -20,6 +21,8 @@ const validStatus = (value) => value === null
   || (Number.isInteger(value) && value >= 100 && value <= 599);
 const validRetry = (value) => value === null
   || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
+const validRevision = (value) => value === null
+  || (Number.isInteger(value) && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT);
 const canonicalParse = (input, limit) => {
   if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
   try {
@@ -78,10 +81,13 @@ export function serializeAboutAccountResponse(value) {
   const canonical = value?.ok === true
     ? { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value.id, ok: true, payload: value.payload }
     : { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value?.id, ok: false,
-      code: value?.code, status: value?.status, retryAfterMs: value?.retryAfterMs };
+      code: value?.code, status: value?.status, retryAfterMs: value?.retryAfterMs,
+      metadataRevision: value?.metadataRevision ?? null };
   if (!validOpaqueRequestId(canonical.id) || typeof canonical.ok !== 'boolean'
     || (!canonical.ok && (!CODES.has(canonical.code) || !validStatus(canonical.status)
-      || !validRetry(canonical.retryAfterMs)))) throw new TypeError('Invalid response');
+      || !validRetry(canonical.retryAfterMs) || !validRevision(canonical.metadataRevision)))) {
+    throw new TypeError('Invalid response');
+  }
   let serialized;
   try { serialized = JSON.stringify(canonical); } catch { throw new TypeError('Invalid response'); }
   if (typeof serialized !== 'string' || serialized.length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT) {
@@ -95,8 +101,10 @@ export function parseAboutAccountResponseDetail(input) {
     || !validOpaqueRequestId(value.id) || typeof value.ok !== 'boolean') return null;
   if (value.ok) return exact(value, ['version', 'id', 'ok', 'payload'])
     ? { version: value.version, id: value.id, ok: true, payload: value.payload } : null;
-  return exact(value, ['version', 'id', 'ok', 'code', 'status', 'retryAfterMs'])
+  return exact(value, ['version', 'id', 'ok', 'code', 'status', 'retryAfterMs', 'metadataRevision'])
     && CODES.has(value.code) && validStatus(value.status) && validRetry(value.retryAfterMs)
+    && validRevision(value.metadataRevision)
     ? { version: value.version, id: value.id, ok: false, code: value.code,
-      status: value.status, retryAfterMs: value.retryAfterMs } : null;
+      status: value.status, retryAfterMs: value.retryAfterMs,
+      metadataRevision: value.metadataRevision } : null;
 }

@@ -36,8 +36,8 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
     } catch { return false; }
     return true;
   };
-  const fail = (id, code, status = null, retryAfterMs = null) => emit({
-    id, ok: false, code, status, retryAfterMs,
+  const fail = (id, code, status = null, retryAfterMs = null, metadataRevision = null) => emit({
+    id, ok: false, code, status, retryAfterMs, metadataRevision,
   });
   const request = async (event) => {
     const command = parseAboutAccountRequestDetail(event?.detail);
@@ -77,15 +77,16 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
       }
       if (!ok) {
         if ([401, 403].includes(status)) {
-          invalidatePrivateXAboutAccountSnapshot(capture, 'authentication');
+          invalidatePrivateXAboutAccountSnapshot(capture, 'authentication', metadata);
         } else if ([400, 404].includes(status)) {
-          invalidatePrivateXAboutAccountSnapshot(capture, 'query');
+          invalidatePrivateXAboutAccountSnapshot(capture, 'query', metadata);
         }
         let retryAfterMs = null;
         if (status === 429) {
           try { retryAfterMs = parseRateLimitDelay(response.headers); } catch { retryAfterMs = 60_000; }
         }
-        fail(command.id, statusCode(status), status, retryAfterMs); return;
+        fail(command.id, statusCode(status), status, retryAfterMs,
+          [400, 401, 403, 404].includes(status) ? metadata.revision : null); return;
       }
       let payload;
       try { payload = await Reflect.apply(json, response, []); } catch { fail(command.id, 'INVALID_PAYLOAD'); return; }

@@ -17,7 +17,7 @@ class Document {
   dispatchEvent(event) { this.events.push({ event, time: Date.now() }); for (const listener of this.listeners.get(event.type) ?? []) listener(event); return true; }
 }
 const recovery = (generation = 1, queryId = 'query_one', authenticationFingerprint = 'auth_one') =>
-  ({ version: 1, generation, queryId, authenticationFingerprint });
+  ({ version: 1, generation, revision: generation, queryId, authenticationFingerprint });
 const context = (signal) => ({ version: X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION, signal });
 const identity = (handle) => createAccountIdentity({ handle, accountId: null, source: null });
 
@@ -59,7 +59,7 @@ describe('global About Account page scheduler', () => {
     document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
       id: command.id, ok: false, code: 'HTTP_401', status: 401, retryAfterMs: null,
     }) }));
-    expect(rejected).toHaveBeenCalledWith('auth');
+    expect(rejected).toHaveBeenCalledWith('auth', 1, 'auth_one');
     expect(transport.updateRecoveryState(recovery(2))).toBe(true);
     await vi.runAllTimersAsync();
     expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(1);
@@ -184,5 +184,98 @@ describe('global About Account page scheduler', () => {
     await vi.runAllTimersAsync();
     expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(6);
     transport.stop();
+  });
+
+  it.each([
+    ['auth', 'HTTP_401', 401, recovery(2, 'query_one', 'auth_two'), recovery(3, 'query_one', 'auth_three')],
+    ['query', 'HTTP_404', 404, recovery(2, 'query_two', 'auth_one'), recovery(3, 'query_three', 'auth_one')],
+  ])('ties %s rejection to its attempt revision and keeps the queue blocked after exhaustion',
+    async (kind, code, status, revisionTwo, revisionThree) => {
+      vi.useFakeTimers(); vi.setSystemTime(0);
+      const document = new Document(); const rejected = vi.fn();
+      const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event },
+        { recoveryState: recovery(), onMetadataRejected: rejected });
+      const firstController = new AbortController();
+      const first = transport.loadPayload(identity('first'), context(firstController.signal));
+      void first.catch(() => {});
+      const firstStart = document.events.find(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
+      transport.updateRecoveryState(revisionTwo);
+      let request = parseAboutAccountRequestDetail(firstStart.event.detail);
+      document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+        id: request.id, ok: false, code, status, retryAfterMs: null, metadataRevision: 1,
+      }) }));
+      await vi.advanceTimersByTimeAsync(200);
+      let starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
+      expect(starts).toHaveLength(2);
+      expect(rejected).toHaveBeenNthCalledWith(1, kind, 1, kind === 'auth' ? 'auth_one' : 'query_one');
+      request = parseAboutAccountRequestDetail(starts[1].event.detail);
+      document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+        id: request.id, ok: false, code, status, retryAfterMs: null, metadataRevision: 2,
+      }) }));
+      await expect(first).rejects.toMatchObject({ code });
+      const queuedController = new AbortController();
+      const queued = transport.loadPayload(identity('queued'), context(queuedController.signal));
+      void queued.catch(() => {});
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(2);
+      transport.updateRecoveryState(revisionThree);
+      await vi.advanceTimersByTimeAsync(200);
+      starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
+      expect(parseAboutAccountRequestDetail(starts[2].event.detail).handle).toBe('queued');
+      queuedController.abort(); await expect(queued).rejects.toMatchObject({ name: 'AbortError' });
+      transport.stop();
+    });
+
+  it('requires concurrent authentication and query blocks to resolve independently', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event }, { recoveryState: recovery() });
+    const controllers = [new AbortController(), new AbortController(), new AbortController()];
+    const promises = ['authfail', 'queryfail', 'queued'].map((handle, index) =>
+      transport.loadPayload(identity(handle), context(controllers[index].signal)));
+    promises.forEach((promise) => { void promise.catch(() => {}); });
+    await vi.advanceTimersByTimeAsync(200);
+    const starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
+    for (const [index, code, status] of [[0, 'HTTP_401', 401], [1, 'HTTP_404', 404]]) {
+      const request = parseAboutAccountRequestDetail(starts[index].event.detail);
+      document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+        id: request.id, ok: false, code, status, retryAfterMs: null, metadataRevision: 1,
+      }) }));
+    }
+    transport.updateRecoveryState(recovery(2, 'query_one', 'auth_two'));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(2);
+    transport.updateRecoveryState(recovery(3, 'query_two', 'auth_two'));
+    await vi.advanceTimersByTimeAsync(600);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).length)
+      .toBeGreaterThan(2);
+    controllers.forEach((controller) => controller.abort()); await Promise.allSettled(promises); transport.stop();
+  });
+
+  it('applies a later exhausted 429 cooldown to other queued accounts', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event }, { recoveryState: recovery() });
+    const firstController = new AbortController();
+    const first = transport.loadPayload(identity('rate'), context(firstController.signal)); void first.catch(() => {});
+    let request = parseAboutAccountRequestDetail(document.events[0].event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: request.id, ok: false, code: 'HTTP_429', status: 429, retryAfterMs: 1_000,
+    }) }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    request = parseAboutAccountRequestDetail(document.events.filter(({ event }) =>
+      event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).at(-1).event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: request.id, ok: false, code: 'HTTP_429', status: 429, retryAfterMs: 5_000,
+    }) }));
+    await expect(first).rejects.toMatchObject({ code: 'HTTP_429' });
+    const queuedController = new AbortController();
+    const queued = transport.loadPayload(identity('queued'), context(queuedController.signal)); void queued.catch(() => {});
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(parseAboutAccountRequestDetail(document.events.filter(({ event }) =>
+      event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).at(-1).event.detail).handle).toBe('queued');
+    queuedController.abort(); await expect(queued).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
   });
 });

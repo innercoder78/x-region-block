@@ -24,7 +24,8 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
   const onMetadataRejected = options.onMetadataRejected ?? (() => {});
   let sequence = 0; let active = true; let inFlight = 0; let lastStart = -Infinity;
   let cooldownUntil = 0; let scheduleTimer = null;
-  let recoveryState = null; let rejectedState = null;
+  let recoveryState = null;
+  const blockedMetadata = { auth: new Set(), query: new Set() };
   const queue = []; const pending = new Map(); const waitingMetadata = new Set();
   const dispatch = (type, detail) => document.dispatchEvent(new CustomEvent(type,
     { detail, bubbles: false, cancelable: false, composed: false }));
@@ -33,7 +34,8 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     catch { /* Cancellation cleanup never depends on page event delivery. */ }
   };
   const schedule = () => {
-    if (!active || scheduleTimer !== null || rejectedState !== null || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
+    if (!active || scheduleTimer !== null || blockedMetadata.auth.size > 0
+      || blockedMetadata.query.size > 0 || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
     const wait = Math.max(0, cooldownUntil - now(), START_INTERVAL - (now() - lastStart));
     if (wait > 0) {
       scheduleTimer = setTimer(() => { scheduleTimer = null; schedule(); }, wait);
@@ -42,6 +44,9 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     const entry = queue.shift();
     if (!entry || entry.cancelled) { schedule(); return; }
     entry.started = true; inFlight += 1; lastStart = now();
+    entry.attemptRevision = recoveryState?.revision ?? null;
+    entry.attemptAuthentication = recoveryState?.authenticationFingerprint ?? null;
+    entry.attemptQuery = recoveryState?.queryId ?? null;
     try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, serializeAboutAccountRequest(entry.id, entry.handle)); }
     catch {
       entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
@@ -68,20 +73,28 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     if (result.ok) { pending.delete(entry.id); entry.cleanup(); entry.resolve(result.payload); schedule(); return; }
     const code = result.code;
     let retryDelay = null;
-    if (code === 'HTTP_429' && entry.rateRetries++ < 1) {
+    if (code === 'HTTP_429') {
       cooldownUntil = Math.max(cooldownUntil, now() + Math.min(300_000, result.retryAfterMs ?? 60_000));
-      retryDelay = 0;
+      if (entry.rateRetries++ < 1) retryDelay = 0;
     } else if ((code === 'NETWORK' || code === 'HTTP_5XX') && entry.transientRetries < 2) {
       retryDelay = 1000 * (2 ** entry.transientRetries); entry.transientRetries += 1;
-    } else if (['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(code)
-      && entry.metadataRetries++ < 1) {
+    } else if (['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(code)) {
       entry.metadataKind = ['HTTP_400', 'HTTP_404'].includes(code) ? 'query' : 'auth';
-      entry.rejectedMetadata = entry.metadataKind === 'query'
+      entry.rejectedMetadata = entry.metadataKind === 'query' ? entry.attemptQuery : entry.attemptAuthentication;
+      if (entry.rejectedMetadata !== null) blockedMetadata[entry.metadataKind].add(entry.rejectedMetadata);
+      try { onMetadataRejected(entry.metadataKind, result.metadataRevision ?? entry.attemptRevision,
+        entry.rejectedMetadata); } catch { /* categorized by owner */ }
+      const current = entry.metadataKind === 'query'
         ? recoveryState?.queryId : recoveryState?.authenticationFingerprint;
-      rejectedState = { kind: entry.metadataKind, value: entry.rejectedMetadata };
-      try { onMetadataRejected(entry.metadataKind); } catch { /* categorized by owner */ }
-      waitingMetadata.add(entry);
-      schedule(); return;
+      const rejectedRevision = result.metadataRevision ?? entry.attemptRevision;
+      entry.rejectedRevision = rejectedRevision;
+      const fresh = current !== null && recoveryState?.revision !== rejectedRevision
+        && current !== entry.rejectedMetadata;
+      if (fresh) blockedMetadata[entry.metadataKind].delete(entry.rejectedMetadata);
+      if (entry.metadataRetries++ < 1) {
+        if (fresh) retryDelay = 0;
+        else { waitingMetadata.add(entry); schedule(); return; }
+      }
     }
     if (retryDelay !== null) {
       entry.delayTimer = setTimer(() => {
@@ -96,23 +109,25 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
   const updateRecoveryState = (value) => {
     if (value === null || typeof value !== 'object' || Array.isArray(value)
       || Object.getPrototypeOf(value) !== Object.prototype
-      || Reflect.ownKeys(value).length !== 4 || value.version !== 1
+      || Reflect.ownKeys(value).length !== 5 || value.version !== 1
       || !Number.isInteger(value.generation) || value.generation < 1
+      || !Number.isInteger(value.revision) || value.revision < 1 || value.revision > 2_147_483_647
       || !isValidXAboutAccountQueryId(value.queryId)
       || typeof value.authenticationFingerprint !== 'string'
       || value.authenticationFingerprint.length < 1 || value.authenticationFingerprint.length > 65_536) return false;
-    recoveryState = { version: 1, generation: value.generation, queryId: value.queryId,
+    recoveryState = { version: 1, generation: value.generation, revision: value.revision, queryId: value.queryId,
       authenticationFingerprint: value.authenticationFingerprint };
-    if (rejectedState !== null) {
-      const current = rejectedState.kind === 'query'
-        ? recoveryState.queryId : recoveryState.authenticationFingerprint;
-      if (current === rejectedState.value) return true;
-      rejectedState = null;
+    for (const [kind, current] of [['query', recoveryState.queryId],
+      ['auth', recoveryState.authenticationFingerprint]]) {
+      for (const rejected of [...blockedMetadata[kind]]) {
+        if (rejected !== current) blockedMetadata[kind].delete(rejected);
+      }
     }
     for (const entry of [...waitingMetadata]) if (active && !entry.cancelled) {
       const fresh = entry.metadataKind === 'query'
-        ? recoveryState.queryId !== entry.rejectedMetadata
-        : recoveryState.authenticationFingerprint !== entry.rejectedMetadata;
+        ? recoveryState.revision !== entry.rejectedRevision && recoveryState.queryId !== entry.rejectedMetadata
+        : recoveryState.revision !== entry.rejectedRevision
+          && recoveryState.authenticationFingerprint !== entry.rejectedMetadata;
       if (!fresh) continue;
       waitingMetadata.delete(entry);
       // Avoid starting reentrantly inside the ordinary page request being observed.
@@ -139,6 +154,7 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     return new Promise((resolve, reject) => {
       const entry = { id, handle: canonical.handle, resolve, reject, started: false, cancelled: false,
         transientRetries: 0, metadataRetries: 0, rateRetries: 0, cleanup: null,
+        attemptRevision: null, attemptAuthentication: null, attemptQuery: null, rejectedRevision: null,
         attemptTimer: null, delayTimer: null };
       const cancel = () => {
         if (entry.cancelled) return; entry.cancelled = true; pending.delete(id);
@@ -165,6 +181,7 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
       if (entry.started) dispatchCancellation(entry.id);
       entry.reject(abortError());
     }
-    pending.clear(); waitingMetadata.clear(); queue.length = 0; inFlight = 0;
+    pending.clear(); waitingMetadata.clear(); blockedMetadata.auth.clear();
+    blockedMetadata.query.clear(); queue.length = 0; inFlight = 0;
   } });
 }

@@ -10,6 +10,7 @@ import {
 import {
   X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, X_ABOUT_ACCOUNT_OPERATION_NAME,
 } from '../shared/x-about-account-query.js';
+import { X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT } from '../shared/x-about-account-request-event.js';
 
 export const X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION = 2;
 
@@ -24,9 +25,9 @@ export function executeWithOriginalXFetch(controller, ...args) {
   if (!execute) throw new TypeError('Inactive request capture');
   return execute(...args);
 }
-export function invalidatePrivateXAboutAccountSnapshot(controller, kind) {
+export function invalidatePrivateXAboutAccountSnapshot(controller, kind, usedSnapshot) {
   const invalidate = privateCaptures.get(controller)?.invalidate;
-  return invalidate ? invalidate(kind) : false;
+  return invalidate ? invalidate(kind, usedSnapshot) : false;
 }
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -154,9 +155,11 @@ function captureSnapshot(state, input, init = undefined, suppliedXhrHeaders = un
     state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID,
   ]);
   if (publicationKey === state.publicationKey) return;
+  if (state.nextRevision > X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT) return;
+  const revision = state.nextRevision; state.nextRevision += 1;
   const serialized = JSON.stringify({
     version: X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION, origin: state.origin,
-    queryId: state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, headers,
+    revision, queryId: state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, headers,
   });
   if (serialized.length > METADATA_DETAIL_LIMIT || serialized === state.snapshot) return;
   state.snapshot = serialized;
@@ -252,15 +255,19 @@ export function installXAboutAccountRequestCapture(globalScope) {
     try { return JSON.parse(state.snapshot); } catch { return null; }
   };
   privateRead.execute = (...args) => Reflect.apply(state.fetch, state.scope, args);
-  privateRead.invalidate = (kind) => {
-    if (phase !== 'active' || !state?.snapshot) return false;
-    let current;
-    try { current = JSON.parse(state.snapshot); } catch { return false; }
+  privateRead.invalidate = (kind, used) => {
+    if (phase !== 'active' || !used || typeof used !== 'object'
+      || !Number.isInteger(used.revision) || used.revision < 1) return false;
+    let current = null;
+    try { if (state.snapshot) current = JSON.parse(state.snapshot); } catch { return false; }
     if (kind === 'authentication') {
-      state.rejectedAuthentication = createMetadataAuthenticationFingerprint(current.headers);
+      const rejected = createMetadataAuthenticationFingerprint(used.headers);
+      state.rejectedAuthentication = rejected;
+      if (current && createMetadataAuthenticationFingerprint(current.headers) !== rejected) return true;
     } else if (kind === 'query') {
-      state.rejectedQueryId = current.queryId;
-      if (state.liveQueryId === current.queryId) state.liveQueryId = null;
+      state.rejectedQueryId = used.queryId;
+      if (current && current.queryId !== used.queryId) return true;
+      if (state.liveQueryId === used.queryId) state.liveQueryId = null;
     } else return false;
     state.snapshot = null; state.publicationKey = null;
     return true;
@@ -299,7 +306,7 @@ export function installXAboutAccountRequestCapture(globalScope) {
       documentRemoveEventListener, documentDispatchEvent, CustomEvent, URL, Headers, Request, origin,
       urlHref, requestUrl, requestMethod, requestHeaders, headersGet,
       snapshot: null, publicationKey: null, liveQueryId: null, active: false,
-      rejectedAuthentication: null, rejectedQueryId: null };
+      rejectedAuthentication: null, rejectedQueryId: null, nextRevision: 1 };
     if (typeof XMLHttpRequest === 'function') {
       const prototype = read(() => XMLHttpRequest.prototype);
       const originals = {

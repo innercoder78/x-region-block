@@ -93,7 +93,7 @@ in-flight lookups, starts requests at least 200 ms apart, retains queued work du
 global 429 cooldown, retries a 429 once, and retries network/5xx failures after one and two
 seconds. Authentication and query-ID rejection each wait for genuinely changed metadata
 and retry once. Request, cancellation, and response event details are bounded JSON strings;
-the scheduler consumes only validated recovery generations, query IDs, and opaque authentication
+the scheduler consumes only validated page revisions, recovery generations, query IDs, and opaque authentication
 fingerprints. Rejected authentication or query state is invalidated globally, and a page attempt
 which produces no response is cancelled after 30 seconds so its scheduler slot is released.
 

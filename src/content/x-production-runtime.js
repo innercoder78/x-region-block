@@ -171,8 +171,10 @@ export function createXProductionContentRuntime(globalScope) {
         ? state.bridge.getRecoveryState() : undefined;
       const transport = createXAboutAccountPageTransport({
         document: dependencies.document, CustomEvent: dependencies.CustomEvent,
+      }, {
         recoveryState,
-        onMetadataRejected: (kind) => state.bridge.invalidateRecovery?.(kind),
+        onMetadataRejected: (kind, revision, rejectedValue) =>
+          state.bridge.invalidateRecovery?.(kind, revision, rejectedValue),
       });
       if (!owned(state)) throw new Error();
       state.transport = transport;

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION, installXAboutAccountRequestCapture,
-  invalidatePrivateXAboutAccountSnapshot,
+  invalidatePrivateXAboutAccountSnapshot, readPrivateXAboutAccountSnapshot,
 } from '../src/page/x-about-account-request-capture.js';
 import {
   X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE,
@@ -49,7 +49,8 @@ describe('X About Account request capture', () => {
       page.fetch('/i/api/graphql/generic/HomeTimeline?x=1', { headers: observedHeaders });
     } else page.fetch(observedUrl(rejectedQuery), { headers: observedHeaders });
     expect(details.at(-1).queryId).toBe(rejectedQuery);
-    expect(invalidatePrivateXAboutAccountSnapshot(capture, 'query')).toBe(true);
+    expect(invalidatePrivateXAboutAccountSnapshot(capture, 'query',
+      readPrivateXAboutAccountSnapshot(capture))).toBe(true);
     const count = details.length;
     page.fetch('/i/api/graphql/generic/HomeTimeline?x=2', { headers: observedHeaders });
     page.fetch('/i/api/graphql/generic/HomeTimeline?x=3', {
@@ -146,7 +147,7 @@ describe('X About Account request capture', () => {
     expect(fetch).toHaveBeenCalledWith(input, init);
     const snapshot = JSON.parse(details[0]);
     expect(Object.keys(snapshot)).toEqual([
-      'version', 'origin', 'queryId', 'headers',
+      'version', 'origin', 'revision', 'queryId', 'headers',
     ]);
     expect(details[0]).not.toContain('Observed');
     expect(snapshot.headers).not.toHaveProperty('cookie');

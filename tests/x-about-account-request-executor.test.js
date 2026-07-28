@@ -1,6 +1,7 @@
 import vm from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
-import { installXAboutAccountRequestCapture } from '../src/page/x-about-account-request-capture.js';
+import { installXAboutAccountRequestCapture,
+  readPrivateXAboutAccountSnapshot } from '../src/page/x-about-account-request-capture.js';
 import { installXAboutAccountRequestExecutor } from '../src/page/x-about-account-request-executor.js';
 import { X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE,
   parseAboutAccountResponseDetail, serializeAboutAccountRequest } from '../src/shared/x-about-account-request-event.js';
@@ -95,4 +96,34 @@ describe('MAIN-world About Account executor', () => {
     expect(responses[0]).not.toContain('private internal exception');
     executor.stop(); capture.stop();
   });
+
+  it.each(['authentication', 'query'])(
+    'does not clear a newer private %s snapshot when an older request fails', async (kind) => {
+      let resolveRequest;
+      const fetch = vi.fn((url, options) => options?.signal ? new Promise((resolve) => {
+        resolveRequest = resolve;
+      }) : 'ordinary');
+      const { page, document } = metadataFacades(fetch); page.AbortController = AbortController;
+      const capture = installXAboutAccountRequestCapture(page);
+      page.fetch('/i/api/graphql/old_query/AboutAccountQuery?x=1', { headers: observedHeaders });
+      const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
+      document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
+      document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
+        { detail: serializeAboutAccountRequest(`opaque_race_${kind}`, 'OpenAI') }));
+      if (kind === 'authentication') {
+        page.fetch('/i/api/graphql/generic/HomeTimeline?x=2', { headers: {
+          ...observedHeaders, 'x-csrf-token': 'new-csrf',
+        } });
+      } else page.fetch('/i/api/graphql/new_query/AboutAccountQuery?x=2', { headers: observedHeaders });
+      const newer = readPrivateXAboutAccountSnapshot(capture);
+      resolveRequest({ ok: false, status: kind === 'authentication' ? 401 : 404,
+        headers: new Headers(), json: () => null });
+      await Promise.resolve(); await Promise.resolve();
+      const retained = readPrivateXAboutAccountSnapshot(capture);
+      expect(retained.revision).toBe(newer.revision);
+      expect(retained.queryId).toBe(newer.queryId);
+      expect(parseAboutAccountResponseDetail(responses[0]).metadataRevision).toBe(1);
+      executor.stop(); capture.stop();
+    },
+  );
 });

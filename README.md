@@ -109,8 +109,9 @@ details are strings as well, so neither side depends on cross-realm object proto
 MAIN-world executor constructs the canonical
 same-origin URL and closed header set from its private metadata snapshot and calls the
 original page fetch. Responses are bounded and revalidated by the isolated bridge. The
-scheduler receives only the validated bridge's generation, query ID, and opaque authentication
-fingerprint. Authentication or query rejection globally invalidates the corresponding private
+scheduler receives only the validated bridge's bounded page revision, generation, query ID, and
+opaque authentication fingerprint. Each failure is tied to the revision used by its attempt, so
+newer metadata is preserved. Authentication or query rejection globally invalidates the corresponding private
 page snapshot and pauses work until the first genuinely changed validated state. A 30-second
 bridge-response timeout cancels the page attempt and releases its scheduler slot.
 Normal empty discovery at `document_start` is informational: mutation discovery remains

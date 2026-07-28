@@ -1972,10 +1972,11 @@
     'handle', 'displayHandle', 'profileUrl', 'accountId', 'allowlistKey', 'source',
   ]);
   const UPDATED_KEYS = Object.freeze(['previous', 'current']);
-  const DIAGNOSTIC_CODES = new Set(['PAGE_BRIDGE_UNAVAILABLE', 'NETWORK', 'INVALID_RESPONSE',
+  const DIAGNOSTIC_CODES = new Set(['PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK', 'INVALID_RESPONSE',
     'INVALID_PAYLOAD', 'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX']);
   const DIAGNOSTIC_MESSAGES = Object.freeze({
     PAGE_BRIDGE_UNAVAILABLE: 'About Account request bridge unavailable.',
+    NO_METADATA: 'About Account metadata is unavailable.',
     NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
     INVALID_PAYLOAD: 'About Account response payload was invalid.', HTTP_400: 'About Account request rejected.',
     HTTP_401: 'About Account authentication metadata rejected.', HTTP_403: 'About Account authentication metadata rejected.',
@@ -3734,6 +3735,62 @@
 
   const X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION = 1;
 
+  const X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION = 1;
+  const X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE = 'x-region-block:about-account:request';
+  const X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE = 'x-region-block:about-account:cancel';
+  const X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE = 'x-region-block:about-account:response';
+  const X_ABOUT_ACCOUNT_RESPONSE_LIMIT = 262_144;
+  const X_ABOUT_ACCOUNT_RETRY_LIMIT = 300_000;
+  const X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT = 2_147_483_647;
+
+  const ID = /^[A-Za-z0-9_-]{16,64}$/;
+  const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
+  const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK',
+    'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
+    'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
+  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const plain$1 = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype;
+  const exact = (value, keys) => plain$1(value) && Reflect.ownKeys(value).length === keys.length
+    && Reflect.ownKeys(value).every((key) => typeof key === 'string') && keys.every((key) => own(value, key));
+  const validStatus = (value) => value === null
+    || (Number.isInteger(value) && value >= 100 && value <= 599);
+  const validRetry = (value) => value === null
+    || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
+  const validRevision = (value) => value === null
+    || (Number.isInteger(value) && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT);
+  const canonicalParse = (input, limit) => {
+    if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
+    try {
+      const value = JSON.parse(input);
+      return JSON.stringify(value) === input ? value : null;
+    } catch { return null; }
+  };
+
+  function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
+  function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
+  function serializeAboutAccountRequest(id, handle) {
+    if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle)) throw new TypeError('Invalid request');
+    return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle });
+  }
+  function serializeAboutAccountCancel(id) {
+    if (!validOpaqueRequestId(id)) throw new TypeError('Invalid cancellation');
+    return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id });
+  }
+  function parseAboutAccountResponseDetail(input) {
+    const value = canonicalParse(input, X_ABOUT_ACCOUNT_RESPONSE_LIMIT);
+    if (!value || value.version !== X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
+      || !validOpaqueRequestId(value.id) || typeof value.ok !== 'boolean') return null;
+    if (value.ok) return exact(value, ['version', 'id', 'ok', 'payload'])
+      ? { version: value.version, id: value.id, ok: true, payload: value.payload } : null;
+    return exact(value, ['version', 'id', 'ok', 'code', 'status', 'retryAfterMs', 'metadataRevision'])
+      && CODES.has(value.code) && validStatus(value.status) && validRetry(value.retryAfterMs)
+      && validRevision(value.metadataRevision)
+      ? { version: value.version, id: value.id, ok: false, code: value.code,
+        status: value.status, retryAfterMs: value.retryAfterMs,
+        metadataRevision: value.metadataRevision } : null;
+  }
+
   const X_ABOUT_ACCOUNT_RECOVERY_STATE_VERSION = 1;
 
   const supportedOrigins$2 = new Set(['https://x.com', 'https://twitter.com']);
@@ -3742,7 +3799,7 @@
   ]);
   const hasOwn$1 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
   const SNAPSHOT_KEYS = Object.freeze([
-    'version', 'origin', 'queryId', 'headers',
+    'version', 'origin', 'revision', 'queryId', 'headers',
   ]);
 
   function exactStringKeys(value, keys) {
@@ -3779,6 +3836,8 @@
       || typeof candidate.version !== 'number'
       || candidate.version !== X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION
       || typeof candidate.origin !== 'string' || candidate.origin !== origin
+      || !Number.isInteger(candidate.revision) || candidate.revision < 1
+      || candidate.revision > X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT
       || typeof candidate.queryId !== 'string' || !validMetadataQueryId(candidate.queryId)
       || !isMetadataPlainObject(candidate.headers)) throw new TypeError();
     const snapshot = copyAndValidateJsonValue(candidate, { requireObject: true });
@@ -3845,6 +3904,7 @@
           const parsed = JSON.parse(detail);
           const normalized = normalizeSnapshot(parsed, dependencies.origin);
           if (!active || ownedGeneration !== generation) return;
+          if (snapshot !== null && normalized.revision <= snapshot.revision) return;
           if (rejected?.kind === 'authentication'
             && createMetadataAuthenticationFingerprint(normalized.headers) === rejected.fingerprint) return;
           if (rejected?.kind === 'query' && normalized.queryId === rejected.queryId) return;
@@ -3958,11 +4018,19 @@
         snapshot = null;
       }, enumerable: false, configurable: false, writable: false,
     });
-    const invalidateRecovery = (kind) => createRequest.invalidateSnapshot(kind);
+    const invalidateRecovery = (kind, revision, rejectedValue) => {
+      if (!Number.isInteger(revision) || revision < 1 || revision > X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT) return false;
+      if ((kind !== 'query' && kind !== 'auth') || typeof rejectedValue !== 'string'
+        || rejectedValue.length < 1 || rejectedValue.length > 65_536) return false;
+      if (snapshot === null) return true;
+      const currentValue = kind === 'query' ? snapshot.queryId : `auth-${authenticationGeneration}`;
+      if (snapshot.revision !== revision && currentValue !== rejectedValue) return true;
+      createRequest.invalidateSnapshot(kind); return true;
+    };
     const getRecoveryState = () => {
       if (snapshot === null) return null;
       return Object.freeze({ version: X_ABOUT_ACCOUNT_RECOVERY_STATE_VERSION,
-        generation: recoveryGeneration, queryId: snapshot.queryId,
+        generation: recoveryGeneration, revision: snapshot.revision, queryId: snapshot.queryId,
         authenticationFingerprint: `auth-${authenticationGeneration}` });
     };
     Object.defineProperty(createRequest, 'waitForFreshSnapshot', {
@@ -3988,57 +4056,6 @@
       hasSnapshot: () => snapshot !== null, isActive: () => active });
   }
 
-  const X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION = 1;
-  const X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE = 'x-region-block:about-account:request';
-  const X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE = 'x-region-block:about-account:cancel';
-  const X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE = 'x-region-block:about-account:response';
-  const X_ABOUT_ACCOUNT_RESPONSE_LIMIT = 262_144;
-  const X_ABOUT_ACCOUNT_RETRY_LIMIT = 300_000;
-
-  const ID = /^[A-Za-z0-9_-]{16,64}$/;
-  const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
-  const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK',
-    'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
-    'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
-  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-  const plain$1 = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype;
-  const exact = (value, keys) => plain$1(value) && Reflect.ownKeys(value).length === keys.length
-    && Reflect.ownKeys(value).every((key) => typeof key === 'string') && keys.every((key) => own(value, key));
-  const validStatus = (value) => value === null
-    || (Number.isInteger(value) && value >= 100 && value <= 599);
-  const validRetry = (value) => value === null
-    || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
-  const canonicalParse = (input, limit) => {
-    if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
-    try {
-      const value = JSON.parse(input);
-      return JSON.stringify(value) === input ? value : null;
-    } catch { return null; }
-  };
-
-  function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
-  function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
-  function serializeAboutAccountRequest(id, handle) {
-    if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle)) throw new TypeError('Invalid request');
-    return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle });
-  }
-  function serializeAboutAccountCancel(id) {
-    if (!validOpaqueRequestId(id)) throw new TypeError('Invalid cancellation');
-    return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id });
-  }
-  function parseAboutAccountResponseDetail(input) {
-    const value = canonicalParse(input, X_ABOUT_ACCOUNT_RESPONSE_LIMIT);
-    if (!value || value.version !== X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
-      || !validOpaqueRequestId(value.id) || typeof value.ok !== 'boolean') return null;
-    if (value.ok) return exact(value, ['version', 'id', 'ok', 'payload'])
-      ? { version: value.version, id: value.id, ok: true, payload: value.payload } : null;
-    return exact(value, ['version', 'id', 'ok', 'code', 'status', 'retryAfterMs'])
-      && CODES.has(value.code) && validStatus(value.status) && validRetry(value.retryAfterMs)
-      ? { version: value.version, id: value.id, ok: false, code: value.code,
-        status: value.status, retryAfterMs: value.retryAfterMs } : null;
-  }
-
   const MAX_IN_FLIGHT = 4;
   const START_INTERVAL = 200;
   const BRIDGE_TIMEOUT = 30_000;
@@ -4056,7 +4073,8 @@
     const onMetadataRejected = options.onMetadataRejected ?? (() => {});
     let sequence = 0; let active = true; let inFlight = 0; let lastStart = -Infinity;
     let cooldownUntil = 0; let scheduleTimer = null;
-    let recoveryState = null; let rejectedState = null;
+    let recoveryState = null;
+    const blockedMetadata = { auth: new Set(), query: new Set() };
     const queue = []; const pending = new Map(); const waitingMetadata = new Set();
     const dispatch = (type, detail) => document.dispatchEvent(new CustomEvent(type,
       { detail, bubbles: false, cancelable: false, composed: false }));
@@ -4065,7 +4083,8 @@
       catch { /* Cancellation cleanup never depends on page event delivery. */ }
     };
     const schedule = () => {
-      if (!active || scheduleTimer !== null || rejectedState !== null || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
+      if (!active || scheduleTimer !== null || blockedMetadata.auth.size > 0
+        || blockedMetadata.query.size > 0 || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
       const wait = Math.max(0, cooldownUntil - now(), START_INTERVAL - (now() - lastStart));
       if (wait > 0) {
         scheduleTimer = setTimer(() => { scheduleTimer = null; schedule(); }, wait);
@@ -4074,6 +4093,9 @@
       const entry = queue.shift();
       if (!entry || entry.cancelled) { schedule(); return; }
       entry.started = true; inFlight += 1; lastStart = now();
+      entry.attemptRevision = recoveryState?.revision ?? null;
+      entry.attemptAuthentication = recoveryState?.authenticationFingerprint ?? null;
+      entry.attemptQuery = recoveryState?.queryId ?? null;
       try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, serializeAboutAccountRequest(entry.id, entry.handle)); }
       catch {
         entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
@@ -4100,20 +4122,28 @@
       if (result.ok) { pending.delete(entry.id); entry.cleanup(); entry.resolve(result.payload); schedule(); return; }
       const code = result.code;
       let retryDelay = null;
-      if (code === 'HTTP_429' && entry.rateRetries++ < 1) {
+      if (code === 'HTTP_429') {
         cooldownUntil = Math.max(cooldownUntil, now() + Math.min(300_000, result.retryAfterMs ?? 60_000));
-        retryDelay = 0;
+        if (entry.rateRetries++ < 1) retryDelay = 0;
       } else if ((code === 'NETWORK' || code === 'HTTP_5XX') && entry.transientRetries < 2) {
         retryDelay = 1000 * (2 ** entry.transientRetries); entry.transientRetries += 1;
-      } else if (['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(code)
-        && entry.metadataRetries++ < 1) {
+      } else if (['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(code)) {
         entry.metadataKind = ['HTTP_400', 'HTTP_404'].includes(code) ? 'query' : 'auth';
-        entry.rejectedMetadata = entry.metadataKind === 'query'
+        entry.rejectedMetadata = entry.metadataKind === 'query' ? entry.attemptQuery : entry.attemptAuthentication;
+        if (entry.rejectedMetadata !== null) blockedMetadata[entry.metadataKind].add(entry.rejectedMetadata);
+        try { onMetadataRejected(entry.metadataKind, result.metadataRevision ?? entry.attemptRevision,
+          entry.rejectedMetadata); } catch { /* categorized by owner */ }
+        const current = entry.metadataKind === 'query'
           ? recoveryState?.queryId : recoveryState?.authenticationFingerprint;
-        rejectedState = { kind: entry.metadataKind, value: entry.rejectedMetadata };
-        try { onMetadataRejected(entry.metadataKind); } catch { /* categorized by owner */ }
-        waitingMetadata.add(entry);
-        schedule(); return;
+        const rejectedRevision = result.metadataRevision ?? entry.attemptRevision;
+        entry.rejectedRevision = rejectedRevision;
+        const fresh = current !== null && recoveryState?.revision !== rejectedRevision
+          && current !== entry.rejectedMetadata;
+        if (fresh) blockedMetadata[entry.metadataKind].delete(entry.rejectedMetadata);
+        if (entry.metadataRetries++ < 1) {
+          if (fresh) retryDelay = 0;
+          else { waitingMetadata.add(entry); schedule(); return; }
+        }
       }
       if (retryDelay !== null) {
         entry.delayTimer = setTimer(() => {
@@ -4128,23 +4158,25 @@
     const updateRecoveryState = (value) => {
       if (value === null || typeof value !== 'object' || Array.isArray(value)
         || Object.getPrototypeOf(value) !== Object.prototype
-        || Reflect.ownKeys(value).length !== 4 || value.version !== 1
+        || Reflect.ownKeys(value).length !== 5 || value.version !== 1
         || !Number.isInteger(value.generation) || value.generation < 1
+        || !Number.isInteger(value.revision) || value.revision < 1 || value.revision > 2_147_483_647
         || !isValidXAboutAccountQueryId(value.queryId)
         || typeof value.authenticationFingerprint !== 'string'
         || value.authenticationFingerprint.length < 1 || value.authenticationFingerprint.length > 65_536) return false;
-      recoveryState = { version: 1, generation: value.generation, queryId: value.queryId,
+      recoveryState = { version: 1, generation: value.generation, revision: value.revision, queryId: value.queryId,
         authenticationFingerprint: value.authenticationFingerprint };
-      if (rejectedState !== null) {
-        const current = rejectedState.kind === 'query'
-          ? recoveryState.queryId : recoveryState.authenticationFingerprint;
-        if (current === rejectedState.value) return true;
-        rejectedState = null;
+      for (const [kind, current] of [['query', recoveryState.queryId],
+        ['auth', recoveryState.authenticationFingerprint]]) {
+        for (const rejected of [...blockedMetadata[kind]]) {
+          if (rejected !== current) blockedMetadata[kind].delete(rejected);
+        }
       }
       for (const entry of [...waitingMetadata]) if (active && !entry.cancelled) {
         const fresh = entry.metadataKind === 'query'
-          ? recoveryState.queryId !== entry.rejectedMetadata
-          : recoveryState.authenticationFingerprint !== entry.rejectedMetadata;
+          ? recoveryState.revision !== entry.rejectedRevision && recoveryState.queryId !== entry.rejectedMetadata
+          : recoveryState.revision !== entry.rejectedRevision
+            && recoveryState.authenticationFingerprint !== entry.rejectedMetadata;
         if (!fresh) continue;
         waitingMetadata.delete(entry);
         // Avoid starting reentrantly inside the ordinary page request being observed.
@@ -4171,6 +4203,7 @@
       return new Promise((resolve, reject) => {
         const entry = { id, handle: canonical.handle, resolve, reject, started: false, cancelled: false,
           transientRetries: 0, metadataRetries: 0, rateRetries: 0, cleanup: null,
+          attemptRevision: null, attemptAuthentication: null, attemptQuery: null, rejectedRevision: null,
           attemptTimer: null, delayTimer: null };
         const cancel = () => {
           if (entry.cancelled) return; entry.cancelled = true; pending.delete(id);
@@ -4197,7 +4230,8 @@
         if (entry.started) dispatchCancellation(entry.id);
         entry.reject(abortError());
       }
-      pending.clear(); waitingMetadata.clear(); queue.length = 0; inFlight = 0;
+      pending.clear(); waitingMetadata.clear(); blockedMetadata.auth.clear();
+      blockedMetadata.query.clear(); queue.length = 0; inFlight = 0;
     } });
   }
 
@@ -4697,8 +4731,10 @@
           ? state.bridge.getRecoveryState() : undefined;
         const transport = createXAboutAccountPageTransport({
           document: dependencies.document, CustomEvent: dependencies.CustomEvent,
+        }, {
           recoveryState,
-          onMetadataRejected: (kind) => state.bridge.invalidateRecovery?.(kind),
+          onMetadataRejected: (kind, revision, rejectedValue) =>
+            state.bridge.invalidateRecovery?.(kind, revision, rejectedValue),
         });
         if (!owned(state)) throw new Error();
         state.transport = transport;

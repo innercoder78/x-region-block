@@ -73,6 +73,96 @@
     return prototype === null || prototype === Object.prototype;
   }
 
+  const X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION = 1;
+  const X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE = 'x-region-block:about-account:request';
+  const X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE = 'x-region-block:about-account:cancel';
+  const X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE = 'x-region-block:about-account:response';
+  const X_ABOUT_ACCOUNT_COMMAND_LIMIT = 256;
+  const X_ABOUT_ACCOUNT_RESPONSE_LIMIT = 262_144;
+  const X_ABOUT_ACCOUNT_RETRY_LIMIT = 300_000;
+  const X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT = 2_147_483_647;
+
+  const ID = /^[A-Za-z0-9_-]{16,64}$/;
+  const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
+  const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK',
+    'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
+    'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
+  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype;
+  const exact = (value, keys) => plain(value) && Reflect.ownKeys(value).length === keys.length
+    && Reflect.ownKeys(value).every((key) => typeof key === 'string') && keys.every((key) => own(value, key));
+  const validStatus = (value) => value === null
+    || (Number.isInteger(value) && value >= 100 && value <= 599);
+  const validRetry = (value) => value === null
+    || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
+  const validRevision = (value) => value === null
+    || (Number.isInteger(value) && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT);
+  const canonicalParse = (input, limit) => {
+    if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
+    try {
+      const value = JSON.parse(input);
+      return JSON.stringify(value) === input ? value : null;
+    } catch { return null; }
+  };
+  const validateJsonValue = (value, ancestors = new Set(), depth = 0) => {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+    if (typeof value === 'number') { if (!Number.isFinite(value)) throw new TypeError(); return; }
+    if (typeof value !== 'object' || depth > 32 || ancestors.has(value)) throw new TypeError();
+    const array = Array.isArray(value);
+    if (!array && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
+      throw new TypeError();
+    }
+    const keys = Reflect.ownKeys(value);
+    if (keys.some((key) => typeof key !== 'string')) throw new TypeError();
+    if (array && (keys.length !== value.length + 1
+      || keys.some((key) => key !== 'length' && !/^(?:0|[1-9]\d*)$/.test(key)))) throw new TypeError();
+    ancestors.add(value);
+    for (const key of keys) {
+      if (key === 'length' && array) continue;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !own(descriptor, 'value') || (!array && descriptor.enumerable !== true)) throw new TypeError();
+      validateJsonValue(descriptor.value, ancestors, depth + 1);
+    }
+    ancestors.delete(value);
+  };
+
+  function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
+  function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
+  function parseAboutAccountRequestDetail(input) {
+    const value = canonicalParse(input, X_ABOUT_ACCOUNT_COMMAND_LIMIT);
+    return exact(value, ['version', 'id', 'handle'])
+      && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
+      && validOpaqueRequestId(value.id) && validCanonicalHandle(value.handle)
+      ? { version: value.version, id: value.id, handle: value.handle } : null;
+  }
+  function parseAboutAccountCancelDetail(input) {
+    const value = canonicalParse(input, X_ABOUT_ACCOUNT_COMMAND_LIMIT);
+    return exact(value, ['version', 'id']) && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
+      && validOpaqueRequestId(value.id) ? { version: value.version, id: value.id } : null;
+  }
+  function serializeAboutAccountResponse(value) {
+    if (value?.ok === true) {
+      try { validateJsonValue(value.payload); } catch { throw new TypeError('Invalid response'); }
+    }
+    const canonical = value?.ok === true
+      ? { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value.id, ok: true, payload: value.payload }
+      : { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value?.id, ok: false,
+        code: value?.code, status: value?.status, retryAfterMs: value?.retryAfterMs,
+        metadataRevision: value?.metadataRevision ?? null };
+    if (!validOpaqueRequestId(canonical.id) || typeof canonical.ok !== 'boolean'
+      || (!canonical.ok && (!CODES.has(canonical.code) || !validStatus(canonical.status)
+        || !validRetry(canonical.retryAfterMs) || !validRevision(canonical.metadataRevision)))) {
+      throw new TypeError('Invalid response');
+    }
+    let serialized;
+    try { serialized = JSON.stringify(canonical); } catch { throw new TypeError('Invalid response'); }
+    if (typeof serialized !== 'string' || serialized.length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT) {
+      throw new TypeError('Invalid response');
+    }
+    return serialized;
+  }
+
   const installations$2 = new WeakMap();
   const privateCaptures = new WeakMap();
   function readPrivateXAboutAccountSnapshot(controller) {
@@ -84,9 +174,9 @@
     if (!execute) throw new TypeError('Inactive request capture');
     return execute(...args);
   }
-  function invalidatePrivateXAboutAccountSnapshot(controller, kind) {
+  function invalidatePrivateXAboutAccountSnapshot(controller, kind, usedSnapshot) {
     const invalidate = privateCaptures.get(controller)?.invalidate;
-    return invalidate ? invalidate(kind) : false;
+    return invalidate ? invalidate(kind, usedSnapshot) : false;
   }
   const supportedOrigins$1 = new Set(['https://x.com', 'https://twitter.com']);
   const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -214,9 +304,11 @@
       state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID,
     ]);
     if (publicationKey === state.publicationKey) return;
+    if (state.nextRevision > X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT) return;
+    const revision = state.nextRevision; state.nextRevision += 1;
     const serialized = JSON.stringify({
       version: X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION, origin: state.origin,
-      queryId: state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, headers,
+      revision, queryId: state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, headers,
     });
     if (serialized.length > METADATA_DETAIL_LIMIT || serialized === state.snapshot) return;
     state.snapshot = serialized;
@@ -312,15 +404,19 @@
       try { return JSON.parse(state.snapshot); } catch { return null; }
     };
     privateRead.execute = (...args) => Reflect.apply(state.fetch, state.scope, args);
-    privateRead.invalidate = (kind) => {
-      if (phase !== 'active' || !state?.snapshot) return false;
-      let current;
-      try { current = JSON.parse(state.snapshot); } catch { return false; }
+    privateRead.invalidate = (kind, used) => {
+      if (phase !== 'active' || !used || typeof used !== 'object'
+        || !Number.isInteger(used.revision) || used.revision < 1) return false;
+      let current = null;
+      try { if (state.snapshot) current = JSON.parse(state.snapshot); } catch { return false; }
       if (kind === 'authentication') {
-        state.rejectedAuthentication = createMetadataAuthenticationFingerprint(current.headers);
+        const rejected = createMetadataAuthenticationFingerprint(used.headers);
+        state.rejectedAuthentication = rejected;
+        if (current && createMetadataAuthenticationFingerprint(current.headers) !== rejected) return true;
       } else if (kind === 'query') {
-        state.rejectedQueryId = current.queryId;
-        if (state.liveQueryId === current.queryId) state.liveQueryId = null;
+        state.rejectedQueryId = used.queryId;
+        if (current && current.queryId !== used.queryId) return true;
+        if (state.liveQueryId === used.queryId) state.liveQueryId = null;
       } else return false;
       state.snapshot = null; state.publicationKey = null;
       return true;
@@ -359,7 +455,7 @@
         documentRemoveEventListener, documentDispatchEvent, CustomEvent, URL, Headers, Request, origin,
         urlHref, requestUrl, requestMethod, requestHeaders, headersGet,
         snapshot: null, publicationKey: null, liveQueryId: null, active: false,
-        rejectedAuthentication: null, rejectedQueryId: null };
+        rejectedAuthentication: null, rejectedQueryId: null, nextRevision: 1 };
       if (typeof XMLHttpRequest === 'function') {
         const prototype = read(() => XMLHttpRequest.prototype);
         const originals = {
@@ -461,90 +557,6 @@
     }
   }
 
-  const X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION = 1;
-  const X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE = 'x-region-block:about-account:request';
-  const X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE = 'x-region-block:about-account:cancel';
-  const X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE = 'x-region-block:about-account:response';
-  const X_ABOUT_ACCOUNT_COMMAND_LIMIT = 256;
-  const X_ABOUT_ACCOUNT_RESPONSE_LIMIT = 262_144;
-  const X_ABOUT_ACCOUNT_RETRY_LIMIT = 300_000;
-
-  const ID = /^[A-Za-z0-9_-]{16,64}$/;
-  const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
-  const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK',
-    'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
-    'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
-  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-  const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype;
-  const exact = (value, keys) => plain(value) && Reflect.ownKeys(value).length === keys.length
-    && Reflect.ownKeys(value).every((key) => typeof key === 'string') && keys.every((key) => own(value, key));
-  const validStatus = (value) => value === null
-    || (Number.isInteger(value) && value >= 100 && value <= 599);
-  const validRetry = (value) => value === null
-    || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
-  const canonicalParse = (input, limit) => {
-    if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
-    try {
-      const value = JSON.parse(input);
-      return JSON.stringify(value) === input ? value : null;
-    } catch { return null; }
-  };
-  const validateJsonValue = (value, ancestors = new Set(), depth = 0) => {
-    if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
-    if (typeof value === 'number') { if (!Number.isFinite(value)) throw new TypeError(); return; }
-    if (typeof value !== 'object' || depth > 32 || ancestors.has(value)) throw new TypeError();
-    const array = Array.isArray(value);
-    if (!array && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
-      throw new TypeError();
-    }
-    const keys = Reflect.ownKeys(value);
-    if (keys.some((key) => typeof key !== 'string')) throw new TypeError();
-    if (array && (keys.length !== value.length + 1
-      || keys.some((key) => key !== 'length' && !/^(?:0|[1-9]\d*)$/.test(key)))) throw new TypeError();
-    ancestors.add(value);
-    for (const key of keys) {
-      if (key === 'length' && array) continue;
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (!descriptor || !own(descriptor, 'value') || (!array && descriptor.enumerable !== true)) throw new TypeError();
-      validateJsonValue(descriptor.value, ancestors, depth + 1);
-    }
-    ancestors.delete(value);
-  };
-
-  function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
-  function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
-  function parseAboutAccountRequestDetail(input) {
-    const value = canonicalParse(input, X_ABOUT_ACCOUNT_COMMAND_LIMIT);
-    return exact(value, ['version', 'id', 'handle'])
-      && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
-      && validOpaqueRequestId(value.id) && validCanonicalHandle(value.handle)
-      ? { version: value.version, id: value.id, handle: value.handle } : null;
-  }
-  function parseAboutAccountCancelDetail(input) {
-    const value = canonicalParse(input, X_ABOUT_ACCOUNT_COMMAND_LIMIT);
-    return exact(value, ['version', 'id']) && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
-      && validOpaqueRequestId(value.id) ? { version: value.version, id: value.id } : null;
-  }
-  function serializeAboutAccountResponse(value) {
-    if (value?.ok === true) {
-      try { validateJsonValue(value.payload); } catch { throw new TypeError('Invalid response'); }
-    }
-    const canonical = value?.ok === true
-      ? { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value.id, ok: true, payload: value.payload }
-      : { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value?.id, ok: false,
-        code: value?.code, status: value?.status, retryAfterMs: value?.retryAfterMs };
-    if (!validOpaqueRequestId(canonical.id) || typeof canonical.ok !== 'boolean'
-      || (!canonical.ok && (!CODES.has(canonical.code) || !validStatus(canonical.status)
-        || !validRetry(canonical.retryAfterMs)))) throw new TypeError('Invalid response');
-    let serialized;
-    try { serialized = JSON.stringify(canonical); } catch { throw new TypeError('Invalid response'); }
-    if (typeof serialized !== 'string' || serialized.length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT) {
-      throw new TypeError('Invalid response');
-    }
-    return serialized;
-  }
-
   const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
   const statusCode = (status) => {
     if ([400, 401, 403, 404, 429].includes(status)) return `HTTP_${status}`;
@@ -573,8 +585,8 @@
       } catch { return false; }
       return true;
     };
-    const fail = (id, code, status = null, retryAfterMs = null) => emit({
-      id, ok: false, code, status, retryAfterMs,
+    const fail = (id, code, status = null, retryAfterMs = null, metadataRevision = null) => emit({
+      id, ok: false, code, status, retryAfterMs, metadataRevision,
     });
     const request = async (event) => {
       const command = parseAboutAccountRequestDetail(event?.detail);
@@ -614,15 +626,16 @@
         }
         if (!ok) {
           if ([401, 403].includes(status)) {
-            invalidatePrivateXAboutAccountSnapshot(capture, 'authentication');
+            invalidatePrivateXAboutAccountSnapshot(capture, 'authentication', metadata);
           } else if ([400, 404].includes(status)) {
-            invalidatePrivateXAboutAccountSnapshot(capture, 'query');
+            invalidatePrivateXAboutAccountSnapshot(capture, 'query', metadata);
           }
           let retryAfterMs = null;
           if (status === 429) {
             try { retryAfterMs = parseRateLimitDelay(response.headers); } catch { retryAfterMs = 60_000; }
           }
-          fail(command.id, statusCode(status), status, retryAfterMs); return;
+          fail(command.id, statusCode(status), status, retryAfterMs,
+            [400, 401, 403, 404].includes(status) ? metadata.revision : null); return;
         }
         let payload;
         try { payload = await Reflect.apply(json, response, []); } catch { fail(command.id, 'INVALID_PAYLOAD'); return; }

@@ -10,6 +10,7 @@ import {
 } from '../shared/x-about-account-request-metadata-policy.js';
 import { X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION } from './x-about-account-request-transport.js';
 import { X_ABOUT_ACCOUNT_OPERATION_NAME } from '../shared/x-about-account-query.js';
+import { X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT } from '../shared/x-about-account-request-event.js';
 
 export const X_ABOUT_ACCOUNT_REQUEST_METADATA_BRIDGE_VERSION = 1;
 export const X_ABOUT_ACCOUNT_RECOVERY_STATE_VERSION = 1;
@@ -20,7 +21,7 @@ const IDENTITY_KEYS = Object.freeze([
 ]);
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const SNAPSHOT_KEYS = Object.freeze([
-  'version', 'origin', 'queryId', 'headers',
+  'version', 'origin', 'revision', 'queryId', 'headers',
 ]);
 
 function exactStringKeys(value, keys) {
@@ -57,6 +58,8 @@ function normalizeSnapshot(candidate, origin) {
     || typeof candidate.version !== 'number'
     || candidate.version !== X_ABOUT_ACCOUNT_REQUEST_METADATA_VERSION
     || typeof candidate.origin !== 'string' || candidate.origin !== origin
+    || !Number.isInteger(candidate.revision) || candidate.revision < 1
+    || candidate.revision > X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT
     || typeof candidate.queryId !== 'string' || !validMetadataQueryId(candidate.queryId)
     || !isMetadataPlainObject(candidate.headers)) throw new TypeError();
   const snapshot = copyAndValidateJsonValue(candidate, { requireObject: true });
@@ -123,6 +126,7 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
         const parsed = JSON.parse(detail);
         const normalized = normalizeSnapshot(parsed, dependencies.origin);
         if (!active || ownedGeneration !== generation) return;
+        if (snapshot !== null && normalized.revision <= snapshot.revision) return;
         if (rejected?.kind === 'authentication'
           && createMetadataAuthenticationFingerprint(normalized.headers) === rejected.fingerprint) return;
         if (rejected?.kind === 'query' && normalized.queryId === rejected.queryId) return;
@@ -236,11 +240,19 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
       snapshot = null;
     }, enumerable: false, configurable: false, writable: false,
   });
-  const invalidateRecovery = (kind) => createRequest.invalidateSnapshot(kind);
+  const invalidateRecovery = (kind, revision, rejectedValue) => {
+    if (!Number.isInteger(revision) || revision < 1 || revision > X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT) return false;
+    if ((kind !== 'query' && kind !== 'auth') || typeof rejectedValue !== 'string'
+      || rejectedValue.length < 1 || rejectedValue.length > 65_536) return false;
+    if (snapshot === null) return true;
+    const currentValue = kind === 'query' ? snapshot.queryId : `auth-${authenticationGeneration}`;
+    if (snapshot.revision !== revision && currentValue !== rejectedValue) return true;
+    createRequest.invalidateSnapshot(kind); return true;
+  };
   const getRecoveryState = () => {
     if (snapshot === null) return null;
     return Object.freeze({ version: X_ABOUT_ACCOUNT_RECOVERY_STATE_VERSION,
-      generation: recoveryGeneration, queryId: snapshot.queryId,
+      generation: recoveryGeneration, revision: snapshot.revision, queryId: snapshot.queryId,
       authenticationFingerprint: `auth-${authenticationGeneration}` });
   };
   Object.defineProperty(createRequest, 'waitForFreshSnapshot', {
