@@ -198,7 +198,7 @@ it('passes transport JSON through the real parser, settings evaluation, and pres
   }).start();
 
   for (const [expectedText, expectedAction] of [
-    ['🇨🇦 🌐 North America', 'hide'],
+    ['CA 🌐 North America', 'hide'],
     ['🌐 Location not provided', 'show'],
     ['🌐 Location unavailable', 'show'],
   ]) {

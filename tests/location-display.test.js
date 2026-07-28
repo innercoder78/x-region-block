@@ -1,58 +1,28 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
-import { COUNTRY_CODES } from '../src/shared/country-regions.js';
 import {
   LOCATION_DISPLAY_MODEL_VERSION,
   LOCATION_GLOBE_SYMBOL,
   LOCATION_STATUS_LABELS,
-  countryCodeToFlagEmoji,
   createLocationDisplayModel,
 } from '../src/shared/location-display.js';
 
 const topLevelKeys = ['version', 'status', 'country', 'region'];
-const countryKeys = ['code', 'name', 'symbol', 'label', 'title', 'ariaLabel'];
+const countryKeys = ['code', 'name', 'label', 'title', 'ariaLabel'];
 const regionKeys = ['code', 'name', 'symbol', 'label', 'title', 'ariaLabel'];
-
-describe('country flag emoji', () => {
-  it.each([
-    ['CA', '🇨🇦'], ['US', '🇺🇸'], ['GB', '🇬🇧'], ['JP', '🇯🇵'], ['AQ', '🇦🇶'],
-    ['gb', '🇬🇧'], [' us ', '🇺🇸'],
-  ])('converts %j to %s', (code, flag) => {
-    expect(countryCodeToFlagEmoji(code)).toBe(flag);
-  });
-
-  it('generates two regional indicators for all 249 supported countries', () => {
-    expect(COUNTRY_CODES).toHaveLength(249);
-    for (const code of COUNTRY_CODES) {
-      expect(countryCodeToFlagEmoji(code)).toMatch(/^\p{Regional_Indicator}{2}$/u);
-    }
-  });
-
-  it.each(['UK', 'XK', 'EU', 'ZZ', 'USA', '', '   ', 4, null, undefined, {}, []])(
-    'rejects invalid input %j without disclosing it',
-    (value) => {
-      expect(() => countryCodeToFlagEmoji(value)).toThrow(new TypeError('Unsupported country code'));
-    },
-  );
-
-  it('derives flags without an external table, assets, locale APIs, or network behavior', async () => {
-    const source = await readFile('src/shared/location-display.js', 'utf8');
-    expect(source).not.toMatch(/fetch|XMLHttpRequest|Intl|toLocale|\.svg|\.png|flagTable/);
-  });
-});
 
 describe('known location display model', () => {
   it.each([
-    ['AO', 'Angola', '🇦🇴', 'AFRICA', 'Africa'],
-    ['JP', 'Japan', '🇯🇵', 'ASIA', 'Asia'],
-    ['GB', 'United Kingdom', '🇬🇧', 'EUROPE', 'Europe'],
-    ['AE', 'United Arab Emirates', '🇦🇪', 'MIDDLE_EAST', 'Middle East'],
-    ['CA', 'Canada', '🇨🇦', 'NORTH_AMERICA', 'North America'],
-    ['AU', 'Australia', '🇦🇺', 'OCEANIA', 'Oceania'],
-    ['BR', 'Brazil', '🇧🇷', 'SOUTH_AMERICA', 'South America'],
-    ['JM', 'Jamaica', '🇯🇲', 'CARIBBEAN', 'Caribbean'],
-    ['CR', 'Costa Rica', '🇨🇷', 'CENTRAL_AMERICA', 'Central America'],
-  ])('creates exact presentation data for %s', (code, name, flag, regionCode, regionName) => {
+    ['AO', 'Angola', 'AFRICA', 'Africa'],
+    ['JP', 'Japan', 'ASIA', 'Asia'],
+    ['GB', 'United Kingdom', 'EUROPE', 'Europe'],
+    ['AE', 'United Arab Emirates', 'MIDDLE_EAST', 'Middle East'],
+    ['CA', 'Canada', 'NORTH_AMERICA', 'North America'],
+    ['AU', 'Australia', 'OCEANIA', 'Oceania'],
+    ['BR', 'Brazil', 'SOUTH_AMERICA', 'South America'],
+    ['JM', 'Jamaica', 'CARIBBEAN', 'Caribbean'],
+    ['CR', 'Costa Rica', 'CENTRAL_AMERICA', 'Central America'],
+  ])('creates exact presentation data for %s', (code, name, regionCode, regionName) => {
     const model = createLocationDisplayModel({ status: 'known', countryCode: code, countryName: name });
     expect(Object.keys(model)).toEqual(topLevelKeys);
     expect(Object.keys(model.country)).toEqual(countryKeys);
@@ -60,7 +30,7 @@ describe('known location display model', () => {
     expect(model).toEqual({
       version: LOCATION_DISPLAY_MODEL_VERSION,
       status: 'known',
-      country: { code, name, symbol: flag, label: name, title: name, ariaLabel: `Country: ${name}` },
+      country: { code, name, label: name, title: name, ariaLabel: `Country: ${name}` },
       region: {
         code: regionCode, name: regionName, symbol: LOCATION_GLOBE_SYMBOL,
         label: regionName, title: regionName, ariaLabel: `Region: ${regionName}`,
@@ -90,7 +60,7 @@ describe('known location display model', () => {
     const unknown = createLocationDisplayModel({ status: 'unknown' });
     expect(antarctica).toEqual({
       version: 1, status: 'known',
-      country: { code: 'AQ', name: 'Antarctica', symbol: '🇦🇶', label: 'Antarctica', title: 'Antarctica', ariaLabel: 'Country: Antarctica' },
+      country: { code: 'AQ', name: 'Antarctica', label: 'Antarctica', title: 'Antarctica', ariaLabel: 'Country: Antarctica' },
       region: { code: null, name: null, symbol: '🌐', label: 'Unknown region', title: 'Unknown region', ariaLabel: 'Region: Unknown' },
     });
     expect(antarctica).not.toEqual(unknown);

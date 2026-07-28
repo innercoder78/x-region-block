@@ -153,7 +153,7 @@ function assertManifestContract(browser, manifest, packageJson) {
   invariant(!content.js.includes('page/page-script.js'),
     `${browser} page script must not run as an isolated content script`);
   invariant(manifest.web_accessible_resources?.length === 1
-    && JSON.stringify(manifest.web_accessible_resources[0].resources) === JSON.stringify(['page/page-script.js'])
+    && JSON.stringify(manifest.web_accessible_resources[0].resources) === JSON.stringify(['page/page-script.js', 'assets/flags/*.png'])
     && JSON.stringify(manifest.web_accessible_resources[0].matches) === JSON.stringify(matches),
   `${browser} manifest has unexpected web-accessible resource`);
   invariant(manifest.action?.default_popup === 'popup/popup.html',
@@ -177,7 +177,8 @@ function assertManifestContract(browser, manifest, packageJson) {
 
 async function auditBrowser(browser, root, manifest, packageJson) {
   assertManifestContract(browser, manifest, packageJson);
-  await Promise.all(manifestAssets(manifest).map((asset) => requiredFile(root, asset)));
+  await Promise.all(manifestAssets(manifest).filter((asset) => !asset.includes('*'))
+    .map((asset) => requiredFile(root, asset)));
   for (const bundle of bundles) {
     const filename = await requiredFile(root, bundle);
     invariant((await stat(filename)).size > 0, `${browser}/${bundle} is empty`);

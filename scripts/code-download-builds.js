@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditRelease } from './release-audit.js';
 import { expectedFiles } from './release-packages.js';
+import { validateFlagAssets } from './flag-assets.js';
 
 export const committedRoots = { chrome: '.', firefox: 'firefox' };
 
@@ -26,7 +27,7 @@ async function exactFiles(root, label, rootChrome = false) {
     }
     for (const entry of entries) {
       if (rootChrome && directory === root
-        && !['manifest.json', 'background', 'content', 'options', 'page', 'popup'].includes(entry.name)) {
+        && !['manifest.json', 'assets', 'background', 'content', 'options', 'page', 'popup'].includes(entry.name)) {
         continue;
       }
       const filename = path.join(directory, entry.name);
@@ -68,16 +69,21 @@ async function manifests(distRoot, packagePath) {
 }
 
 async function validateGenerated(distRoot, packagePath, audit) {
+  const flags = await validateFlagAssets();
   if (audit) await auditRelease({ distRoot, packagePath });
   await Promise.all(['chrome', 'firefox'].map((browser) => exactFiles(
     path.join(distRoot, browser), `generated ${browser}`,
   )));
+  for (const browser of ['chrome', 'firefox']) for (const flag of flags) {
+    const generated = await readFile(path.join(distRoot, browser, 'assets/flags', flag.name));
+    invariant(generated.equals(flag.contents), `${browser} flag differs from source: ${flag.name}`);
+  }
   return manifests(distRoot, packagePath);
 }
 
 async function removeCommittedLayout(repositoryRoot) {
   await rm(path.join(repositoryRoot, 'manifest.json'), { force: true });
-  for (const directory of ['background', 'content', 'options', 'page', 'popup', 'firefox']) {
+  for (const directory of ['assets', 'background', 'content', 'options', 'page', 'popup', 'firefox']) {
     await rm(path.join(repositoryRoot, directory), { recursive: true, force: true });
   }
 }

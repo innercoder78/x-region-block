@@ -19,7 +19,8 @@ async function fixture() {
     for (const relative of expectedFiles) {
       const filename = path.join(distRoot, browser, relative);
       await mkdir(path.dirname(filename), { recursive: true });
-      let contents = 'const fixture = true;';
+      let contents = relative.startsWith('assets/flags/')
+        ? await readFile(path.join('src', relative)) : 'const fixture = true;';
       if (relative.endsWith('.css')) contents = 'body {}';
       if (relative.endsWith('.html')) contents = '<!doctype html><p>fixture</p>';
       if (relative === 'manifest.json') contents = JSON.stringify({

@@ -23,7 +23,7 @@ describe('X About Account location pure-boundary integration', () => {
   it('feeds canonical known locations directly to display and filter evaluation', () => {
     const location = parse('Canada');
     const display = createLocationDisplayModel(location);
-    expect(display.country).toMatchObject({ symbol: '🇨🇦', name: 'Canada' });
+    expect(display.country).toMatchObject({ code: 'CA', name: 'Canada' });
     expect(display.region.label).toBe('North America');
     expect(evaluateFilterSubject({ identity, location }, settings({
       country: { hide: ['CA'] }, region: { highlight: ['NORTH_AMERICA'] },
@@ -37,7 +37,7 @@ describe('X About Account location pure-boundary integration', () => {
   it('keeps Antarctica known with an unknown region display', () => {
     const display = createLocationDisplayModel(parse('Antarctica'));
     expect(display.status).toBe('known');
-    expect(display.country.symbol).toBe('🇦🇶');
+    expect(display.country.code).toBe('AQ');
     expect(display.region.label).toBe('Unknown region');
   });
 
@@ -54,8 +54,8 @@ describe('X About Account location pure-boundary integration', () => {
     const location = parseXAboutAccountLocationPayload(input);
     const { container } = createContainer();
     const result = presentXAccountLink(anchor(), container, { location }, settings());
-    expect(result.display.country.symbol).toBe('🇺🇸');
-    expect(findLocationBadge(container).textContent).toBe('🇺🇸 🌐 North America');
+    expect(result.display.country.code).toBe('US');
+    expect(findLocationBadge(container).textContent).toBe('US 🌐 North America');
     expect(JSON.stringify(snapshot(container))).not.toMatch(/USA|x-about-account|device-secret|payload-secret/);
   });
 });

@@ -6,6 +6,7 @@ export class FakeElement {
     this.children = [];
     this.attributes = new Map();
     this._textContent = '';
+    this.listeners = new Map();
   }
 
   get parentElement() {
@@ -76,6 +77,18 @@ export class FakeElement {
 
   removeAttribute(name) {
     this.attributes.delete(name);
+  }
+
+  addEventListener(type, listener, options) {
+    this.listeners.set(type, { listener, once: options?.once === true });
+  }
+
+  dispatchEvent(event) {
+    const record = this.listeners.get(event.type);
+    if (record === undefined) return true;
+    if (record.once) this.listeners.delete(event.type);
+    record.listener.call(this, event);
+    return true;
   }
 }
 

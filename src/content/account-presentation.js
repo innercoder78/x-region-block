@@ -10,7 +10,7 @@ export const ACCOUNT_PRESENTATION_VERSION = 1;
 /**
  * Evaluates and presents one explicitly supplied account link without page discovery.
  */
-export function presentXAccountLink(link, badgeContainer, observation, settings) {
+export function presentXAccountLink(link, badgeContainer, observation, settings, resolveFlagAssetUrl) {
   findLocationBadge(badgeContainer);
   const evaluation = evaluateXAccountLink(link, observation, settings);
 
@@ -19,6 +19,6 @@ export function presentXAccountLink(link, badgeContainer, observation, settings)
     return null;
   }
 
-  renderLocationBadge(badgeContainer, evaluation.subject.location);
+  renderLocationBadge(badgeContainer, evaluation.subject.location, resolveFlagAssetUrl);
   return evaluation;
 }

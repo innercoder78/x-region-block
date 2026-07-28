@@ -796,22 +796,6 @@
     unknown: 'Location unknown',
   });
 
-  const REGIONAL_INDICATOR_OFFSET = 0x1f1e6 - 0x41;
-
-  /** Returns the Unicode flag for a supported ISO alpha-2 country code. */
-  function countryCodeToFlagEmoji(value) {
-    let code;
-    try {
-      code = normalizeCountryCode(value);
-    } catch {
-      throw new TypeError('Unsupported country code');
-    }
-
-    return [...code]
-      .map((character) => String.fromCodePoint(character.codePointAt(0) + REGIONAL_INDICATOR_OFFSET))
-      .join('');
-  }
-
   function createRegionDescriptor(code, name, label, ariaLabel) {
     return Object.freeze({
       code,
@@ -845,7 +829,6 @@
     const country = Object.freeze({
       code: location.countryCode,
       name: countryName,
-      symbol: countryCodeToFlagEmoji(location.countryCode),
       label: countryName,
       title: countryName,
       ariaLabel: `Country: ${countryName}`,
@@ -915,6 +898,7 @@
   const LOCATION_BADGE_CLASSES = Object.freeze({
     root: 'x-region-block-location-badge',
     country: 'x-region-block-location-country',
+    countryFlag: 'x-region-block-location-country-flag',
     separator: 'x-region-block-location-separator',
     region: 'x-region-block-location-region',
   });
@@ -967,7 +951,38 @@
     return element;
   }
 
-  function renderLocationBadge(container, location) {
+  function createCountryElement(ownerDocument, country, resolveFlagAssetUrl) {
+    const wrapper = ownerDocument.createElement('span');
+    setCommonChildAttributes(wrapper, LOCATION_BADGE_CLASSES.country, country.title);
+    wrapper.setAttribute(COUNTRY_CODE_ATTRIBUTE, country.code);
+    let failed = false;
+    const fallback = () => {
+      if (failed) return;
+      failed = true;
+      wrapper.textContent = country.code;
+    };
+    try {
+      if (typeof resolveFlagAssetUrl !== 'function') throw new TypeError();
+      const url = resolveFlagAssetUrl(country.code);
+      const expectedPath = `/assets/flags/${country.code.toLowerCase()}.png`;
+      if (typeof url !== 'string'
+        || !/^(?:chrome|moz)-extension:\/\/[^/]+\/assets\/flags\/[a-z]{2}\.png$/.test(url)
+        || !url.endsWith(expectedPath)) throw new TypeError();
+      const image = ownerDocument.createElement('img');
+      image.setAttribute('class', LOCATION_BADGE_CLASSES.countryFlag);
+      image.setAttribute('src', url);
+      image.setAttribute('alt', '');
+      image.setAttribute('aria-hidden', 'true');
+      image.setAttribute('draggable', 'false');
+      image.setAttribute('tabindex', '-1');
+      image.setAttribute('contenteditable', 'false');
+      image.addEventListener('error', fallback, { once: true });
+      wrapper.appendChild(image);
+    } catch { fallback(); }
+    return wrapper;
+  }
+
+  function renderLocationBadge(container, location, resolveFlagAssetUrl) {
     validateContainer(container);
     const display = createLocationDisplayModel(location);
     const existing = ownedChildren(container);
@@ -998,10 +1013,7 @@
     root.removeAttribute('contenteditable');
 
     if (display.country !== null) {
-      const country = container.ownerDocument.createElement('span');
-      setCommonChildAttributes(country, LOCATION_BADGE_CLASSES.country, display.country.title);
-      country.setAttribute(COUNTRY_CODE_ATTRIBUTE, display.country.code);
-      country.textContent = display.country.symbol;
+      const country = createCountryElement(container.ownerDocument, display.country, resolveFlagAssetUrl);
 
       const separator = container.ownerDocument.createElement('span');
       setCommonChildAttributes(separator, LOCATION_BADGE_CLASSES.separator, null);
@@ -1030,7 +1042,7 @@
   /**
    * Evaluates and presents one explicitly supplied account link without page discovery.
    */
-  function presentXAccountLink(link, badgeContainer, observation, settings) {
+  function presentXAccountLink(link, badgeContainer, observation, settings, resolveFlagAssetUrl) {
     findLocationBadge(badgeContainer);
     const evaluation = evaluateXAccountLink(link, observation, settings);
 
@@ -1039,7 +1051,7 @@
       return null;
     }
 
-    renderLocationBadge(badgeContainer, evaluation.subject.location);
+    renderLocationBadge(badgeContainer, evaluation.subject.location, resolveFlagAssetUrl);
     return evaluation;
   }
 
@@ -2000,6 +2012,9 @@
     if (!hasOwn$6(options, 'onError') || typeof options.onError !== 'function') {
       throw new TypeError('onError must be a function');
     }
+    if (hasOwn$6(options, 'resolveFlagAssetUrl') && typeof options.resolveFlagAssetUrl !== 'function') {
+      throw new TypeError('resolveFlagAssetUrl must be a function');
+    }
     return {
       source,
       settings,
@@ -2008,6 +2023,7 @@
       loadAboutAccountPayload: options.loadAboutAccountPayload,
       abortControllerFactory: options.abortControllerFactory,
       onError: options.onError,
+      resolveFlagAssetUrl: options.resolveFlagAssetUrl ?? (() => ''),
     };
   }
 
@@ -2097,7 +2113,8 @@
         ? { source: normalized.source, location, baseUrl: normalized.baseUrl }
         : { source: normalized.source, location };
       try {
-        const evaluation = presentXAccountLink(target.link, target.badgeContainer, observation, settings);
+        const evaluation = presentXAccountLink(target.link, target.badgeContainer, observation, settings,
+          normalized.resolveFlagAssetUrl);
         if (evaluation === null) removeAction(target);
         else applyAccountAction(target.accountContainer, evaluation.action);
       } catch {
@@ -2615,6 +2632,9 @@
         throw new TypeError(message);
       }
     }
+    if (hasOwn$4(options, 'resolveFlagAssetUrl') && typeof options.resolveFlagAssetUrl !== 'function') {
+      throw new TypeError('resolveFlagAssetUrl must be a function');
+    }
     return {
       source,
       hasBaseUrl: hasOwn$4(options, 'baseUrl'),
@@ -2624,6 +2644,7 @@
       loadAboutAccountPayload: options.loadAboutAccountPayload,
       abortControllerFactory: options.abortControllerFactory,
       onError: options.onError,
+      resolveFlagAssetUrl: hasOwn$4(options, 'resolveFlagAssetUrl') ? options.resolveFlagAssetUrl : () => '',
     };
   }
 
@@ -2671,6 +2692,7 @@
               stopContext.failed = true;
             } else if (current(lifecycle, createdProcessor)) report(error);
           },
+          resolveFlagAssetUrl: normalized.resolveFlagAssetUrl,
         };
         if (normalized.hasBaseUrl) processorOptions.baseUrl = normalized.baseUrl;
         createdProcessor = createXAccountTargetProcessor(processorOptions);
@@ -2758,6 +2780,7 @@
   const OPTION_KEYS$1 = new Set([
     'settingsRuntime', 'observerFactory', 'loadPayload', 'brokerAbortControllerFactory',
     'consumerAbortControllerFactory', 'navigationObserverFactory', 'onError', 'baseUrl',
+    'resolveFlagAssetUrl',
   ]);
 
   function plain$1(value) {
@@ -2799,6 +2822,7 @@
       consumerAbortControllerFactory: values.consumerAbortControllerFactory,
       navigationObserverFactory: values.navigationObserverFactory, onError: values.onError,
       hasBaseUrl,
+      resolveFlagAssetUrl: values.resolveFlagAssetUrl ?? (() => ''),
     };
     if (hasBaseUrl) normalized.baseUrl = values.baseUrl;
     return normalized;
@@ -2871,6 +2895,7 @@
             && broker === candidateTransaction.broker
             && record.state === 'committed' && records?.includes(record)) report(error);
         },
+        resolveFlagAssetUrl: dependencies.resolveFlagAssetUrl,
       });
       if (hasOwn$3(plan, 'baseUrl')) sessionOptions.baseUrl = plan.baseUrl;
       session = createXAccountTargetSession(plan.root, sessionOptions);
@@ -4641,7 +4666,10 @@
       dependencies = { origin, document, MutationObserver, AbortController, Event,
         URLSearchParams, Promise: PromiseConstructor,
         fetch: (...args) => Reflect.apply(fetchMethod, globalScope, args),
-        globalAdd, globalRemove, documentAdd, documentRemove };
+        globalAdd, globalRemove, documentAdd, documentRemove,
+        resolveFlagAssetUrl: (countryCode) => extensionApi.runtime.getURL(
+          `assets/flags/${normalizeCountryCode(countryCode).toLowerCase()}.png`,
+        ) };
     } catch { throw new TypeError('Invalid X production runtime global scope'); }
 
     let active = false;
@@ -4740,6 +4768,7 @@
           },
           onError: report,
           baseUrl: dependencies.origin,
+          resolveFlagAssetUrl: dependencies.resolveFlagAssetUrl,
         });
         state.routeCandidate = candidate;
         if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }

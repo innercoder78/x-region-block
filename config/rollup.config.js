@@ -1,5 +1,6 @@
 import { copyFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { flagAssetPaths, validateFlagAssets } from '../scripts/flag-assets.js';
 
 export const entryPoints = {
   'background/service-worker': 'src/background/service-worker.js',
@@ -26,6 +27,7 @@ function copyExtensionFiles(browser, outputDirectory) {
   return {
     name: 'copy-extension-files',
     async writeBundle() {
+      const flags = await validateFlagAssets();
       const files = [
         [`manifests/${browser}.json`, 'manifest.json'],
         ...staticFiles,
@@ -36,6 +38,12 @@ function copyExtensionFiles(browser, outputDirectory) {
         await mkdir(path.dirname(outputPath), { recursive: true });
         await copyFile(source, outputPath);
       }));
+      await Promise.all(flags.map(async ({ filename, name }) => {
+        const outputPath = path.join(outputDirectory, 'assets/flags', name);
+        await mkdir(path.dirname(outputPath), { recursive: true });
+        await copyFile(filename, outputPath);
+      }));
+      if (flags.length !== flagAssetPaths.length) throw new Error('flag copy inventory mismatch');
     },
   };
 }

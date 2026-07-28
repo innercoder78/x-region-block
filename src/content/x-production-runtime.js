@@ -6,6 +6,7 @@ import { createXAboutAccountRequestMetadataBridge } from './x-about-account-requ
 import { createXAboutAccountRequestTransport } from './x-about-account-request-transport.js';
 import { createXNavigationObserver } from './x-navigation-observer.js';
 import { createXPageScriptInjector } from './x-page-script-injector.js';
+import { normalizeCountryCode } from '../shared/country-regions.js';
 
 export const X_PRODUCTION_CONTENT_RUNTIME_VERSION = 1;
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
@@ -55,7 +56,10 @@ export function createXProductionContentRuntime(globalScope) {
     dependencies = { origin, document, MutationObserver, AbortController, Event,
       URLSearchParams, Promise: PromiseConstructor,
       fetch: (...args) => Reflect.apply(fetchMethod, globalScope, args),
-      globalAdd, globalRemove, documentAdd, documentRemove };
+      globalAdd, globalRemove, documentAdd, documentRemove,
+      resolveFlagAssetUrl: (countryCode) => extensionApi.runtime.getURL(
+        `assets/flags/${normalizeCountryCode(countryCode).toLowerCase()}.png`,
+      ) };
   } catch { throw new TypeError('Invalid X production runtime global scope'); }
 
   let active = false;
@@ -154,6 +158,7 @@ export function createXProductionContentRuntime(globalScope) {
         },
         onError: report,
         baseUrl: dependencies.origin,
+        resolveFlagAssetUrl: dependencies.resolveFlagAssetUrl,
       });
       state.routeCandidate = candidate;
       if (!owned(state)) { stopComponent(state, 'routeCandidate'); return; }

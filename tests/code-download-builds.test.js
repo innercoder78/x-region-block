@@ -19,7 +19,8 @@ async function fixture() {
     for (const relative of expectedFiles) {
       const filename = path.join(distRoot, browser, relative);
       await mkdir(path.dirname(filename), { recursive: true });
-      const contents = relative === 'manifest.json' ? JSON.stringify({
+      const contents = relative.startsWith('assets/flags/')
+        ? await readFile(path.join('src', relative)) : relative === 'manifest.json' ? JSON.stringify({
         manifest_version: 3,
         version: '0.0.1',
         background: browser === 'chrome'

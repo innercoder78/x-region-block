@@ -180,7 +180,7 @@ describe('canonical subject, filter, and display composition', () => {
 
   it('creates display from canonical location and handles Antarctica', () => {
     const canada = evaluate();
-    expect(canada.display.country.symbol).toBe('🇨🇦');
+    expect(canada.display.country.code).toBe('CA');
     expect(canada.display.region.label).toBe('North America');
     expect(canada.display).not.toHaveProperty('rawLocation');
     expect(canada.display).not.toHaveProperty('source');
@@ -189,7 +189,7 @@ describe('canonical subject, filter, and display composition', () => {
       region: { hide: ['NORTH_AMERICA'] },
     });
     expect(antarctica.action).toBe('show');
-    expect(antarctica.display.country.symbol).toBe('🇦🇶');
+    expect(antarctica.display.country.code).toBe('AQ');
     expect(antarctica.display.region.label).toBe('Unknown region');
   });
 
