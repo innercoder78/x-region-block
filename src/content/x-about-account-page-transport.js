@@ -10,6 +10,7 @@ import { isValidXAboutAccountQueryId } from '../shared/x-about-account-query.js'
 const MAX_IN_FLIGHT = 4;
 const START_INTERVAL = 200;
 const BRIDGE_TIMEOUT = 30_000;
+const SYNCHRONIZATION_TIMEOUT = 30_000;
 const abortError = () => Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
 const codedError = (code, status = null) => {
   const error = new Error('About Account lookup failed');
@@ -23,10 +24,11 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
   const clearTimer = options.clearTimeout ?? ((timer) => clearTimeout(timer));
   const onMetadataRejected = options.onMetadataRejected ?? (() => {});
   let sequence = 0; let active = true; let inFlight = 0; let lastStart = -Infinity;
-  let cooldownUntil = 0; let scheduleTimer = null;
+  let cooldownUntil = 0; let scheduleTimer = null; let resumeTimer = null;
   let recoveryState = null;
   const blockedMetadata = { auth: new Set(), query: new Set() };
   const queue = []; const pending = new Map(); const waitingMetadata = new Set();
+  const waitingSynchronization = new Set();
   const dispatch = (type, detail) => document.dispatchEvent(new CustomEvent(type,
     { detail, bubbles: false, cancelable: false, composed: false }));
   const dispatchCancellation = (id) => {
@@ -47,7 +49,12 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     entry.attemptRevision = recoveryState?.revision ?? null;
     entry.attemptAuthentication = recoveryState?.authenticationFingerprint ?? null;
     entry.attemptQuery = recoveryState?.queryId ?? null;
-    try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, serializeAboutAccountRequest(entry.id, entry.handle)); }
+    if (entry.attemptRevision === null) {
+      entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
+      entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
+    }
+    try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
+      serializeAboutAccountRequest(entry.id, entry.handle, entry.attemptRevision)); }
     catch {
       entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
       entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
@@ -62,6 +69,21 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     schedule();
   };
   const enqueueAttempt = (entry) => { entry.started = false; queue.push(entry); schedule(); };
+  const synchronizationSatisfied = (entry, state = recoveryState) => state !== null
+    && (entry.synchronizationRevision === null
+      ? state.revision !== entry.synchronizationAttemptRevision
+      : state.revision === entry.synchronizationRevision);
+  const resumeSynchronization = (entry) => {
+    if (!active || entry.cancelled || !synchronizationSatisfied(entry)) return false;
+    waitingSynchronization.delete(entry);
+    if (entry.synchronizationTimer !== null) {
+      clearTimer(entry.synchronizationTimer); entry.synchronizationTimer = null;
+    }
+    entry.delayTimer = setTimer(() => {
+      entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
+    }, 0);
+    return true;
+  };
   const response = (event) => {
     const result = parseAboutAccountResponseDetail(event?.detail);
     if (result === null) return;
@@ -71,9 +93,24 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     entry.started = false; inFlight = Math.max(0, inFlight - 1);
     if (entry.cancelled) { schedule(); return; }
     if (result.ok) { pending.delete(entry.id); entry.cleanup(); entry.resolve(result.payload); schedule(); return; }
-    const code = result.code;
+    const rejectionCode = ['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(result.code);
+    const code = rejectionCode && result.metadataRevision !== entry.attemptRevision
+      ? 'METADATA_SYNC' : result.code;
     let retryDelay = null;
-    if (code === 'HTTP_429') {
+    if (code === 'METADATA_SYNC') {
+      if (entry.syncRetries++ < 2) {
+        entry.synchronizationRevision = result.metadataRevision;
+        entry.synchronizationAttemptRevision = entry.attemptRevision;
+        if (resumeSynchronization(entry)) { schedule(); return; }
+        waitingSynchronization.add(entry);
+        entry.synchronizationTimer = setTimer(() => {
+          entry.synchronizationTimer = null;
+          if (!active || entry.cancelled || !waitingSynchronization.delete(entry)) return;
+          pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('METADATA_SYNC')); schedule();
+        }, SYNCHRONIZATION_TIMEOUT);
+        schedule(); return;
+      }
+    } else if (code === 'HTTP_429') {
       cooldownUntil = Math.max(cooldownUntil, now() + Math.min(300_000, result.retryAfterMs ?? 60_000));
       if (entry.rateRetries++ < 1) retryDelay = 0;
     } else if ((code === 'NETWORK' || code === 'HTTP_5XX') && entry.transientRetries < 2) {
@@ -82,8 +119,10 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
       entry.metadataKind = ['HTTP_400', 'HTTP_404'].includes(code) ? 'query' : 'auth';
       entry.rejectedMetadata = entry.metadataKind === 'query' ? entry.attemptQuery : entry.attemptAuthentication;
       if (entry.rejectedMetadata !== null) blockedMetadata[entry.metadataKind].add(entry.rejectedMetadata);
-      try { onMetadataRejected(entry.metadataKind, result.metadataRevision ?? entry.attemptRevision,
-        entry.rejectedMetadata); } catch { /* categorized by owner */ }
+      if (result.metadataRevision === entry.attemptRevision) {
+        try { onMetadataRejected(entry.metadataKind, entry.attemptRevision,
+          entry.rejectedMetadata); } catch { /* categorized by owner */ }
+      }
       const current = entry.metadataKind === 'query'
         ? recoveryState?.queryId : recoveryState?.authenticationFingerprint;
       const rejectedRevision = result.metadataRevision ?? entry.attemptRevision;
@@ -115,8 +154,17 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
       || !isValidXAboutAccountQueryId(value.queryId)
       || typeof value.authenticationFingerprint !== 'string'
       || value.authenticationFingerprint.length < 1 || value.authenticationFingerprint.length > 65_536) return false;
-    recoveryState = { version: 1, generation: value.generation, revision: value.revision, queryId: value.queryId,
+    const nextState = { version: 1, generation: value.generation, revision: value.revision, queryId: value.queryId,
       authenticationFingerprint: value.authenticationFingerprint };
+    if (recoveryState !== null) {
+      if (nextState.generation < recoveryState.generation || nextState.revision < recoveryState.revision) return false;
+      if (nextState.revision === recoveryState.revision) {
+        return nextState.generation === recoveryState.generation
+          && nextState.queryId === recoveryState.queryId
+          && nextState.authenticationFingerprint === recoveryState.authenticationFingerprint;
+      }
+    }
+    recoveryState = nextState;
     for (const [kind, current] of [['query', recoveryState.queryId],
       ['auth', recoveryState.authenticationFingerprint]]) {
       for (const rejected of [...blockedMetadata[kind]]) {
@@ -135,7 +183,10 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
         entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
       }, 0);
     }
-    schedule();
+    for (const entry of [...waitingSynchronization]) resumeSynchronization(entry);
+    if (active && resumeTimer === null) resumeTimer = setTimer(() => {
+      resumeTimer = null; schedule();
+    }, 0);
     return true;
   };
   document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
@@ -153,15 +204,20 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     const id = `${now().toString(36).padStart(10, '0')}_${(++sequence).toString(36).padStart(8, '0')}`;
     return new Promise((resolve, reject) => {
       const entry = { id, handle: canonical.handle, resolve, reject, started: false, cancelled: false,
-        transientRetries: 0, metadataRetries: 0, rateRetries: 0, cleanup: null,
+        transientRetries: 0, metadataRetries: 0, syncRetries: 0, rateRetries: 0, cleanup: null,
         attemptRevision: null, attemptAuthentication: null, attemptQuery: null, rejectedRevision: null,
-        attemptTimer: null, delayTimer: null };
+        attemptTimer: null, delayTimer: null, synchronizationTimer: null,
+        synchronizationRevision: null, synchronizationAttemptRevision: null };
       const cancel = () => {
         if (entry.cancelled) return; entry.cancelled = true; pending.delete(id);
         const index = queue.indexOf(entry); if (index >= 0) queue.splice(index, 1);
         waitingMetadata.delete(entry);
+        waitingSynchronization.delete(entry);
         if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
         if (entry.delayTimer !== null) { clearTimer(entry.delayTimer); entry.delayTimer = null; }
+        if (entry.synchronizationTimer !== null) {
+          clearTimer(entry.synchronizationTimer); entry.synchronizationTimer = null;
+        }
         if (entry.started) { inFlight = Math.max(0, inFlight - 1); dispatchCancellation(id); }
         entry.cleanup(); reject(abortError()); schedule();
       };
@@ -173,15 +229,17 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
   return Object.freeze({ loadPayload, updateRecoveryState, stop() {
     if (!active) return; active = false;
     if (scheduleTimer !== null) { clearTimer(scheduleTimer); scheduleTimer = null; }
+    if (resumeTimer !== null) { clearTimer(resumeTimer); resumeTimer = null; }
     document.removeEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
     for (const entry of pending.values()) {
       entry.cancelled = true; entry.cleanup();
       if (entry.attemptTimer !== null) clearTimer(entry.attemptTimer);
       if (entry.delayTimer !== null) clearTimer(entry.delayTimer);
+      if (entry.synchronizationTimer !== null) clearTimer(entry.synchronizationTimer);
       if (entry.started) dispatchCancellation(entry.id);
       entry.reject(abortError());
     }
-    pending.clear(); waitingMetadata.clear(); blockedMetadata.auth.clear();
+    pending.clear(); waitingMetadata.clear(); waitingSynchronization.clear(); blockedMetadata.auth.clear();
     blockedMetadata.query.clear(); queue.length = 0; inFlight = 0;
   } });
 }

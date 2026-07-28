@@ -37,11 +37,12 @@ const IDENTITY_KEYS = Object.freeze([
   'handle', 'displayHandle', 'profileUrl', 'accountId', 'allowlistKey', 'source',
 ]);
 const UPDATED_KEYS = Object.freeze(['previous', 'current']);
-const DIAGNOSTIC_CODES = new Set(['PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK', 'INVALID_RESPONSE',
+const DIAGNOSTIC_CODES = new Set(['PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC', 'NETWORK', 'INVALID_RESPONSE',
   'INVALID_PAYLOAD', 'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX']);
 const DIAGNOSTIC_MESSAGES = Object.freeze({
   PAGE_BRIDGE_UNAVAILABLE: 'About Account request bridge unavailable.',
   NO_METADATA: 'About Account metadata is unavailable.',
+  METADATA_SYNC: 'About Account metadata synchronization failed.',
   NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
   INVALID_PAYLOAD: 'About Account response payload was invalid.', HTTP_400: 'About Account request rejected.',
   HTTP_401: 'About Account authentication metadata rejected.', HTTP_403: 'About Account authentication metadata rejected.',

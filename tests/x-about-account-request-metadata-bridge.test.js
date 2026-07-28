@@ -67,6 +67,28 @@ describe('X About Account request metadata bridge', () => {
     expect(() => bridge.createRequest(identity, { version: 1 })).toThrow('not active');
   });
 
+  it('keeps authentication and query rejections independent until both are resolved', () => {
+    const { content, document } = metadataFacades();
+    const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: () => undefined });
+    bridge.start();
+    const publish = (revision, queryId, authorization) => document.dispatchEvent(new MetadataEvent(
+      X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, { detail: JSON.stringify({
+        version: 2, origin: 'https://x.com', revision, queryId,
+        headers: { authorization, 'x-csrf-token': 'csrf' },
+      }) },
+    ));
+    publish(1, 'query_one', 'auth-one');
+    const first = bridge.getRecoveryState();
+    expect(bridge.invalidateRecovery('auth', first.revision, first.authenticationFingerprint)).toBe(true);
+    expect(bridge.invalidateRecovery('query', first.revision, first.queryId)).toBe(true);
+    publish(2, 'query_one', 'auth-two');
+    expect(bridge.hasSnapshot()).toBe(false);
+    publish(3, 'query_two', 'auth-one');
+    expect(bridge.hasSnapshot()).toBe(false);
+    publish(4, 'query_two', 'auth-two');
+    expect(bridge.getRecoveryState()).toMatchObject({ revision: 4, queryId: 'query_two' });
+  });
+
   it.each([42, true, null, [], {}, 'x'.repeat(257), 'unsafe/value'])(
     'rejects queryId primitive %# without replacing valid metadata', (queryId) => {
       const { content, document } = metadataFacades();

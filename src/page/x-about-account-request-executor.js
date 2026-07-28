@@ -47,6 +47,9 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
       controller = new AbortController();
       requests.set(command.id, controller);
       const metadata = readPrivateXAboutAccountSnapshot(capture);
+      if (!metadata || metadata.revision !== command.metadataRevision) {
+        fail(command.id, 'METADATA_SYNC', null, null, metadata?.revision ?? null); return;
+      }
       if (!metadata || metadata.origin !== location.origin || !isValidXAboutAccountQueryId(metadata.queryId)) {
         fail(command.id, 'NO_METADATA'); return;
       }

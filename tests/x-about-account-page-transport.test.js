@@ -57,7 +57,7 @@ describe('global About Account page scheduler', () => {
     const start = document.events.find(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
     const command = parseAboutAccountRequestDetail(start.event.detail);
     document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
-      id: command.id, ok: false, code: 'HTTP_401', status: 401, retryAfterMs: null,
+      id: command.id, ok: false, code: 'HTTP_401', status: 401, retryAfterMs: null, metadataRevision: 1,
     }) }));
     expect(rejected).toHaveBeenCalledWith('auth', 1, 'auth_one');
     expect(transport.updateRecoveryState(recovery(2))).toBe(true);
@@ -67,6 +67,117 @@ describe('global About Account page scheduler', () => {
     await vi.advanceTimersByTimeAsync(200);
     expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(2);
     controller.abort(); await expect(promise).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
+  });
+
+  it.each([
+    ['METADATA_SYNC', null],
+    ['HTTP_400', 400],
+    ['HTTP_401', 401],
+    ['HTTP_403', 403],
+    ['HTTP_404', 404],
+  ])('uses an already installed revision for deferred %s synchronization', async (code, status) => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document(); const rejected = vi.fn();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event },
+      { recoveryState: recovery(), onMetadataRejected: rejected });
+    const controller = new AbortController();
+    const promise = transport.loadPayload(identity('OpenAI'), context(controller.signal));
+    let starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
+    expect(parseAboutAccountRequestDetail(starts[0].event.detail).metadataRevision).toBe(1);
+    const first = parseAboutAccountRequestDetail(starts[0].event.detail);
+    expect(transport.updateRecoveryState(recovery(2, 'query_two', 'auth_two'))).toBe(true);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: first.id, ok: false, code, status, retryAfterMs: null, metadataRevision: 2,
+    }) }));
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(1);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(199);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
+    expect(starts).toHaveLength(2);
+    expect(parseAboutAccountRequestDetail(starts[1].event.detail).metadataRevision).toBe(2);
+    expect(rejected).not.toHaveBeenCalled();
+    const second = parseAboutAccountRequestDetail(starts[1].event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: second.id, ok: false, code: 'HTTP_401', status: 401, retryAfterMs: null, metadataRevision: 2,
+    }) }));
+    expect(rejected).toHaveBeenCalledWith('auth', 2, 'auth_two');
+    controller.abort(); await expect(promise).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects recovery rollback without releasing metadata-blocked work', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event },
+      { recoveryState: recovery(2, 'query_two', 'auth_two') });
+    const controller = new AbortController();
+    const promise = transport.loadPayload(identity('blocked'), context(controller.signal));
+    void promise.catch(() => {});
+    const request = parseAboutAccountRequestDetail(document.events[0].event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: request.id, ok: false, code: 'HTTP_401', status: 401,
+      retryAfterMs: null, metadataRevision: 2,
+    }) }));
+    expect(transport.updateRecoveryState(recovery(1, 'query_one', 'auth_one'))).toBe(false);
+    expect(transport.updateRecoveryState({ ...recovery(3, 'query_three', 'auth_three'), generation: 1 })).toBe(false);
+    expect(transport.updateRecoveryState(recovery(2, 'changed_query', 'auth_changed'))).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(1);
+    expect(transport.updateRecoveryState(recovery(3, 'query_three', 'auth_three'))).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(parseAboutAccountRequestDetail(document.events.filter(({ event }) =>
+      event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).at(-1).event.detail).metadataRevision).toBe(3);
+    controller.abort(); await expect(promise).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
+  });
+
+  it('resumes a null synchronization response only after a different validated revision', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event },
+      { recoveryState: recovery() });
+    const controller = new AbortController();
+    const promise = transport.loadPayload(identity('nullsync'), context(controller.signal));
+    void promise.catch(() => {});
+    const request = parseAboutAccountRequestDetail(document.events[0].event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: request.id, ok: false, code: 'METADATA_SYNC', status: null,
+      retryAfterMs: null, metadataRevision: null,
+    }) }));
+    expect(transport.updateRecoveryState(recovery())).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(1);
+    expect(transport.updateRecoveryState(recovery(2, 'query_two', 'auth_two'))).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(parseAboutAccountRequestDetail(document.events.filter(({ event }) =>
+      event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).at(-1).event.detail).metadataRevision).toBe(2);
+    controller.abort(); await expect(promise).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
+  });
+
+  it.each(['timeout', 'cancel', 'stop'])('clears synchronization waiting on %s', async (path) => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event },
+      { recoveryState: recovery() });
+    const controller = new AbortController();
+    const promise = transport.loadPayload(identity('waiting'), context(controller.signal));
+    void promise.catch(() => {});
+    const request = parseAboutAccountRequestDetail(document.events[0].event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: request.id, ok: false, code: 'METADATA_SYNC', status: null,
+      retryAfterMs: null, metadataRevision: 2,
+    }) }));
+    if (path === 'timeout') {
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(promise).rejects.toMatchObject({ code: 'METADATA_SYNC' });
+    } else {
+      if (path === 'cancel') controller.abort(); else transport.stop();
+      await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+      transport.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    }
+    transport.stop();
   });
 
   it('shares a 429 cooldown and applies deterministic one- and two-second network retries', async () => {

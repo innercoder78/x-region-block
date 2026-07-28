@@ -20,7 +20,7 @@ describe('MAIN-world About Account executor', () => {
     page.fetch('/i/api/graphql/live_query/AboutAccountQuery?variables=%7B%7D', { headers: observedHeaders });
     fetch.mockClear();
     const executor = installXAboutAccountRequestExecutor(page, capture);
-    const detail = vm.runInNewContext(`JSON.stringify({version:1,id:"opaque_request_0001",handle:"OpenAI"})`);
+    const detail = vm.runInNewContext(`JSON.stringify({version:1,id:"opaque_request_0001",handle:"OpenAI",metadataRevision:1})`);
     expect(() => document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, { detail }))).not.toThrow();
     await Promise.resolve(); await Promise.resolve();
     expect(fetch).toHaveBeenCalledOnce();
@@ -45,6 +45,43 @@ describe('MAIN-world About Account executor', () => {
     expect(fetch).not.toHaveBeenCalled(); executor.stop(); capture.stop();
   });
 
+  it('returns one sanitized synchronization response without fetch for a different revision', async () => {
+    const fetch = vi.fn(() => 'ordinary'); const { page, document } = metadataFacades(fetch);
+    page.AbortController = AbortController;
+    const capture = installXAboutAccountRequestCapture(page);
+    page.fetch('/i/api/graphql/live_query/AboutAccountQuery?variables=%7B%7D', { headers: observedHeaders });
+    fetch.mockClear();
+    const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
+    document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
+    document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
+      { detail: serializeAboutAccountRequest('opaque_revision_0001', 'OpenAI', 2) }));
+    await Promise.resolve();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(responses).toHaveLength(1);
+    expect(parseAboutAccountResponseDetail(responses[0])).toEqual({
+      version: 1, id: 'opaque_revision_0001', ok: false, code: 'METADATA_SYNC',
+      status: null, retryAfterMs: null, metadataRevision: 1,
+    });
+    expect(responses[0]).not.toMatch(/authorization|cookie|csrf|graphql|account/i);
+    executor.stop(); capture.stop();
+  });
+
+  it('reports a null synchronization revision when the private snapshot is absent', async () => {
+    const fetch = vi.fn(); const { page, document } = metadataFacades(fetch);
+    page.AbortController = AbortController;
+    const capture = installXAboutAccountRequestCapture(page);
+    const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
+    document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
+    document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
+      { detail: serializeAboutAccountRequest('opaque_revision_none', 'OpenAI', 1) }));
+    await Promise.resolve();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({
+      code: 'METADATA_SYNC', metadataRevision: null,
+    });
+    executor.stop(); capture.stop();
+  });
+
   it('emits a bounded categorized response when page fetch fails', async () => {
     const fetch = vi.fn(() => Promise.reject(new Error('private failure')));
     const { page, document } = metadataFacades(fetch); page.AbortController = AbortController;
@@ -54,7 +91,7 @@ describe('MAIN-world About Account executor', () => {
     const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
     document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
     document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
-      { detail: serializeAboutAccountRequest('opaque_request_0002', 'OpenAI') }));
+      { detail: serializeAboutAccountRequest('opaque_request_0002', 'OpenAI', 1) }));
     await Promise.resolve(); await Promise.resolve();
     expect(parseAboutAccountResponseDetail(responses.at(-1))).toMatchObject({ ok: false, code: 'NETWORK' });
     executor.stop(); capture.stop();
@@ -73,7 +110,7 @@ describe('MAIN-world About Account executor', () => {
     const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
     document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
     document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
-      { detail: serializeAboutAccountRequest(`opaque_invalid_${name.replace(/\s/g, '_')}`, 'OpenAI') }));
+      { detail: serializeAboutAccountRequest(`opaque_invalid_${name.replace(/\s/g, '_')}`, 'OpenAI', 1) }));
     await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(responses).toHaveLength(1);
     expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({ ok: false, code: 'INVALID_PAYLOAD' });
@@ -89,7 +126,7 @@ describe('MAIN-world About Account executor', () => {
     const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
     document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
     expect(() => document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
-      { detail: serializeAboutAccountRequest('opaque_unexpected_01', 'OpenAI') }))).not.toThrow();
+      { detail: serializeAboutAccountRequest('opaque_unexpected_01', 'OpenAI', 1) }))).not.toThrow();
     await Promise.resolve();
     expect(responses).toHaveLength(1);
     expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({ ok: false, code: 'UNKNOWN' });
@@ -109,7 +146,7 @@ describe('MAIN-world About Account executor', () => {
       const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
       document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
       document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
-        { detail: serializeAboutAccountRequest(`opaque_race_${kind}`, 'OpenAI') }));
+        { detail: serializeAboutAccountRequest(`opaque_race_${kind}`, 'OpenAI', 1) }));
       if (kind === 'authentication') {
         page.fetch('/i/api/graphql/generic/HomeTimeline?x=2', { headers: {
           ...observedHeaders, 'x-csrf-token': 'new-csrf',

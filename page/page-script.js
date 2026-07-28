@@ -84,7 +84,7 @@
 
   const ID = /^[A-Za-z0-9_-]{16,64}$/;
   const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
-  const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK',
+  const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC', 'NETWORK',
     'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
     'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
   const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -96,8 +96,9 @@
     || (Number.isInteger(value) && value >= 100 && value <= 599);
   const validRetry = (value) => value === null
     || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
-  const validRevision = (value) => value === null
-    || (Number.isInteger(value) && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT);
+  const validRequestRevision = (value) => Number.isInteger(value)
+    && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT;
+  const validResponseRevision = (value) => value === null || validRequestRevision(value);
   const canonicalParse = (input, limit) => {
     if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
     try {
@@ -131,10 +132,12 @@
   function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
   function parseAboutAccountRequestDetail(input) {
     const value = canonicalParse(input, X_ABOUT_ACCOUNT_COMMAND_LIMIT);
-    return exact(value, ['version', 'id', 'handle'])
+    return exact(value, ['version', 'id', 'handle', 'metadataRevision'])
       && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
       && validOpaqueRequestId(value.id) && validCanonicalHandle(value.handle)
-      ? { version: value.version, id: value.id, handle: value.handle } : null;
+      && validRequestRevision(value.metadataRevision)
+      ? { version: value.version, id: value.id, handle: value.handle,
+        metadataRevision: value.metadataRevision } : null;
   }
   function parseAboutAccountCancelDetail(input) {
     const value = canonicalParse(input, X_ABOUT_ACCOUNT_COMMAND_LIMIT);
@@ -152,7 +155,7 @@
         metadataRevision: value?.metadataRevision ?? null };
     if (!validOpaqueRequestId(canonical.id) || typeof canonical.ok !== 'boolean'
       || (!canonical.ok && (!CODES.has(canonical.code) || !validStatus(canonical.status)
-        || !validRetry(canonical.retryAfterMs) || !validRevision(canonical.metadataRevision)))) {
+        || !validRetry(canonical.retryAfterMs) || !validResponseRevision(canonical.metadataRevision)))) {
       throw new TypeError('Invalid response');
     }
     let serialized;
@@ -596,6 +599,9 @@
         controller = new AbortController();
         requests.set(command.id, controller);
         const metadata = readPrivateXAboutAccountSnapshot(capture);
+        if (!metadata || metadata.revision !== command.metadataRevision) {
+          fail(command.id, 'METADATA_SYNC', null, null, metadata?.revision ?? null); return;
+        }
         if (!metadata || metadata.origin !== location.origin || !isValidXAboutAccountQueryId(metadata.queryId)) {
           fail(command.id, 'NO_METADATA'); return;
         }
