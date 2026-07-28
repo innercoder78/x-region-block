@@ -22,6 +22,7 @@ function createDiagnostic(globalScope) {
 }
 const DIAGNOSTICS = Object.freeze({
   DISCOVERY: 'Account target discovery failed.', PAGE_BRIDGE: 'About Account request bridge unavailable.',
+  BRIDGE_TIMEOUT: 'About Account request bridge timed out.',
   METADATA: 'About Account metadata handling failed.', QUEUE: 'About Account request queue failed.',
   METADATA_SYNC: 'About Account metadata synchronization failed.',
   HTTP_400: 'About Account request was rejected (HTTP 400).', HTTP_401: 'About Account authentication metadata rejected.',
@@ -29,12 +30,16 @@ const DIAGNOSTICS = Object.freeze({
   HTTP_429: 'About Account lookup rate limited; scheduler cooldown started.', HTTP_5XX: 'About Account server request failed.',
   NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
   INVALID_PAYLOAD: 'About Account response payload was invalid.', PARSING: 'About Account payload parsing failed.',
+  ABOUT_ACCOUNT_UNKNOWN: 'About Account request failed unexpectedly.',
   PRESENTATION: 'Account target presentation failed.', ROUTE: 'Account route processing failed.',
   CLEANUP: 'Account processing cleanup failed.', UNKNOWN: 'Account processing failed.',
 });
 
 function diagnosticCategory(error) {
   const code = typeof error?.code === 'string' ? error.code : '';
+  if (code === 'UNKNOWN' && error?.message === 'About Account request failed unexpectedly.') {
+    return 'ABOUT_ACCOUNT_UNKNOWN';
+  }
   if (Object.hasOwn(DIAGNOSTICS, code)) return code;
   if (code === 'PAGE_BRIDGE_UNAVAILABLE') return 'PAGE_BRIDGE';
   if (code === 'NO_METADATA') return 'METADATA';

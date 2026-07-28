@@ -35,6 +35,22 @@ export function parseXAboutAccountLocationPayload(payload) {
   if (!topLevelIsPlain) throw new TypeError('X About Account payload must be a plain object');
 
   try {
+    // MAIN-world lookups reduce the GraphQL response before it crosses into the extension world.
+    if (payload.version === 1 && Object.prototype.hasOwnProperty.call(payload, 'accountBasedIn')) {
+      if (Reflect.ownKeys(payload).length !== 2) return unavailable();
+      const value = payload.accountBasedIn;
+      if (value == null || (typeof value === 'string' && value.trim() === '')) {
+        return createMissingLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+      }
+      if (typeof value !== 'string') return unavailable();
+      const rawLocation = value.trim();
+      const countryCode = getCountryCodeByName(rawLocation);
+      if (countryCode === null) {
+        return createUnknownLocation({ rawLocation, source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+      }
+      return createKnownLocation({ countryCode, countryName: getCountryName(countryCode), rawLocation,
+        source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+    }
     let current = payload;
     for (const property of ['data', 'user_result_by_screen_name', 'result', 'about_profile']) {
       const next = readOwn(current, property);

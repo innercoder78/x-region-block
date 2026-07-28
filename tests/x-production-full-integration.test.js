@@ -73,8 +73,9 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     if (observingPageRequest) return 'page-result';
     transportCalls.push({ url, options });
     const handle = JSON.parse(new URL(url).searchParams.get('variables')).screenName;
+    const english = options.headers['accept-language'] === 'en-US,en;q=0.9';
     let payload = { data: { user_result_by_screen_name: { result: {
-      about_profile: { account_based_in: 'Japan' },
+      about_profile: { account_based_in: english ? 'United States' : 'États-Unis' },
     } } } };
     if (handle === 'missing') {
       payload = { data: { user_result_by_screen_name: { result: { about_profile: {} } } } };
@@ -89,7 +90,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   const storageListeners = new Set();
   const storedSettings = {
     schemaVersion: 1,
-    country: { hide: ['JP'], highlight: [], alwaysShow: [] },
+    country: { hide: ['US'], highlight: [], alwaysShow: [] },
     region: { hide: [], highlight: [] }, language: { highlight: [] },
     tag: { highlight: [] }, other: { hide: [], highlight: [] }, allowlist: [],
   };
@@ -150,7 +151,8 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(globalScope.history.pushState).not.toBe(originalPush);
 
   expect(globalScope.fetch(observedUrl('learned_runtime_query', 'Observed'), {
-    headers: observedHeaders,
+    headers: { ...observedHeaders, 'x-twitter-client-language': 'fr',
+      'x-client-transaction-id': 'stale-production-transaction' },
   })).toBe('page-result');
   observingPageRequest = false;
   await settle();
@@ -158,13 +160,18 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(transportCalls).toHaveLength(1);
   expect(decodeURIComponent(transportCalls[0].url)).toContain('"screenName":"openai"');
   expect(transportCalls[0].url).not.toContain('Observed');
-  expect(transportCalls[0].options).toMatchObject({
-    credentials: 'include', cache: 'no-store', redirect: 'error', method: 'GET',
-  });
+  expect(transportCalls[0].options).toMatchObject({ credentials: 'include', method: 'GET' });
+  expect(transportCalls[0].options).not.toHaveProperty('cache');
+  expect(transportCalls[0].options).not.toHaveProperty('redirect');
   expect(transportCalls[0].options.signal).toBeDefined();
+  expect(transportCalls[0].options.headers['accept-language']).toBe('en-US,en;q=0.9');
+  expect(transportCalls[0].options.headers['x-twitter-client-language']).toBe('fr');
+  expect(transportCalls[0].options.headers).not.toHaveProperty('x-client-transaction-id');
   await settle();
   expect(findLocationBadge(targets.profile)).not.toBeNull();
   expect(findLocationBadge(targets.name)).not.toBeNull();
+  expect(findLocationBadge(targets.name).children[0].children[0].getAttribute('src'))
+    .toContain('assets/flags/us.png');
   expect(getAccountAction(targets.profile)).toBe('hide');
   expect(getAccountAction(targets.tweet)).toBe('hide');
 
@@ -349,7 +356,8 @@ it('recovers a visible production target only after a different live query ID', 
 });
 
 it.each([
-  ['NETWORK', 'network request failed'], ['PAGE_BRIDGE_UNAVAILABLE', 'request bridge unavailable'],
+  ['NETWORK', 'network request failed'], ['BRIDGE_TIMEOUT', 'request bridge timed out'],
+  ['UNKNOWN', 'About Account request failed unexpectedly'],
   ['INVALID_PAYLOAD', 'response payload was invalid'], ['HTTP_401', 'authentication metadata rejected'],
   ['HTTP_404', 'query ID rejected'], ['HTTP_429', 'rate limited'], ['HTTP_5XX', 'server request failed'],
 ])('preserves %s through the real production processing diagnostic path', async (code, expected) => {
@@ -357,9 +365,12 @@ it.each([
     region: { hide: [], highlight: [] }, language: { highlight: [] }, tag: { highlight: [] },
     other: { hide: [], highlight: [] }, allowlist: [] };
   const response = () => {
-    if (code === 'PAGE_BRIDGE_UNAVAILABLE') return new Promise(() => {});
+    if (code === 'BRIDGE_TIMEOUT') return new Promise(() => {});
     if (code === 'NETWORK') return Promise.reject(new Error('private-network-secret'));
     if (code === 'INVALID_PAYLOAD') return Promise.resolve({ ok: true, status: 200, json: () => undefined });
+    if (code === 'UNKNOWN') return Promise.resolve({
+      ok: false, status: 302, headers: new Headers(), json: () => null,
+    });
     const status = { HTTP_401: 401, HTTP_404: 404, HTTP_429: 429, HTTP_5XX: 500 }[code];
     return Promise.resolve({ ok: false, status, headers: new Headers(), json: () => null });
   };
@@ -367,7 +378,7 @@ it.each([
   context.capture('/i/api/graphql/generic/HomeTimeline?diagnostic=1', observedHeaders);
   await settle();
   if (code === 'NETWORK' || code === 'HTTP_5XX') await vi.advanceTimersByTimeAsync(3_500);
-  else if (code === 'PAGE_BRIDGE_UNAVAILABLE') await vi.advanceTimersByTimeAsync(30_000);
+  else if (code === 'BRIDGE_TIMEOUT') await vi.advanceTimersByTimeAsync(30_500);
   else if (code === 'HTTP_429') await vi.advanceTimersByTimeAsync(60_500);
   else if (code === 'HTTP_401') {
     context.capture('/i/api/graphql/generic/HomeTimeline?fresh=1', {
@@ -382,6 +393,10 @@ it.each([
   const diagnostics = context.console.warn.mock.calls.flat().join('\n');
   expect(diagnostics).toContain(expected);
   expect(diagnostics).not.toContain('Account processing encountered a lifecycle error.');
-  expect(diagnostics).not.toMatch(/private-network-secret|diagnostic=1|@visible|authorization|csrf/i);
+  if (code === 'UNKNOWN') {
+    expect(diagnostics).not.toContain('About Account request queue failed.');
+    expect(diagnostics).not.toContain('Account processing failed.');
+  }
+  expect(diagnostics).not.toMatch(/private-network-secret|raw-secret-payload|diagnostic=1|@visible|authorization|csrf|cookie|token/i);
   context.runtime.stop();
 });

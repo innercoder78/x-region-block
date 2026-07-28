@@ -9,6 +9,15 @@ import { executeWithOriginalXFetch, invalidatePrivateXAboutAccountSnapshot,
   readPrivateXAboutAccountSnapshot } from './x-about-account-request-capture.js';
 
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
+const compactPayload = (payload) => {
+  const root = payload?.data?.user_result_by_screen_name?.result;
+  const profile = root?.about_profile;
+  if (profile === null || typeof profile !== 'object' || Array.isArray(profile)) throw new TypeError();
+  const present = Object.prototype.hasOwnProperty.call(profile, 'account_based_in');
+  const value = present ? profile.account_based_in : null;
+  if (value !== null && typeof value !== 'string') throw new TypeError();
+  return { version: 1, accountBasedIn: value };
+};
 const statusCode = (status) => {
   if ([400, 401, 403, 404, 429].includes(status)) return `HTTP_${status}`;
   if (status >= 500) return 'HTTP_5XX';
@@ -54,7 +63,10 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
         fail(command.id, 'NO_METADATA'); return;
       }
       const headers = Object.create(null);
+      const reusableHeaderNames = new Set(['authorization', 'x-csrf-token', 'x-twitter-active-user',
+        'x-twitter-auth-type', 'x-twitter-client-language']);
       for (const name of metadataHeaderNames()) {
+        if (!reusableHeaderNames.has(name)) continue;
         const value = metadata.headers?.[name];
         if (value !== undefined) {
           if (!validMetadataHeaderValue(value)) { fail(command.id, 'NO_METADATA'); return; }
@@ -62,12 +74,12 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
         }
       }
       if (!headers.authorization || !headers['x-csrf-token']) { fail(command.id, 'NO_METADATA'); return; }
-      headers.accept = 'application/json'; headers['accept-language'] = 'en-US,en;q=0.9';
+      headers['accept-language'] = 'en-US,en;q=0.9';
       const variables = new URLSearchParams({ variables: JSON.stringify({ screenName: command.handle }) });
       const url = `${location.origin}/i/api/graphql/${metadata.queryId}/${X_ABOUT_ACCOUNT_OPERATION_NAME}?${variables}`;
       let response;
       try { response = await executeWithOriginalXFetch(capture, url, { method: 'GET', credentials: 'include',
-        cache: 'no-store', redirect: 'error', headers, signal: controller.signal }); } catch (error) {
+        headers, signal: controller.signal }); } catch (error) {
         fail(command.id, controller.signal.aborted || error?.name === 'AbortError' ? 'ABORTED' : 'NETWORK'); return;
       }
       let ok; let status; let json;
@@ -92,7 +104,9 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
           [400, 401, 403, 404].includes(status) ? metadata.revision : null); return;
       }
       let payload;
-      try { payload = await Reflect.apply(json, response, []); } catch { fail(command.id, 'INVALID_PAYLOAD'); return; }
+      try { payload = compactPayload(await Reflect.apply(json, response, [])); } catch {
+        fail(command.id, 'INVALID_PAYLOAD'); return;
+      }
       if (!emit({ id: command.id, ok: true, payload })) fail(command.id, 'INVALID_PAYLOAD');
     } catch {
       let aborted = false;

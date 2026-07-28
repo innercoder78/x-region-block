@@ -2,7 +2,7 @@ const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 import { isValidXAboutAccountQueryId } from './x-about-account-query.js';
 const HEADER_NAMES = Object.freeze([
   'authorization', 'x-csrf-token', 'x-twitter-active-user', 'x-twitter-auth-type',
-  'x-twitter-client-language', 'x-guest-token', 'x-client-transaction-id',
+  'x-twitter-client-language', 'x-guest-token',
 ]);
 
 export const METADATA_DETAIL_LIMIT = 65_536;

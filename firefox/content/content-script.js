@@ -1907,6 +1907,22 @@
     if (!topLevelIsPlain) throw new TypeError('X About Account payload must be a plain object');
 
     try {
+      // MAIN-world lookups reduce the GraphQL response before it crosses into the extension world.
+      if (payload.version === 1 && Object.prototype.hasOwnProperty.call(payload, 'accountBasedIn')) {
+        if (Reflect.ownKeys(payload).length !== 2) return unavailable();
+        const value = payload.accountBasedIn;
+        if (value == null || (typeof value === 'string' && value.trim() === '')) {
+          return createMissingLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+        }
+        if (typeof value !== 'string') return unavailable();
+        const rawLocation = value.trim();
+        const countryCode = getCountryCodeByName(rawLocation);
+        if (countryCode === null) {
+          return createUnknownLocation({ rawLocation, source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+        }
+        return createKnownLocation({ countryCode, countryName: getCountryName(countryCode), rawLocation,
+          source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+      }
       let current = payload;
       for (const property of ['data', 'user_result_by_screen_name', 'result', 'about_profile']) {
         const next = readOwn(current, property);
@@ -1973,9 +1989,11 @@
   ]);
   const UPDATED_KEYS = Object.freeze(['previous', 'current']);
   const DIAGNOSTIC_CODES = new Set(['PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC', 'NETWORK', 'INVALID_RESPONSE',
-    'INVALID_PAYLOAD', 'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX']);
+    'INVALID_PAYLOAD', 'BRIDGE_TIMEOUT', 'UNKNOWN', 'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX']);
   const DIAGNOSTIC_MESSAGES = Object.freeze({
     PAGE_BRIDGE_UNAVAILABLE: 'About Account request bridge unavailable.',
+    BRIDGE_TIMEOUT: 'About Account request bridge timed out.',
+    UNKNOWN: 'About Account request failed unexpectedly.',
     NO_METADATA: 'About Account metadata is unavailable.',
     METADATA_SYNC: 'About Account metadata synchronization failed.',
     NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
@@ -3640,7 +3658,7 @@
   const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
   const HEADER_NAMES = Object.freeze([
     'authorization', 'x-csrf-token', 'x-twitter-active-user', 'x-twitter-auth-type',
-    'x-twitter-client-language', 'x-guest-token', 'x-client-transaction-id',
+    'x-twitter-client-language', 'x-guest-token',
   ]);
 
   const METADATA_DETAIL_LIMIT = 65_536;
@@ -3748,7 +3766,7 @@
   const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
   const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC', 'NETWORK',
     'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
-    'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
+    'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'BRIDGE_TIMEOUT', 'UNKNOWN']);
   const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
   const plain$1 = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
     && Object.getPrototypeOf(value) === Object.prototype;
@@ -4117,7 +4135,7 @@
         if (!active || !entry.started || pending.get(entry.id) !== entry) return;
         entry.attemptTimer = null; entry.started = false; inFlight = Math.max(0, inFlight - 1);
         dispatchCancellation(entry.id);
-        pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE'));
+        pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('BRIDGE_TIMEOUT'));
         schedule();
       }, BRIDGE_TIMEOUT);
       schedule();
@@ -4645,6 +4663,7 @@
   }
   const DIAGNOSTICS = Object.freeze({
     DISCOVERY: 'Account target discovery failed.', PAGE_BRIDGE: 'About Account request bridge unavailable.',
+    BRIDGE_TIMEOUT: 'About Account request bridge timed out.',
     METADATA: 'About Account metadata handling failed.', QUEUE: 'About Account request queue failed.',
     METADATA_SYNC: 'About Account metadata synchronization failed.',
     HTTP_400: 'About Account request was rejected (HTTP 400).', HTTP_401: 'About Account authentication metadata rejected.',
@@ -4652,12 +4671,16 @@
     HTTP_429: 'About Account lookup rate limited; scheduler cooldown started.', HTTP_5XX: 'About Account server request failed.',
     NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
     INVALID_PAYLOAD: 'About Account response payload was invalid.', PARSING: 'About Account payload parsing failed.',
+    ABOUT_ACCOUNT_UNKNOWN: 'About Account request failed unexpectedly.',
     PRESENTATION: 'Account target presentation failed.', ROUTE: 'Account route processing failed.',
     CLEANUP: 'Account processing cleanup failed.', UNKNOWN: 'Account processing failed.',
   });
 
   function diagnosticCategory(error) {
     const code = typeof error?.code === 'string' ? error.code : '';
+    if (code === 'UNKNOWN' && error?.message === 'About Account request failed unexpectedly.') {
+      return 'ABOUT_ACCOUNT_UNKNOWN';
+    }
     if (Object.hasOwn(DIAGNOSTICS, code)) return code;
     if (code === 'PAGE_BRIDGE_UNAVAILABLE') return 'PAGE_BRIDGE';
     if (code === 'NO_METADATA') return 'METADATA';
