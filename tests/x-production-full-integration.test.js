@@ -59,13 +59,10 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     disconnect() { this.disconnected = true; }
     trigger(records = [{}]) { this.callback(records); }
   }
-  class AbortController {
-    constructor() {
-      const controller = createFakeAbortController();
-      this.signal = controller.signal; this.abort = controller.abort.bind(controller);
-      this.controller = controller;
-    }
-  }
+  const AbortController = globalThis.AbortController;
+  const nativeController = new AbortController();
+  expect(Object.hasOwn(nativeController, 'signal')).toBe(false);
+  expect(Object.hasOwn(nativeController, 'abort')).toBe(false);
 
   const transportCalls = [];
   let observingPageRequest = true;
@@ -95,11 +92,12 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     tag: { highlight: [] }, other: { hide: [], highlight: [] }, allowlist: [],
   };
   const globalListeners = new Map();
+  const console = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const globalScope = {
     location: { origin: 'https://x.com', hostname: 'x.com', href: 'https://x.com/openai' },
     document, Event: MetadataEvent, CustomEvent: MetadataEvent,
     URL, URLSearchParams, Headers, Request, Promise, MutationObserver, AbortController,
-    fetch: originalFetch,
+    fetch: originalFetch, console,
     history: {
       pushState(state, title, url) {
         if (url === '/failed') throw new Error('simulated history failure');
@@ -172,6 +170,9 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(findLocationBadge(targets.name)).not.toBeNull();
   expect(findLocationBadge(targets.name).children[0].children[0].getAttribute('src'))
     .toContain('assets/flags/us.png');
+  expect(findLocationBadge(targets.name).textContent).not.toContain('Location unavailable');
+  expect(console.warn.mock.calls.flat().join('\n'))
+    .not.toContain('About Account request queue failed.');
   expect(getAccountAction(targets.profile)).toBe('hide');
   expect(getAccountAction(targets.tweet)).toBe('hide');
 
