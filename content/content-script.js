@@ -4123,6 +4123,21 @@
       schedule();
     };
     const enqueueAttempt = (entry) => { entry.started = false; queue.push(entry); schedule(); };
+    const synchronizationSatisfied = (entry, state = recoveryState) => state !== null
+      && (entry.synchronizationRevision === null
+        ? state.revision !== entry.synchronizationAttemptRevision
+        : state.revision === entry.synchronizationRevision);
+    const resumeSynchronization = (entry) => {
+      if (!active || entry.cancelled || !synchronizationSatisfied(entry)) return false;
+      waitingSynchronization.delete(entry);
+      if (entry.synchronizationTimer !== null) {
+        clearTimer(entry.synchronizationTimer); entry.synchronizationTimer = null;
+      }
+      entry.delayTimer = setTimer(() => {
+        entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
+      }, 0);
+      return true;
+    };
     const response = (event) => {
       const result = parseAboutAccountResponseDetail(event?.detail);
       if (result === null) return;
@@ -4140,6 +4155,7 @@
         if (entry.syncRetries++ < 2) {
           entry.synchronizationRevision = result.metadataRevision;
           entry.synchronizationAttemptRevision = entry.attemptRevision;
+          if (resumeSynchronization(entry)) { schedule(); return; }
           waitingSynchronization.add(entry);
           entry.synchronizationTimer = setTimer(() => {
             entry.synchronizationTimer = null;
@@ -4192,8 +4208,17 @@
         || !isValidXAboutAccountQueryId(value.queryId)
         || typeof value.authenticationFingerprint !== 'string'
         || value.authenticationFingerprint.length < 1 || value.authenticationFingerprint.length > 65_536) return false;
-      recoveryState = { version: 1, generation: value.generation, revision: value.revision, queryId: value.queryId,
+      const nextState = { version: 1, generation: value.generation, revision: value.revision, queryId: value.queryId,
         authenticationFingerprint: value.authenticationFingerprint };
+      if (recoveryState !== null) {
+        if (nextState.generation < recoveryState.generation || nextState.revision < recoveryState.revision) return false;
+        if (nextState.revision === recoveryState.revision) {
+          return nextState.generation === recoveryState.generation
+            && nextState.queryId === recoveryState.queryId
+            && nextState.authenticationFingerprint === recoveryState.authenticationFingerprint;
+        }
+      }
+      recoveryState = nextState;
       for (const [kind, current] of [['query', recoveryState.queryId],
         ['auth', recoveryState.authenticationFingerprint]]) {
         for (const rejected of [...blockedMetadata[kind]]) {
@@ -4212,19 +4237,7 @@
           entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
         }, 0);
       }
-      for (const entry of [...waitingSynchronization]) if (active && !entry.cancelled) {
-        const synchronized = entry.synchronizationRevision === null
-          ? recoveryState.revision !== entry.synchronizationAttemptRevision
-          : recoveryState.revision === entry.synchronizationRevision;
-        if (!synchronized) continue;
-        waitingSynchronization.delete(entry);
-        if (entry.synchronizationTimer !== null) {
-          clearTimer(entry.synchronizationTimer); entry.synchronizationTimer = null;
-        }
-        entry.delayTimer = setTimer(() => {
-          entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
-        }, 0);
-      }
+      for (const entry of [...waitingSynchronization]) resumeSynchronization(entry);
       if (active && resumeTimer === null) resumeTimer = setTimer(() => {
         resumeTimer = null; schedule();
       }, 0);
