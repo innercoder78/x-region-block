@@ -69,7 +69,7 @@ describe('global About Account page scheduler', () => {
     controller.abort(); await expect(promise).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
   });
 
-  it('synchronizes a mismatched attempt without consuming its metadata retry', async () => {
+  it('waits for validated synchronization without consuming its metadata retry', async () => {
     vi.useFakeTimers(); vi.setSystemTime(0);
     const document = new Document(); const rejected = vi.fn();
     const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event },
@@ -78,12 +78,17 @@ describe('global About Account page scheduler', () => {
     const promise = transport.loadPayload(identity('OpenAI'), context(controller.signal));
     let starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
     expect(parseAboutAccountRequestDetail(starts[0].event.detail).metadataRevision).toBe(1);
-    transport.updateRecoveryState(recovery(2, 'query_two', 'auth_two'));
     const first = parseAboutAccountRequestDetail(starts[0].event.detail);
     document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
-      id: first.id, ok: false, code: 'HTTP_401', status: 401, retryAfterMs: null, metadataRevision: 2,
+      id: first.id, ok: false, code: 'METADATA_SYNC', status: null, retryAfterMs: null, metadataRevision: 2,
     }) }));
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(1);
+    transport.updateRecoveryState(recovery(3, 'query_three', 'auth_three'));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(1);
+    transport.updateRecoveryState(recovery(2, 'query_two', 'auth_two'));
+    await vi.advanceTimersByTimeAsync(0);
     starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
     expect(starts).toHaveLength(2);
     expect(parseAboutAccountRequestDetail(starts[1].event.detail).metadataRevision).toBe(2);
@@ -94,6 +99,31 @@ describe('global About Account page scheduler', () => {
     }) }));
     expect(rejected).toHaveBeenCalledWith('auth', 2, 'auth_two');
     controller.abort(); await expect(promise).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
+  });
+
+  it.each(['timeout', 'cancel', 'stop'])('clears synchronization waiting on %s', async (path) => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event },
+      { recoveryState: recovery() });
+    const controller = new AbortController();
+    const promise = transport.loadPayload(identity('waiting'), context(controller.signal));
+    void promise.catch(() => {});
+    const request = parseAboutAccountRequestDetail(document.events[0].event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: request.id, ok: false, code: 'METADATA_SYNC', status: null,
+      retryAfterMs: null, metadataRevision: 2,
+    }) }));
+    if (path === 'timeout') {
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(promise).rejects.toMatchObject({ code: 'METADATA_SYNC' });
+    } else {
+      if (path === 'cancel') controller.abort(); else transport.stop();
+      await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+      transport.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    }
+    transport.stop();
   });
 
   it('shares a 429 cooldown and applies deterministic one- and two-second network retries', async () => {

@@ -1,7 +1,7 @@
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import {
-  X_ABOUT_ACCOUNT_COMMAND_LIMIT, parseAboutAccountCancelDetail,
+  X_ABOUT_ACCOUNT_COMMAND_LIMIT, X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT, parseAboutAccountCancelDetail,
   parseAboutAccountRequestDetail, parseAboutAccountResponseDetail,
   serializeAboutAccountCancel, serializeAboutAccountRequest, serializeAboutAccountResponse,
 } from '../src/shared/x-about-account-request-event.js';
@@ -30,6 +30,12 @@ describe('string-only About Account event protocol', () => {
       expect(parseAboutAccountRequestDetail(value)).toBeNull();
     }
   });
+
+  it.each([null, undefined, 0, -1, 1.5, X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT + 1])(
+    'rejects non-positive request metadata revision %#', (revision) => {
+      expect(() => serializeAboutAccountRequest(id, 'OpenAI', revision)).toThrow('Invalid request');
+    },
+  );
 
   it('requires exact bounded cancel and response schemas', () => {
     expect(parseAboutAccountCancelDetail(serializeAboutAccountCancel(id))).toEqual({ version: 1, id });

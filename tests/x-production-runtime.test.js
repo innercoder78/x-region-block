@@ -166,7 +166,7 @@ describe('X production content runtime', () => {
     mocks.snapshot = true;
     const fake = scope(); fake.console = { info: vi.fn(), warn: vi.fn() };
     const runtime = createXProductionContentRuntime(fake); await runtime.start();
-    for (const code of ['NETWORK', 'INVALID_PAYLOAD', 'HTTP_429']) {
+    for (const code of ['NETWORK', 'INVALID_PAYLOAD', 'HTTP_429', 'METADATA_SYNC']) {
       const error = new Error('private https://x.com/?token=secret @handle');
       Object.defineProperty(error, 'code', { value: code });
       mocks.routeOptions.onError(error);
@@ -175,6 +175,7 @@ describe('X production content runtime', () => {
     expect(output).toContain('network request failed');
     expect(output).toContain('response payload was invalid');
     expect(output).toContain('scheduler cooldown started');
+    expect(output).toContain('metadata synchronization failed');
     expect(output).not.toContain('Account processing encountered a lifecycle error.');
     expect(output).not.toMatch(/secret|@handle|https?:|token=/i);
     runtime.stop();

@@ -96,8 +96,9 @@
     || (Number.isInteger(value) && value >= 100 && value <= 599);
   const validRetry = (value) => value === null
     || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
-  const validRevision = (value) => value === null
-    || (Number.isInteger(value) && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT);
+  const validRequestRevision = (value) => Number.isInteger(value)
+    && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT;
+  const validResponseRevision = (value) => value === null || validRequestRevision(value);
   const canonicalParse = (input, limit) => {
     if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
     try {
@@ -134,7 +135,7 @@
     return exact(value, ['version', 'id', 'handle', 'metadataRevision'])
       && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
       && validOpaqueRequestId(value.id) && validCanonicalHandle(value.handle)
-      && value.metadataRevision !== null && validRevision(value.metadataRevision)
+      && validRequestRevision(value.metadataRevision)
       ? { version: value.version, id: value.id, handle: value.handle,
         metadataRevision: value.metadataRevision } : null;
   }
@@ -154,7 +155,7 @@
         metadataRevision: value?.metadataRevision ?? null };
     if (!validOpaqueRequestId(canonical.id) || typeof canonical.ok !== 'boolean'
       || (!canonical.ok && (!CODES.has(canonical.code) || !validStatus(canonical.status)
-        || !validRetry(canonical.retryAfterMs) || !validRevision(canonical.metadataRevision)))) {
+        || !validRetry(canonical.retryAfterMs) || !validResponseRevision(canonical.metadataRevision)))) {
       throw new TypeError('Invalid response');
     }
     let serialized;
@@ -599,7 +600,7 @@
         requests.set(command.id, controller);
         const metadata = readPrivateXAboutAccountSnapshot(capture);
         if (!metadata || metadata.revision !== command.metadataRevision) {
-          fail(command.id, 'METADATA_SYNC', null, null, metadata?.revision ?? command.metadataRevision); return;
+          fail(command.id, 'METADATA_SYNC', null, null, metadata?.revision ?? null); return;
         }
         if (!metadata || metadata.origin !== location.origin || !isValidXAboutAccountQueryId(metadata.queryId)) {
           fail(command.id, 'NO_METADATA'); return;

@@ -21,8 +21,9 @@ const validStatus = (value) => value === null
   || (Number.isInteger(value) && value >= 100 && value <= 599);
 const validRetry = (value) => value === null
   || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
-const validRevision = (value) => value === null
-  || (Number.isInteger(value) && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT);
+const validRequestRevision = (value) => Number.isInteger(value)
+  && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT;
+const validResponseRevision = (value) => value === null || validRequestRevision(value);
 const canonicalParse = (input, limit) => {
   if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
   try {
@@ -55,7 +56,7 @@ const validateJsonValue = (value, ancestors = new Set(), depth = 0) => {
 export function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
 export function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
 export function serializeAboutAccountRequest(id, handle, metadataRevision) {
-  if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle) || !validRevision(metadataRevision)) {
+  if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle) || !validRequestRevision(metadataRevision)) {
     throw new TypeError('Invalid request');
   }
   return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle, metadataRevision });
@@ -65,7 +66,7 @@ export function parseAboutAccountRequestDetail(input) {
   return exact(value, ['version', 'id', 'handle', 'metadataRevision'])
     && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
     && validOpaqueRequestId(value.id) && validCanonicalHandle(value.handle)
-    && value.metadataRevision !== null && validRevision(value.metadataRevision)
+    && validRequestRevision(value.metadataRevision)
     ? { version: value.version, id: value.id, handle: value.handle,
       metadataRevision: value.metadataRevision } : null;
 }
@@ -89,7 +90,7 @@ export function serializeAboutAccountResponse(value) {
       metadataRevision: value?.metadataRevision ?? null };
   if (!validOpaqueRequestId(canonical.id) || typeof canonical.ok !== 'boolean'
     || (!canonical.ok && (!CODES.has(canonical.code) || !validStatus(canonical.status)
-      || !validRetry(canonical.retryAfterMs) || !validRevision(canonical.metadataRevision)))) {
+      || !validRetry(canonical.retryAfterMs) || !validResponseRevision(canonical.metadataRevision)))) {
     throw new TypeError('Invalid response');
   }
   let serialized;
@@ -107,7 +108,7 @@ export function parseAboutAccountResponseDetail(input) {
     ? { version: value.version, id: value.id, ok: true, payload: value.payload } : null;
   return exact(value, ['version', 'id', 'ok', 'code', 'status', 'retryAfterMs', 'metadataRevision'])
     && CODES.has(value.code) && validStatus(value.status) && validRetry(value.retryAfterMs)
-    && validRevision(value.metadataRevision)
+    && validResponseRevision(value.metadataRevision)
     ? { version: value.version, id: value.id, ok: false, code: value.code,
       status: value.status, retryAfterMs: value.retryAfterMs,
       metadataRevision: value.metadataRevision } : null;

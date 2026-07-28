@@ -66,6 +66,22 @@ describe('MAIN-world About Account executor', () => {
     executor.stop(); capture.stop();
   });
 
+  it('reports a null synchronization revision when the private snapshot is absent', async () => {
+    const fetch = vi.fn(); const { page, document } = metadataFacades(fetch);
+    page.AbortController = AbortController;
+    const capture = installXAboutAccountRequestCapture(page);
+    const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
+    document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
+    document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
+      { detail: serializeAboutAccountRequest('opaque_revision_none', 'OpenAI', 1) }));
+    await Promise.resolve();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({
+      code: 'METADATA_SYNC', metadataRevision: null,
+    });
+    executor.stop(); capture.stop();
+  });
+
   it('emits a bounded categorized response when page fetch fails', async () => {
     const fetch = vi.fn(() => Promise.reject(new Error('private failure')));
     const { page, document } = metadataFacades(fetch); page.AbortController = AbortController;

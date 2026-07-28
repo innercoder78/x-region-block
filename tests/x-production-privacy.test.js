@@ -13,14 +13,26 @@ const prohibited = [
   'document.cookie', 'localStorage', 'sessionStorage', 'indexedDB', 'CacheStorage',
   'browser.storage', 'chrome.storage', 'runtime.sendMessage', 'window.postMessage',
   'BroadcastChannel', 'MessageChannel', 'WebSocket', 'XMLHttpRequest', 'sendBeacon',
-  'setInterval', 'requestAnimationFrame', 'webRequest',
+  'setTimeout', 'setInterval', 'requestAnimationFrame', 'webRequest',
   'declarativeNetRequest', 'console.log', 'console.debug',
 ];
 
 describe('production source privacy boundaries', () => {
   it('uses none of the prohibited communication, persistence, polling, or logging APIs', async () => {
-    const source = (await Promise.all(productionFiles.map((file) => readFile(file, 'utf8')))).join('\n');
-    for (const term of prohibited) expect(source, term).not.toContain(term);
+    const sources = await Promise.all(productionFiles.map(async (file) => [file, await readFile(file, 'utf8')]));
+    const source = sources.map(([, contents]) => contents).join('\n');
+    for (const term of prohibited) {
+      if (term === 'setTimeout') {
+        const unrelated = sources.filter(([file]) => file !== 'src/content/x-production-runtime.js')
+          .map(([, contents]) => contents).join('\n');
+        expect(unrelated, term).not.toContain(term);
+      } else expect(source, term).not.toContain(term);
+    }
+    const runtime = sources.find(([file]) => file === 'src/content/x-production-runtime.js')[1];
+    expect(runtime.match(/\bsetTimeout/g)).toHaveLength(7);
+    expect(runtime).toContain('dependencies.setTimeout(() =>');
+    expect(runtime).toContain('metadataScheduleTimer');
+    expect(runtime).toContain('clearTimeout');
   });
 
   it('does not embed request metadata or write it into DOM state', async () => {

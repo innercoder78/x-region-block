@@ -23,6 +23,7 @@ function createDiagnostic(globalScope) {
 const DIAGNOSTICS = Object.freeze({
   DISCOVERY: 'Account target discovery failed.', PAGE_BRIDGE: 'About Account request bridge unavailable.',
   METADATA: 'About Account metadata handling failed.', QUEUE: 'About Account request queue failed.',
+  METADATA_SYNC: 'About Account metadata synchronization failed.',
   HTTP_400: 'About Account request was rejected (HTTP 400).', HTTP_401: 'About Account authentication metadata rejected.',
   HTTP_403: 'About Account authentication metadata rejected.', HTTP_404: 'About Account query ID rejected.',
   HTTP_429: 'About Account lookup rate limited; scheduler cooldown started.', HTTP_5XX: 'About Account server request failed.',

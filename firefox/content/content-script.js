@@ -1972,11 +1972,12 @@
     'handle', 'displayHandle', 'profileUrl', 'accountId', 'allowlistKey', 'source',
   ]);
   const UPDATED_KEYS = Object.freeze(['previous', 'current']);
-  const DIAGNOSTIC_CODES = new Set(['PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK', 'INVALID_RESPONSE',
+  const DIAGNOSTIC_CODES = new Set(['PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC', 'NETWORK', 'INVALID_RESPONSE',
     'INVALID_PAYLOAD', 'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX']);
   const DIAGNOSTIC_MESSAGES = Object.freeze({
     PAGE_BRIDGE_UNAVAILABLE: 'About Account request bridge unavailable.',
     NO_METADATA: 'About Account metadata is unavailable.',
+    METADATA_SYNC: 'About Account metadata synchronization failed.',
     NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
     INVALID_PAYLOAD: 'About Account response payload was invalid.', HTTP_400: 'About Account request rejected.',
     HTTP_401: 'About Account authentication metadata rejected.', HTTP_403: 'About Account authentication metadata rejected.',
@@ -3757,8 +3758,9 @@
     || (Number.isInteger(value) && value >= 100 && value <= 599);
   const validRetry = (value) => value === null
     || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
-  const validRevision = (value) => value === null
-    || (Number.isInteger(value) && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT);
+  const validRequestRevision = (value) => Number.isInteger(value)
+    && value >= 1 && value <= X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT;
+  const validResponseRevision = (value) => value === null || validRequestRevision(value);
   const canonicalParse = (input, limit) => {
     if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
     try {
@@ -3770,7 +3772,7 @@
   function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
   function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
   function serializeAboutAccountRequest(id, handle, metadataRevision) {
-    if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle) || !validRevision(metadataRevision)) {
+    if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle) || !validRequestRevision(metadataRevision)) {
       throw new TypeError('Invalid request');
     }
     return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle, metadataRevision });
@@ -3787,7 +3789,7 @@
       ? { version: value.version, id: value.id, ok: true, payload: value.payload } : null;
     return exact(value, ['version', 'id', 'ok', 'code', 'status', 'retryAfterMs', 'metadataRevision'])
       && CODES.has(value.code) && validStatus(value.status) && validRetry(value.retryAfterMs)
-      && validRevision(value.metadataRevision)
+      && validResponseRevision(value.metadataRevision)
       ? { version: value.version, id: value.id, ok: false, code: value.code,
         status: value.status, retryAfterMs: value.retryAfterMs,
         metadataRevision: value.metadataRevision } : null;
@@ -4062,6 +4064,7 @@
   const MAX_IN_FLIGHT = 4;
   const START_INTERVAL = 200;
   const BRIDGE_TIMEOUT = 30_000;
+  const SYNCHRONIZATION_TIMEOUT = 30_000;
   const abortError = () => Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
   const codedError = (code, status = null) => {
     const error = new Error('About Account lookup failed');
@@ -4079,6 +4082,7 @@
     let recoveryState = null;
     const blockedMetadata = { auth: new Set(), query: new Set() };
     const queue = []; const pending = new Map(); const waitingMetadata = new Set();
+    const waitingSynchronization = new Set();
     const dispatch = (type, detail) => document.dispatchEvent(new CustomEvent(type,
       { detail, bubbles: false, cancelable: false, composed: false }));
     const dispatchCancellation = (id) => {
@@ -4134,11 +4138,15 @@
       let retryDelay = null;
       if (code === 'METADATA_SYNC') {
         if (entry.syncRetries++ < 2) {
-          const synchronized = recoveryState !== null
-            && recoveryState.revision !== entry.attemptRevision
-            && recoveryState.revision === result.metadataRevision;
-          if (synchronized) retryDelay = 0;
-          else retryDelay = 0;
+          entry.synchronizationRevision = result.metadataRevision;
+          entry.synchronizationAttemptRevision = entry.attemptRevision;
+          waitingSynchronization.add(entry);
+          entry.synchronizationTimer = setTimer(() => {
+            entry.synchronizationTimer = null;
+            if (!active || entry.cancelled || !waitingSynchronization.delete(entry)) return;
+            pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('METADATA_SYNC')); schedule();
+          }, SYNCHRONIZATION_TIMEOUT);
+          schedule(); return;
         }
       } else if (code === 'HTTP_429') {
         cooldownUntil = Math.max(cooldownUntil, now() + Math.min(300_000, result.retryAfterMs ?? 60_000));
@@ -4204,6 +4212,19 @@
           entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
         }, 0);
       }
+      for (const entry of [...waitingSynchronization]) if (active && !entry.cancelled) {
+        const synchronized = entry.synchronizationRevision === null
+          ? recoveryState.revision !== entry.synchronizationAttemptRevision
+          : recoveryState.revision === entry.synchronizationRevision;
+        if (!synchronized) continue;
+        waitingSynchronization.delete(entry);
+        if (entry.synchronizationTimer !== null) {
+          clearTimer(entry.synchronizationTimer); entry.synchronizationTimer = null;
+        }
+        entry.delayTimer = setTimer(() => {
+          entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
+        }, 0);
+      }
       if (active && resumeTimer === null) resumeTimer = setTimer(() => {
         resumeTimer = null; schedule();
       }, 0);
@@ -4226,13 +4247,18 @@
         const entry = { id, handle: canonical.handle, resolve, reject, started: false, cancelled: false,
           transientRetries: 0, metadataRetries: 0, syncRetries: 0, rateRetries: 0, cleanup: null,
           attemptRevision: null, attemptAuthentication: null, attemptQuery: null, rejectedRevision: null,
-          attemptTimer: null, delayTimer: null };
+          attemptTimer: null, delayTimer: null, synchronizationTimer: null,
+          synchronizationRevision: null, synchronizationAttemptRevision: null };
         const cancel = () => {
           if (entry.cancelled) return; entry.cancelled = true; pending.delete(id);
           const index = queue.indexOf(entry); if (index >= 0) queue.splice(index, 1);
           waitingMetadata.delete(entry);
+          waitingSynchronization.delete(entry);
           if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
           if (entry.delayTimer !== null) { clearTimer(entry.delayTimer); entry.delayTimer = null; }
+          if (entry.synchronizationTimer !== null) {
+            clearTimer(entry.synchronizationTimer); entry.synchronizationTimer = null;
+          }
           if (entry.started) { inFlight = Math.max(0, inFlight - 1); dispatchCancellation(id); }
           entry.cleanup(); reject(abortError()); schedule();
         };
@@ -4250,10 +4276,11 @@
         entry.cancelled = true; entry.cleanup();
         if (entry.attemptTimer !== null) clearTimer(entry.attemptTimer);
         if (entry.delayTimer !== null) clearTimer(entry.delayTimer);
+        if (entry.synchronizationTimer !== null) clearTimer(entry.synchronizationTimer);
         if (entry.started) dispatchCancellation(entry.id);
         entry.reject(abortError());
       }
-      pending.clear(); waitingMetadata.clear(); blockedMetadata.auth.clear();
+      pending.clear(); waitingMetadata.clear(); waitingSynchronization.clear(); blockedMetadata.auth.clear();
       blockedMetadata.query.clear(); queue.length = 0; inFlight = 0;
     } });
   }
@@ -4606,6 +4633,7 @@
   const DIAGNOSTICS = Object.freeze({
     DISCOVERY: 'Account target discovery failed.', PAGE_BRIDGE: 'About Account request bridge unavailable.',
     METADATA: 'About Account metadata handling failed.', QUEUE: 'About Account request queue failed.',
+    METADATA_SYNC: 'About Account metadata synchronization failed.',
     HTTP_400: 'About Account request was rejected (HTTP 400).', HTTP_401: 'About Account authentication metadata rejected.',
     HTTP_403: 'About Account authentication metadata rejected.', HTTP_404: 'About Account query ID rejected.',
     HTTP_429: 'About Account lookup rate limited; scheduler cooldown started.', HTTP_5XX: 'About Account server request failed.',
