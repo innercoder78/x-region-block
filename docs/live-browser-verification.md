@@ -84,8 +84,23 @@ missing location, unavailable location, and unknown/unrecognized location. Use `
 observed` if no suitable live account appears; this is not a pass and must remain an
 unresolved limitation.
 
-- [ ] Confirm a Canada result displays `🇨🇦` and “North America.”
-- [ ] Confirm a United States result displays `🇺🇸` and “North America.”
+- [ ] Confirm Canada displays `[local PNG country flag] 🌐 North America`.
+- [ ] Confirm the United States displays `[local PNG country flag] 🌐 North America`.
+
+An empty synchronous scan at `document_start` is normal, not a discovery failure; verify
+that a later mutation is processed. Observe that the global scheduler never exceeds four
+in-flight lookups, starts requests at least 200 ms apart, retains queued work during one
+global 429 cooldown, retries a 429 once, and retries network/5xx failures after one and two
+seconds. Authentication and query-ID rejection each wait for genuinely changed metadata
+and retry once. Request, cancellation, and response event details are bounded JSON strings;
+the scheduler consumes only validated page revisions, recovery generations, query IDs, and opaque authentication
+fingerprints. Rejected authentication or query state is invalidated globally, and a page attempt
+which produces no response is cancelled after 30 seconds so its scheduler slot is released.
+
+Record diagnostics only by sanitized category: discovery, bridge, metadata, queue, HTTP,
+parsing, presentation, route, or cleanup. For HTTP failures record only a category such as
+`HTTP_429`—never a URL, query string, header, token, cookie, payload, account identity, or
+account ID. Automated tests remain synthetic and do not prove live X behavior.
 
 ## Filtering and precedence
 

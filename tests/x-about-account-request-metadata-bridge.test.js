@@ -17,9 +17,10 @@ describe('X About Account request metadata bridge', () => {
     bridge.start();
     const headers = { authorization: 'Bearer original', 'x-csrf-token': 'csrf-original',
       'x-guest-token': 'guest-original' };
+    let revision = 0;
     const publish = (next, queryId = 'query') => document.dispatchEvent(new MetadataEvent(
       X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, { detail: JSON.stringify({
-        version: 2, origin: 'https://x.com', queryId, headers: next,
+        version: 2, origin: 'https://x.com', revision: ++revision, queryId, headers: next,
       }) },
     ));
     publish(headers);
@@ -38,14 +39,19 @@ describe('X About Account request metadata bridge', () => {
     const errors = [];
     const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (error) => errors.push(error) });
     expect(X_ABOUT_ACCOUNT_REQUEST_METADATA_BRIDGE_VERSION).toBe(1);
-    expect(Object.keys(bridge)).toEqual(['start', 'stop', 'createRequest', 'hasSnapshot', 'isActive']);
+    expect(Object.keys(bridge)).toEqual(['start', 'stop', 'createRequest', 'invalidateRecovery',
+      'getRecoveryState', 'hasSnapshot', 'isActive']);
     expect(Object.isFrozen(bridge)).toBe(true);
     bridge.start();
     const detail = JSON.stringify({
-      version: 2, origin: 'https://x.com', queryId: 'learned_query',
+      version: 2, origin: 'https://x.com', revision: 1, queryId: 'learned_query',
       headers: { authorization: 'Bearer test-only', 'x-csrf-token': 'test-only' },
     });
     document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, { detail }));
+    expect(Object.keys(bridge.getRecoveryState())).toEqual([
+      'version', 'generation', 'revision', 'queryId', 'authenticationFingerprint',
+    ]);
+    expect(JSON.stringify(bridge.getRecoveryState())).not.toContain('test-only');
     const identity = createAccountIdentity({ handle: 'Different', source: null });
     const first = bridge.createRequest(identity, { version: 1 });
     const second = bridge.createRequest(identity, { version: 1 });
@@ -61,6 +67,28 @@ describe('X About Account request metadata bridge', () => {
     expect(() => bridge.createRequest(identity, { version: 1 })).toThrow('not active');
   });
 
+  it('keeps authentication and query rejections independent until both are resolved', () => {
+    const { content, document } = metadataFacades();
+    const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: () => undefined });
+    bridge.start();
+    const publish = (revision, queryId, authorization) => document.dispatchEvent(new MetadataEvent(
+      X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, { detail: JSON.stringify({
+        version: 2, origin: 'https://x.com', revision, queryId,
+        headers: { authorization, 'x-csrf-token': 'csrf' },
+      }) },
+    ));
+    publish(1, 'query_one', 'auth-one');
+    const first = bridge.getRecoveryState();
+    expect(bridge.invalidateRecovery('auth', first.revision, first.authenticationFingerprint)).toBe(true);
+    expect(bridge.invalidateRecovery('query', first.revision, first.queryId)).toBe(true);
+    publish(2, 'query_one', 'auth-two');
+    expect(bridge.hasSnapshot()).toBe(false);
+    publish(3, 'query_two', 'auth-one');
+    expect(bridge.hasSnapshot()).toBe(false);
+    publish(4, 'query_two', 'auth-two');
+    expect(bridge.getRecoveryState()).toMatchObject({ revision: 4, queryId: 'query_two' });
+  });
+
   it.each([42, true, null, [], {}, 'x'.repeat(257), 'unsafe/value'])(
     'rejects queryId primitive %# without replacing valid metadata', (queryId) => {
       const { content, document } = metadataFacades();
@@ -69,7 +97,7 @@ describe('X About Account request metadata bridge', () => {
       bridge.start();
       document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
         detail: JSON.stringify({
-          version: 2, origin: 'https://x.com', queryId,
+          version: 2, origin: 'https://x.com', revision: 1, queryId,
           headers: { authorization: 'secret', 'x-csrf-token': 'secret' },
         }),
       }));
@@ -122,7 +150,7 @@ describe('X About Account request metadata bridge', () => {
     const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (error) => errors.push(error) });
     bridge.start();
     const snapshot = {
-      version: 2, origin: 'https://x.com', queryId: 'query',
+      version: 2, origin: 'https://x.com', revision: 1, queryId: 'query',
       headers: { authorization: 'authorization', 'x-csrf-token': 'csrf' },
     };
     snapshot[name] = value;
@@ -140,13 +168,14 @@ describe('X About Account request metadata bridge', () => {
       const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (error) => errors.push(error) });
       bridge.start();
       const valid = {
-        version: 2, origin: 'https://x.com', queryId: 'valid_query',
+        version: 2, origin: 'https://x.com', revision: 1, queryId: 'valid_query',
         headers: { authorization: 'authorization', 'x-csrf-token': 'csrf' },
       };
       document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
         detail: JSON.stringify(valid),
       }));
       const invalid = structuredClone(valid);
+      invalid.revision = 2;
       invalid[name] = { values: [null, { nested: { screenName: 'private-handle' } }] };
       document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, {
         detail: JSON.stringify(invalid),

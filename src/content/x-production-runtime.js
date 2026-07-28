@@ -3,7 +3,7 @@ import { createXAccountTargetRouteSessionController,
   ACCOUNT_TARGET_ROUTE_SESSION_CONTROLLER_VERSION } from './account-target-route-session-controller.js';
 import { initializeContentSettings } from './initialize-content-settings.js';
 import { createXAboutAccountRequestMetadataBridge } from './x-about-account-request-metadata-bridge.js';
-import { createXAboutAccountRequestTransport } from './x-about-account-request-transport.js';
+import { createXAboutAccountPageTransport } from './x-about-account-page-transport.js';
 import { createXNavigationObserver } from './x-navigation-observer.js';
 import { createXPageScriptInjector } from './x-page-script-injector.js';
 import { normalizeCountryCode } from '../shared/country-regions.js';
@@ -19,6 +19,34 @@ function createDiagnostic(globalScope) {
     last.set(code, now);
     try { globalScope.console?.[level]?.(`[X Region Reveal & Block] ${code}`); } catch { /* local only */ }
   };
+}
+const DIAGNOSTICS = Object.freeze({
+  DISCOVERY: 'Account target discovery failed.', PAGE_BRIDGE: 'About Account request bridge unavailable.',
+  METADATA: 'About Account metadata handling failed.', QUEUE: 'About Account request queue failed.',
+  METADATA_SYNC: 'About Account metadata synchronization failed.',
+  HTTP_400: 'About Account request was rejected (HTTP 400).', HTTP_401: 'About Account authentication metadata rejected.',
+  HTTP_403: 'About Account authentication metadata rejected.', HTTP_404: 'About Account query ID rejected.',
+  HTTP_429: 'About Account lookup rate limited; scheduler cooldown started.', HTTP_5XX: 'About Account server request failed.',
+  NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
+  INVALID_PAYLOAD: 'About Account response payload was invalid.', PARSING: 'About Account payload parsing failed.',
+  PRESENTATION: 'Account target presentation failed.', ROUTE: 'Account route processing failed.',
+  CLEANUP: 'Account processing cleanup failed.', UNKNOWN: 'Account processing failed.',
+});
+
+function diagnosticCategory(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  if (Object.hasOwn(DIAGNOSTICS, code)) return code;
+  if (code === 'PAGE_BRIDGE_UNAVAILABLE') return 'PAGE_BRIDGE';
+  if (code === 'NO_METADATA') return 'METADATA';
+  const message = typeof error?.message === 'string' ? error.message : '';
+  if (/metadata/i.test(message)) return 'METADATA';
+  if (/discover|target change/i.test(message)) return 'DISCOVERY';
+  if (/present/i.test(message)) return 'PRESENTATION';
+  if (/parse/i.test(message)) return 'PARSING';
+  if (/route|navigation/i.test(message)) return 'ROUTE';
+  if (/stop|clean|cancel/i.test(message)) return 'CLEANUP';
+  if (/broker|queue|load account/i.test(message)) return 'QUEUE';
+  return 'UNKNOWN';
 }
 
 function usableExtensionApi(namespace) {
@@ -38,7 +66,8 @@ export function createXProductionContentRuntime(globalScope) {
     const document = globalScope.document;
     const { MutationObserver, AbortController, Event, URLSearchParams,
       Promise: PromiseConstructor } = globalScope;
-    const fetchMethod = globalScope.fetch;
+    const setTimeoutFunction = globalScope.setTimeout ?? setTimeout;
+    const clearTimeoutFunction = globalScope.clearTimeout ?? clearTimeout;
     const globalAdd = globalScope.addEventListener;
     const globalRemove = globalScope.removeEventListener;
     const documentAdd = document.addEventListener;
@@ -48,14 +77,19 @@ export function createXProductionContentRuntime(globalScope) {
       ?? usableExtensionApi(globalScope.chrome);
     if (!supportedOrigins.has(origin) || typeof document.querySelectorAll !== 'function'
       || typeof MutationObserver !== 'function' || typeof AbortController !== 'function'
-      || typeof fetchMethod !== 'function' || typeof Event !== 'function'
+      || typeof Event !== 'function'
       || typeof URLSearchParams !== 'function' || typeof PromiseConstructor !== 'function'
+      || typeof setTimeoutFunction !== 'function' || typeof clearTimeoutFunction !== 'function'
       || typeof globalAdd !== 'function' || typeof globalRemove !== 'function'
       || typeof documentAdd !== 'function' || typeof documentRemove !== 'function'
       || typeof documentDispatch !== 'function' || extensionApi === null) throw new Error();
     dependencies = { origin, document, MutationObserver, AbortController, Event,
       URLSearchParams, Promise: PromiseConstructor,
-      fetch: (...args) => Reflect.apply(fetchMethod, globalScope, args),
+      setTimeout: (callback, ms) => Reflect.apply(setTimeoutFunction, globalScope, [callback, ms]),
+      clearTimeout: (timer) => Reflect.apply(clearTimeoutFunction, globalScope, [timer]),
+      CustomEvent: globalScope.CustomEvent ?? class extends Event {
+        constructor(type, init = {}) { super(type, init); this.detail = init.detail; }
+      },
       globalAdd, globalRemove, documentAdd, documentRemove,
       resolveFlagAssetUrl: (countryCode) => extensionApi.runtime.getURL(
         `assets/flags/${normalizeCountryCode(countryCode).toLowerCase()}.png`,
@@ -68,7 +102,10 @@ export function createXProductionContentRuntime(globalScope) {
   let pending = null;
   let lifecycle = null;
   const diagnostic = createDiagnostic(globalScope);
-  const report = () => diagnostic('Account processing encountered a lifecycle error.', 'warn');
+  const report = (error) => {
+    const category = diagnosticCategory(error);
+    diagnostic(DIAGNOSTICS[category], 'warn');
+  };
 
   const owned = (state) => lifecycle === state && active && !state.claimed
     && generation === state.generation;
@@ -103,13 +140,16 @@ export function createXProductionContentRuntime(globalScope) {
     removeMetadata(state);
     stopComponent(state, 'routeCandidate');
     stopComponent(state, 'routeController', 'routeCandidateStopped');
+    stopComponent(state, 'transport');
     stopComponent(state, 'bridge');
     stopComponent(state, 'settingsCandidate');
     stopComponent(state, 'settingsRuntime');
     stopComponent(state, 'injector');
     removePagehide(state);
-    state.transport = null;
     state.metadataCheckPending = false;
+    if (state.metadataScheduleTimer !== null) {
+      dependencies.clearTimeout(state.metadataScheduleTimer); state.metadataScheduleTimer = null;
+    }
     state.prerequisitesReady = false;
   };
   const rejectStartup = (state) => {
@@ -136,9 +176,14 @@ export function createXProductionContentRuntime(globalScope) {
     state.routeStarting = true;
     let candidate = null;
     try {
-      const bridge = state.bridge;
-      const transport = createXAboutAccountRequestTransport({
-        fetch: dependencies.fetch, createRequest: bridge.createRequest,
+      const recoveryState = typeof state.bridge.getRecoveryState === 'function'
+        ? state.bridge.getRecoveryState() : undefined;
+      const transport = createXAboutAccountPageTransport({
+        document: dependencies.document, CustomEvent: dependencies.CustomEvent,
+      }, {
+        recoveryState,
+        onMetadataRejected: (kind, revision, rejectedValue) =>
+          state.bridge.invalidateRecovery?.(kind, revision, rejectedValue),
       });
       if (!owned(state)) throw new Error();
       state.transport = transport;
@@ -167,9 +212,7 @@ export function createXProductionContentRuntime(globalScope) {
       state.routeController = candidate; state.routeCandidate = null;
       ready = true;
       diagnostic('Metadata accepted and account processing started.');
-      if (Array.isArray(discovered) && discovered.length === 0) {
-        diagnostic('Account discovery started but no supported targets were found.', 'warn');
-      }
+      if (Array.isArray(discovered) && discovered.length === 0) diagnostic('Account discovery is awaiting dynamic targets.');
     } catch {
       if (candidate !== null && state.routeCandidate === null) state.routeCandidate = candidate;
       stopComponent(state, 'routeCandidate');
@@ -200,6 +243,7 @@ export function createXProductionContentRuntime(globalScope) {
       settingsRuntimeStopped: false, routeCandidateStopped: false,
       metadataListener: null, metadataMayBeAdded: false,
       metadataCheckPending: false, pagehideListener: null, pagehideMayBeAdded: false,
+      metadataScheduleTimer: null,
       prerequisitesReady: false, routeStarting: false,
     };
     state.promise = new dependencies.Promise((resolve, reject) => {
@@ -212,15 +256,14 @@ export function createXProductionContentRuntime(globalScope) {
     diagnostic('Waiting for X GraphQL authentication metadata.');
     const checkpoint = () => { if (!owned(state)) throw new Error('startup claimed'); };
     state.metadataListener = () => {
-      if (!owned(state) || state.metadataCheckPending) return;
-      state.metadataCheckPending = true;
-      dependencies.Promise.resolve().then(() => {
-        state.metadataCheckPending = false;
-        if (owned(state)) {
-          if (ready && state.bridge?.hasSnapshot()) state.routeController?.retryRecoverable();
-          else startRoute(state);
-        }
-      });
+      if (!owned(state)) return;
+      const recoveryState = state.bridge && typeof state.bridge.getRecoveryState === 'function'
+        ? state.bridge.getRecoveryState() : null;
+      if (recoveryState !== null) state.transport?.updateRecoveryState(recoveryState);
+      if (state.metadataScheduleTimer === null) state.metadataScheduleTimer = dependencies.setTimeout(() => {
+        state.metadataScheduleTimer = null;
+        if (owned(state) && !ready) startRoute(state);
+      }, 0);
     };
     state.pagehideListener = (event) => { if (event.persisted !== true && owned(state)) stop(); };
     try {

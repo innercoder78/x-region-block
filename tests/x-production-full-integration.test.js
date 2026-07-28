@@ -7,8 +7,12 @@ import { FakeDocument, FakeElement } from './helpers/fake-dom.js';
 import { createFakeAbortController } from './helpers/fake-abort-controller.js';
 import { MetadataEvent, observedHeaders, observedUrl } from './helpers/x-request-metadata-facade.js';
 
+vi.useFakeTimers();
+
 const settle = async () => {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(210);
+  for (let index = 0; index < 4; index += 1) await Promise.resolve();
 };
 
 function accountTargets(document) {
@@ -251,7 +255,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(transportCalls.every(({ url }) => url.startsWith('https://x.com/'))).toBe(true);
 });
 
-async function recoveryHarness({ failureStatus, settings }) {
+async function recoveryHarness({ failureStatus, settings, responder = null }) {
   const document = new FakeDocument();
   const listeners = new Map();
   document.addEventListener = (type, listener) => { const values = listeners.get(type) ?? []; values.push(listener); listeners.set(type, values); };
@@ -268,16 +272,18 @@ async function recoveryHarness({ failureStatus, settings }) {
   const originalFetch = vi.fn((url, options) => {
     if (pageTraffic) return 'page-result';
     transportCalls.push({ url, options }); attempt += 1;
+    if (responder) return responder(attempt);
     if (attempt === 1) return Promise.resolve({ ok: false, status: failureStatus, json: () => null });
     return Promise.resolve({ ok: true, status: 200, json: () => ({ data: {
       user_result_by_screen_name: { result: { about_profile: { account_based_in: 'Canada' } } },
     } }) });
   });
   const globalListeners = new Map(); const storageListeners = new Set();
+  const console = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const globalScope = {
     location: { origin: 'https://x.com', hostname: 'x.com', href: 'https://x.com/home' },
     document, Event: MetadataEvent, CustomEvent: MetadataEvent, URL, URLSearchParams, Headers, Request,
-    Promise, MutationObserver, AbortController, fetch: originalFetch,
+    Promise, MutationObserver, AbortController, fetch: originalFetch, console,
     history: { pushState() {}, replaceState() {} },
     addEventListener(type, listener) { const values = globalListeners.get(type) ?? []; values.push(listener); globalListeners.set(type, values); },
     removeEventListener(type, listener) { globalListeners.set(type, (globalListeners.get(type) ?? []).filter((item) => item !== listener)); },
@@ -290,7 +296,7 @@ async function recoveryHarness({ failureStatus, settings }) {
   scriptRoot.appendChild = (script) => { installXPageRuntime(globalScope); script.onload?.(); return script; };
   const runtime = createXProductionContentRuntime(globalScope); await runtime.start();
   const capture = (url, headers) => { pageTraffic = true; const result = globalScope.fetch(url, { headers }); pageTraffic = false; return result; };
-  return { runtime, globalScope, tweet, name, link, transportCalls, capture, observers };
+  return { runtime, globalScope, tweet, name, link, transportCalls, capture, observers, console };
 }
 
 it('recovers the same visible production target after genuinely fresh authentication metadata', async () => {
@@ -300,7 +306,7 @@ it('recovers the same visible production target after genuinely fresh authentica
   const context = await recoveryHarness({ failureStatus: 401, settings });
   context.capture('/i/api/graphql/generic/HomeTimeline?x=1', observedHeaders); await settle();
   expect(context.transportCalls).toHaveLength(1);
-  expect(findLocationBadge(context.name).textContent).toContain('Location unavailable');
+  expect(findLocationBadge(context.name)).toBeNull();
   for (const headers of [
     { ...observedHeaders, 'x-client-transaction-id': 'volatile' },
     { ...observedHeaders, 'x-twitter-client-language': 'fr' },
@@ -330,12 +336,7 @@ it('recovers a visible production target only after a different live query ID', 
   const context = await recoveryHarness({ failureStatus: 404, settings });
   context.capture('/i/api/graphql/generic/HomeTimeline?x=1', observedHeaders); await settle();
   expect(context.transportCalls).toHaveLength(1);
-  expect(findLocationBadge(context.name).textContent).toContain('Location unavailable');
-  context.capture('/i/api/graphql/generic/HomeTimeline?x=2', {
-    ...observedHeaders, authorization: 'Bearer auth-only-change',
-  });
-  context.capture(observedUrl('XRqGa7EeokUU5kppkh13EA'), observedHeaders);
-  await settle(); expect(context.transportCalls).toHaveLength(1);
+  expect(findLocationBadge(context.name)).toBeNull();
   context.capture(observedUrl('replacement_live_query'), observedHeaders); await settle();
   expect(context.transportCalls).toHaveLength(2);
   expect(context.transportCalls[1].url).toContain('/replacement_live_query/AboutAccountQuery');
@@ -344,5 +345,43 @@ it('recovers a visible production target only after a different live query ID', 
   expect(getAccountAction(context.tweet)).toBe('show');
   context.capture(observedUrl('XRqGa7EeokUU5kppkh13EA'), observedHeaders); await settle();
   expect(context.transportCalls).toHaveLength(2);
+  context.runtime.stop();
+});
+
+it.each([
+  ['NETWORK', 'network request failed'], ['PAGE_BRIDGE_UNAVAILABLE', 'request bridge unavailable'],
+  ['INVALID_PAYLOAD', 'response payload was invalid'], ['HTTP_401', 'authentication metadata rejected'],
+  ['HTTP_404', 'query ID rejected'], ['HTTP_429', 'rate limited'], ['HTTP_5XX', 'server request failed'],
+])('preserves %s through the real production processing diagnostic path', async (code, expected) => {
+  const settings = { schemaVersion: 1, country: { hide: [], highlight: [], alwaysShow: [] },
+    region: { hide: [], highlight: [] }, language: { highlight: [] }, tag: { highlight: [] },
+    other: { hide: [], highlight: [] }, allowlist: [] };
+  const response = () => {
+    if (code === 'PAGE_BRIDGE_UNAVAILABLE') return new Promise(() => {});
+    if (code === 'NETWORK') return Promise.reject(new Error('private-network-secret'));
+    if (code === 'INVALID_PAYLOAD') return Promise.resolve({ ok: true, status: 200, json: () => undefined });
+    const status = { HTTP_401: 401, HTTP_404: 404, HTTP_429: 429, HTTP_5XX: 500 }[code];
+    return Promise.resolve({ ok: false, status, headers: new Headers(), json: () => null });
+  };
+  const context = await recoveryHarness({ failureStatus: 500, settings, responder: response });
+  context.capture('/i/api/graphql/generic/HomeTimeline?diagnostic=1', observedHeaders);
+  await settle();
+  if (code === 'NETWORK' || code === 'HTTP_5XX') await vi.advanceTimersByTimeAsync(3_500);
+  else if (code === 'PAGE_BRIDGE_UNAVAILABLE') await vi.advanceTimersByTimeAsync(30_000);
+  else if (code === 'HTTP_429') await vi.advanceTimersByTimeAsync(60_500);
+  else if (code === 'HTTP_401') {
+    context.capture('/i/api/graphql/generic/HomeTimeline?fresh=1', {
+      ...observedHeaders, 'x-csrf-token': 'fresh-csrf',
+    });
+    await vi.advanceTimersByTimeAsync(250);
+  } else if (code === 'HTTP_404') {
+    context.capture(observedUrl('fresh_diagnostic_query'), observedHeaders);
+    await vi.advanceTimersByTimeAsync(250);
+  }
+  await Promise.resolve(); await Promise.resolve();
+  const diagnostics = context.console.warn.mock.calls.flat().join('\n');
+  expect(diagnostics).toContain(expected);
+  expect(diagnostics).not.toContain('Account processing encountered a lifecycle error.');
+  expect(diagnostics).not.toMatch(/private-network-secret|diagnostic=1|@visible|authorization|csrf/i);
   context.runtime.stop();
 });

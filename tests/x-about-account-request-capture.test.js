@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION, installXAboutAccountRequestCapture,
+  invalidatePrivateXAboutAccountSnapshot, readPrivateXAboutAccountSnapshot,
 } from '../src/page/x-about-account-request-capture.js';
 import {
   X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE,
@@ -37,6 +38,32 @@ describe('X About Account request capture', () => {
     page.fetch(url, { headers: { ...observedHeaders, 'x-twitter-active-user': 'no' } });
     expect(details).toHaveLength(1);
   });
+
+  it.each([X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, 'previous_live_query'])(
+    'requires the first different live query after rejecting %s', (rejectedQuery) => {
+    const { page, document } = metadataFacades(() => undefined); const details = [];
+    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE,
+      (event) => details.push(JSON.parse(event.detail)));
+    const capture = installXAboutAccountRequestCapture(page);
+    if (rejectedQuery === X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID) {
+      page.fetch('/i/api/graphql/generic/HomeTimeline?x=1', { headers: observedHeaders });
+    } else page.fetch(observedUrl(rejectedQuery), { headers: observedHeaders });
+    expect(details.at(-1).queryId).toBe(rejectedQuery);
+    expect(invalidatePrivateXAboutAccountSnapshot(capture, 'query',
+      readPrivateXAboutAccountSnapshot(capture))).toBe(true);
+    const count = details.length;
+    page.fetch('/i/api/graphql/generic/HomeTimeline?x=2', { headers: observedHeaders });
+    page.fetch('/i/api/graphql/generic/HomeTimeline?x=3', {
+      headers: { ...observedHeaders, authorization: 'Bearer changed' },
+    });
+    page.fetch(observedUrl(rejectedQuery), { headers: observedHeaders });
+    expect(details).toHaveLength(count);
+    page.fetch(observedUrl('different_live_query'), { headers: observedHeaders });
+    expect(details).toHaveLength(count + 1);
+    expect(details.at(-1).queryId).toBe('different_live_query');
+    capture.stop();
+    },
+  );
 
   it('passively observes XHR only after successful open, headers, and send', () => {
     const order = [];
@@ -120,7 +147,7 @@ describe('X About Account request capture', () => {
     expect(fetch).toHaveBeenCalledWith(input, init);
     const snapshot = JSON.parse(details[0]);
     expect(Object.keys(snapshot)).toEqual([
-      'version', 'origin', 'queryId', 'headers',
+      'version', 'origin', 'revision', 'queryId', 'headers',
     ]);
     expect(details[0]).not.toContain('Observed');
     expect(snapshot.headers).not.toHaveProperty('cookie');

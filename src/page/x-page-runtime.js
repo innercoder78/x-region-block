@@ -3,6 +3,7 @@ import {
   X_PAGE_RUNTIME_REQUEST_EVENT_TYPE, X_PAGE_RUNTIME_STOP_EVENT_TYPE,
 } from '../shared/x-page-runtime-event.js';
 import { installXAboutAccountRequestCapture } from './x-about-account-request-capture.js';
+import { installXAboutAccountRequestExecutor } from './x-about-account-request-executor.js';
 import { installXNavigationSignal } from './x-navigation-signal.js';
 
 export const X_PAGE_RUNTIME_VERSION = 1;
@@ -43,7 +44,7 @@ export function installXPageRuntime(globalScope) {
     document, Event: EventConstructor, add, remove, dispatch,
     active: false, claimed: false, finalized: false, probeMayBeAdded: false,
     requestMayBeAdded: false, stopMayBeAdded: false, navigation: null, capture: null,
-    probe: null, respond: null, stopListener: null, controller: null,
+    probe: null, respond: null, stopListener: null, controller: null, executor: null,
   };
   const current = () => ownerScope !== null && installations.get(ownerScope) === state
     && !state.claimed;
@@ -71,6 +72,7 @@ export function installXPageRuntime(globalScope) {
     state.finalized = true;
     state.active = false;
     removeOwnedListeners();
+    try { state.executor?.stop(); } catch { /* contained */ }
     try { state.capture?.stop(); } catch { /* contained */ }
     try { state.navigation?.stop(); } catch { /* contained */ }
     state.capture = null; state.navigation = null;
@@ -130,6 +132,8 @@ export function installXPageRuntime(globalScope) {
     checkpoint();
     state.capture = installXAboutAccountRequestCapture(ownerScope);
     if (!current()) { try { state.capture?.stop(); } catch { /* contained */ } }
+    checkpoint();
+    state.executor = installXAboutAccountRequestExecutor(ownerScope, state.capture);
     checkpoint();
     state.requestMayBeAdded = true;
     Reflect.apply(add, document, [X_PAGE_RUNTIME_REQUEST_EVENT_TYPE, state.respond]);

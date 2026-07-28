@@ -122,7 +122,7 @@ describe('X production content runtime', () => {
     await Promise.resolve(); expect(runtime.isReady()).toBe(false);
     mocks.snapshot = true;
     fake.document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE));
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(runtime.isReady()).toBe(true);
     expect(mocks.route.start).toHaveBeenCalledOnce();
     expect(mocks.routeRoot).toBe(fake.document);
@@ -146,19 +146,38 @@ describe('X production content runtime', () => {
     runtime.stop();
   });
 
-  it('rate-limits privacy-safe empty-discovery diagnostics after a completed pass', async () => {
+  it('treats an empty initial discovery as an informational dynamic-wait state', async () => {
     mocks.snapshot = true; mocks.routeStartHook = () => [];
     const fake = scope(); fake.console = { info: vi.fn(), warn: vi.fn() };
     const runtime = createXProductionContentRuntime(fake);
     await runtime.start(); runtime.stop();
     await runtime.start();
-    expect(fake.console.warn).toHaveBeenCalledTimes(1);
-    expect(fake.console.warn.mock.calls[0][0]).toContain(
-      'Account discovery started but no supported targets were found.',
+    expect(fake.console.warn).not.toHaveBeenCalled();
+    expect(fake.console.info.mock.calls.flat().join(' ')).toContain(
+      'Account discovery is awaiting dynamic targets.',
     );
-    expect(JSON.stringify(fake.console.warn.mock.calls)).not.toMatch(
+    expect(JSON.stringify(fake.console.info.mock.calls)).not.toMatch(
       /authorization|csrf|cookie|handle|account.?id|query.?id|location|selector|https?:/i,
     );
+    runtime.stop();
+  });
+
+  it('maps categorized failures to distinct fixed diagnostics without the old generic boundary', async () => {
+    mocks.snapshot = true;
+    const fake = scope(); fake.console = { info: vi.fn(), warn: vi.fn() };
+    const runtime = createXProductionContentRuntime(fake); await runtime.start();
+    for (const code of ['NETWORK', 'INVALID_PAYLOAD', 'HTTP_429', 'METADATA_SYNC']) {
+      const error = new Error('private https://x.com/?token=secret @handle');
+      Object.defineProperty(error, 'code', { value: code });
+      mocks.routeOptions.onError(error);
+    }
+    const output = fake.console.warn.mock.calls.flat().join('\n');
+    expect(output).toContain('network request failed');
+    expect(output).toContain('response payload was invalid');
+    expect(output).toContain('scheduler cooldown started');
+    expect(output).toContain('metadata synchronization failed');
+    expect(output).not.toContain('Account processing encountered a lifecycle error.');
+    expect(output).not.toMatch(/secret|@handle|https?:|token=/i);
     runtime.stop();
   });
 
