@@ -84,6 +84,10 @@
     if (!execute) throw new TypeError('Inactive request capture');
     return execute(...args);
   }
+  function invalidatePrivateXAboutAccountSnapshot(controller, kind) {
+    const invalidate = privateCaptures.get(controller)?.invalidate;
+    return invalidate ? invalidate(kind) : false;
+  }
   const supportedOrigins$1 = new Set(['https://x.com', 'https://twitter.com']);
   const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
   const isPlainObject = (value) => {
@@ -197,9 +201,15 @@
       if (!validMetadataHeaderValue(value) || !metadataHeaderNames().includes(name)) return;
     }
     if (!hasOwn(headers, 'authorization') || !hasOwn(headers, 'x-csrf-token')) return;
-    if (operation === X_ABOUT_ACCOUNT_OPERATION_NAME) state.liveQueryId = queryId;
+    const authenticationFingerprint = createMetadataAuthenticationFingerprint(headers);
+    if (authenticationFingerprint === state.rejectedAuthentication) return;
+    if (operation === X_ABOUT_ACCOUNT_OPERATION_NAME) {
+      if (queryId === state.rejectedQueryId) return;
+      state.liveQueryId = queryId;
+    }
+    if (state.rejectedQueryId !== null && state.liveQueryId === state.rejectedQueryId) return;
     const publicationKey = JSON.stringify([
-      createMetadataAuthenticationFingerprint(headers),
+      authenticationFingerprint,
       state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID,
     ]);
     if (publicationKey === state.publicationKey) return;
@@ -301,6 +311,19 @@
       try { return JSON.parse(state.snapshot); } catch { return null; }
     };
     privateRead.execute = (...args) => Reflect.apply(state.fetch, state.scope, args);
+    privateRead.invalidate = (kind) => {
+      if (phase !== 'active' || !state?.snapshot) return false;
+      let current;
+      try { current = JSON.parse(state.snapshot); } catch { return false; }
+      if (kind === 'authentication') {
+        state.rejectedAuthentication = createMetadataAuthenticationFingerprint(current.headers);
+      } else if (kind === 'query') {
+        state.rejectedQueryId = current.queryId;
+        if (state.liveQueryId === current.queryId) state.liveQueryId = null;
+      } else return false;
+      state.snapshot = null; state.publicationKey = null;
+      return true;
+    };
     privateCaptures.set(controller, privateRead);
     entry.controller = controller;
     installations$2.set(scope, entry);
@@ -334,7 +357,8 @@
       state = { scope, fetch, document, documentAddEventListener,
         documentRemoveEventListener, documentDispatchEvent, CustomEvent, URL, Headers, Request, origin,
         urlHref, requestUrl, requestMethod, requestHeaders, headersGet,
-        snapshot: null, publicationKey: null, liveQueryId: null, active: false };
+        snapshot: null, publicationKey: null, liveQueryId: null, active: false,
+        rejectedAuthentication: null, rejectedQueryId: null };
       if (typeof XMLHttpRequest === 'function') {
         const prototype = read(() => XMLHttpRequest.prototype);
         const originals = {
@@ -440,26 +464,60 @@
   const X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE = 'x-region-block:about-account:request';
   const X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE = 'x-region-block:about-account:cancel';
   const X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE = 'x-region-block:about-account:response';
+  const X_ABOUT_ACCOUNT_COMMAND_LIMIT = 256;
   const X_ABOUT_ACCOUNT_RESPONSE_LIMIT = 262_144;
+  const X_ABOUT_ACCOUNT_RETRY_LIMIT = 300_000;
 
   const ID = /^[A-Za-z0-9_-]{16,64}$/;
   const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
+  const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK',
+    'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
+    'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
+  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
   const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
-    && [null, Object.prototype].includes(Object.getPrototypeOf(value));
+    && Object.getPrototypeOf(value) === Object.prototype;
   const exact = (value, keys) => plain(value) && Reflect.ownKeys(value).length === keys.length
-    && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+    && Reflect.ownKeys(value).every((key) => typeof key === 'string') && keys.every((key) => own(value, key));
+  const validStatus = (value) => value === null
+    || (Number.isInteger(value) && value >= 100 && value <= 599);
+  const validRetry = (value) => value === null
+    || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
+  const canonicalParse = (input, limit) => {
+    if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
+    try {
+      const value = JSON.parse(input);
+      return JSON.stringify(value) === input ? value : null;
+    } catch { return null; }
+  };
 
   function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
   function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
-  function parseAboutAccountRequestDetail(value) {
+  function parseAboutAccountRequestDetail(input) {
+    const value = canonicalParse(input, X_ABOUT_ACCOUNT_COMMAND_LIMIT);
     return exact(value, ['version', 'id', 'handle'])
       && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
       && validOpaqueRequestId(value.id) && validCanonicalHandle(value.handle)
       ? { version: value.version, id: value.id, handle: value.handle } : null;
   }
-  function parseAboutAccountCancelDetail(value) {
+  function parseAboutAccountCancelDetail(input) {
+    const value = canonicalParse(input, X_ABOUT_ACCOUNT_COMMAND_LIMIT);
     return exact(value, ['version', 'id']) && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
       && validOpaqueRequestId(value.id) ? { version: value.version, id: value.id } : null;
+  }
+  function serializeAboutAccountResponse(value) {
+    const canonical = value?.ok === true
+      ? { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value.id, ok: true, payload: value.payload }
+      : { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: value?.id, ok: false,
+        code: value?.code, status: value?.status, retryAfterMs: value?.retryAfterMs };
+    if (!validOpaqueRequestId(canonical.id) || typeof canonical.ok !== 'boolean'
+      || (!canonical.ok && (!CODES.has(canonical.code) || !validStatus(canonical.status)
+        || !validRetry(canonical.retryAfterMs)))) throw new TypeError('Invalid response');
+    let serialized;
+    try { serialized = JSON.stringify(canonical); } catch { throw new TypeError('Invalid response'); }
+    if (typeof serialized !== 'string' || serialized.length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT) {
+      throw new TypeError('Invalid response');
+    }
+    return serialized;
   }
 
   const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
@@ -481,12 +539,17 @@
     const requests = new Map();
     let active = true;
     const emit = (detail) => {
-      if (!active || JSON.stringify(detail).length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT) return;
-      document.dispatchEvent(new CustomEvent(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE,
-        { detail, bubbles: false, cancelable: false, composed: false }));
+      if (!active) return false;
+      let serialized;
+      try { serialized = serializeAboutAccountResponse(detail); } catch { return false; }
+      try {
+        document.dispatchEvent(new CustomEvent(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE,
+          { detail: serialized, bubbles: false, cancelable: false, composed: false }));
+      } catch { return false; }
+      return true;
     };
     const fail = (id, code, status = null, retryAfterMs = null) => emit({
-      version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, ok: false, code, status, retryAfterMs,
+      id, ok: false, code, status, retryAfterMs,
     });
     const request = async (event) => {
       const command = parseAboutAccountRequestDetail(event?.detail);
@@ -515,20 +578,29 @@
           cache: 'no-store', redirect: 'error', headers, signal: controller.signal }); } catch (error) {
           fail(command.id, controller.signal.aborted || error?.name === 'AbortError' ? 'ABORTED' : 'NETWORK'); return;
         }
-        if (!response || typeof response.status !== 'number' || typeof response.json !== 'function') {
+        let ok; let status; let json;
+        try { ok = response?.ok; status = response?.status; json = response?.json; } catch {
           fail(command.id, 'INVALID_RESPONSE'); return;
         }
-        if (!response.ok) {
-          fail(command.id, statusCode(response.status), response.status,
-            response.status === 429 ? parseRateLimitDelay(response.headers) : null); return;
+        if (typeof ok !== 'boolean' || !Number.isInteger(status) || status < 100 || status > 599
+          || typeof json !== 'function') {
+          fail(command.id, 'INVALID_RESPONSE'); return;
+        }
+        if (!ok) {
+          if ([401, 403].includes(status)) {
+            invalidatePrivateXAboutAccountSnapshot(capture, 'authentication');
+          } else if ([400, 404].includes(status)) {
+            invalidatePrivateXAboutAccountSnapshot(capture, 'query');
+          }
+          let retryAfterMs = null;
+          if (status === 429) {
+            try { retryAfterMs = parseRateLimitDelay(response.headers); } catch { retryAfterMs = 60_000; }
+          }
+          fail(command.id, statusCode(status), status, retryAfterMs); return;
         }
         let payload;
-        try { payload = await response.json(); } catch { fail(command.id, 'INVALID_PAYLOAD'); return; }
-        const detail = { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: command.id, ok: true, payload };
-        let serialized;
-        try { serialized = JSON.stringify(detail); } catch { serialized = ''; }
-        if (!serialized || serialized.length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT) fail(command.id, 'INVALID_PAYLOAD');
-        else emit(detail);
+        try { payload = await Reflect.apply(json, response, []); } catch { fail(command.id, 'INVALID_PAYLOAD'); return; }
+        if (!emit({ id: command.id, ok: true, payload })) fail(command.id, 'INVALID_PAYLOAD');
       } finally { requests.delete(command.id); }
     };
     const cancel = (event) => {

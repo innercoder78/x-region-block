@@ -37,6 +37,9 @@
 | Empty initial scan remains informational; later mutation processes | Not run | Not run | |
 | Global concurrency ≤4 and start spacing ≥200 ms | Not run | Not run | |
 | Cooldown and bounded retries observed | Not run | Not run | Record only sanitized HTTP category. |
+| String-only cross-world request/cancel/response protocol | Not run | Not run | Record no event contents. |
+| Validated recovery state and global metadata invalidation | Not run | Not run | Record state change only, never credentials. |
+| 30-second bridge timeout releases scheduler slot | Not run | Not run | Record only the bridge category. |
 
 ## Per-surface results
 

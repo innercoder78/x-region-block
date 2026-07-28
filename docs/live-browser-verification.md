@@ -92,7 +92,10 @@ that a later mutation is processed. Observe that the global scheduler never exce
 in-flight lookups, starts requests at least 200 ms apart, retains queued work during one
 global 429 cooldown, retries a 429 once, and retries network/5xx failures after one and two
 seconds. Authentication and query-ID rejection each wait for genuinely changed metadata
-and retry once.
+and retry once. Request, cancellation, and response event details are bounded JSON strings;
+the scheduler consumes only validated recovery generations, query IDs, and opaque authentication
+fingerprints. Rejected authentication or query state is invalidated globally, and a page attempt
+which produces no response is cancelled after 30 seconds so its scheduler slot is released.
 
 Record diagnostics only by sanitized category: discovery, bridge, metadata, queue, HTTP,
 parsing, presentation, route, or cleanup. For HTTP failures record only a category such as

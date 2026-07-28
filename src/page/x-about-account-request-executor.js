@@ -1,12 +1,12 @@
 import {
   X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
-  X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE,
-  X_ABOUT_ACCOUNT_RESPONSE_LIMIT, parseAboutAccountCancelDetail,
-  parseAboutAccountRequestDetail,
+  X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, parseAboutAccountCancelDetail,
+  parseAboutAccountRequestDetail, serializeAboutAccountResponse,
 } from '../shared/x-about-account-request-event.js';
 import { metadataHeaderNames, validMetadataHeaderValue } from '../shared/x-about-account-request-metadata-policy.js';
 import { X_ABOUT_ACCOUNT_OPERATION_NAME, isValidXAboutAccountQueryId } from '../shared/x-about-account-query.js';
-import { executeWithOriginalXFetch, readPrivateXAboutAccountSnapshot } from './x-about-account-request-capture.js';
+import { executeWithOriginalXFetch, invalidatePrivateXAboutAccountSnapshot,
+  readPrivateXAboutAccountSnapshot } from './x-about-account-request-capture.js';
 
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 const statusCode = (status) => {
@@ -27,12 +27,17 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
   const requests = new Map();
   let active = true;
   const emit = (detail) => {
-    if (!active || JSON.stringify(detail).length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT) return;
-    document.dispatchEvent(new CustomEvent(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE,
-      { detail, bubbles: false, cancelable: false, composed: false }));
+    if (!active) return false;
+    let serialized;
+    try { serialized = serializeAboutAccountResponse(detail); } catch { return false; }
+    try {
+      document.dispatchEvent(new CustomEvent(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE,
+        { detail: serialized, bubbles: false, cancelable: false, composed: false }));
+    } catch { return false; }
+    return true;
   };
   const fail = (id, code, status = null, retryAfterMs = null) => emit({
-    version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, ok: false, code, status, retryAfterMs,
+    id, ok: false, code, status, retryAfterMs,
   });
   const request = async (event) => {
     const command = parseAboutAccountRequestDetail(event?.detail);
@@ -61,20 +66,29 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
         cache: 'no-store', redirect: 'error', headers, signal: controller.signal }); } catch (error) {
         fail(command.id, controller.signal.aborted || error?.name === 'AbortError' ? 'ABORTED' : 'NETWORK'); return;
       }
-      if (!response || typeof response.status !== 'number' || typeof response.json !== 'function') {
+      let ok; let status; let json;
+      try { ok = response?.ok; status = response?.status; json = response?.json; } catch {
         fail(command.id, 'INVALID_RESPONSE'); return;
       }
-      if (!response.ok) {
-        fail(command.id, statusCode(response.status), response.status,
-          response.status === 429 ? parseRateLimitDelay(response.headers) : null); return;
+      if (typeof ok !== 'boolean' || !Number.isInteger(status) || status < 100 || status > 599
+        || typeof json !== 'function') {
+        fail(command.id, 'INVALID_RESPONSE'); return;
+      }
+      if (!ok) {
+        if ([401, 403].includes(status)) {
+          invalidatePrivateXAboutAccountSnapshot(capture, 'authentication');
+        } else if ([400, 404].includes(status)) {
+          invalidatePrivateXAboutAccountSnapshot(capture, 'query');
+        }
+        let retryAfterMs = null;
+        if (status === 429) {
+          try { retryAfterMs = parseRateLimitDelay(response.headers); } catch { retryAfterMs = 60_000; }
+        }
+        fail(command.id, statusCode(status), status, retryAfterMs); return;
       }
       let payload;
-      try { payload = await response.json(); } catch { fail(command.id, 'INVALID_PAYLOAD'); return; }
-      const detail = { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: command.id, ok: true, payload };
-      let serialized;
-      try { serialized = JSON.stringify(detail); } catch { serialized = ''; }
-      if (!serialized || serialized.length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT) fail(command.id, 'INVALID_PAYLOAD');
-      else emit(detail);
+      try { payload = await Reflect.apply(json, response, []); } catch { fail(command.id, 'INVALID_PAYLOAD'); return; }
+      if (!emit({ id: command.id, ok: true, payload })) fail(command.id, 'INVALID_PAYLOAD');
     } finally { requests.delete(command.id); }
   };
   const cancel = (event) => {

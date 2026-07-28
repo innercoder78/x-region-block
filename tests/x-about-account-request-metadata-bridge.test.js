@@ -38,7 +38,8 @@ describe('X About Account request metadata bridge', () => {
     const errors = [];
     const bridge = createXAboutAccountRequestMetadataBridge(content, { onError: (error) => errors.push(error) });
     expect(X_ABOUT_ACCOUNT_REQUEST_METADATA_BRIDGE_VERSION).toBe(1);
-    expect(Object.keys(bridge)).toEqual(['start', 'stop', 'createRequest', 'hasSnapshot', 'isActive']);
+    expect(Object.keys(bridge)).toEqual(['start', 'stop', 'createRequest', 'invalidateRecovery',
+      'getRecoveryState', 'hasSnapshot', 'isActive']);
     expect(Object.isFrozen(bridge)).toBe(true);
     bridge.start();
     const detail = JSON.stringify({
@@ -46,6 +47,10 @@ describe('X About Account request metadata bridge', () => {
       headers: { authorization: 'Bearer test-only', 'x-csrf-token': 'test-only' },
     });
     document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, { detail }));
+    expect(Object.keys(bridge.getRecoveryState())).toEqual([
+      'version', 'generation', 'queryId', 'authenticationFingerprint',
+    ]);
+    expect(JSON.stringify(bridge.getRecoveryState())).not.toContain('test-only');
     const identity = createAccountIdentity({ handle: 'Different', source: null });
     const first = bridge.createRequest(identity, { version: 1 });
     const second = bridge.createRequest(identity, { version: 1 });

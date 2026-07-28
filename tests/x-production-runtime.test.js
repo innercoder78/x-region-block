@@ -162,6 +162,24 @@ describe('X production content runtime', () => {
     runtime.stop();
   });
 
+  it('maps categorized failures to distinct fixed diagnostics without the old generic boundary', async () => {
+    mocks.snapshot = true;
+    const fake = scope(); fake.console = { info: vi.fn(), warn: vi.fn() };
+    const runtime = createXProductionContentRuntime(fake); await runtime.start();
+    for (const code of ['NETWORK', 'INVALID_PAYLOAD', 'HTTP_429']) {
+      const error = new Error('private https://x.com/?token=secret @handle');
+      Object.defineProperty(error, 'code', { value: code });
+      mocks.routeOptions.onError(error);
+    }
+    const output = fake.console.warn.mock.calls.flat().join('\n');
+    expect(output).toContain('network request failed');
+    expect(output).toContain('response payload was invalid');
+    expect(output).toContain('scheduler cooldown started');
+    expect(output).not.toContain('Account processing encountered a lifecycle error.');
+    expect(output).not.toMatch(/secret|@handle|https?:|token=/i);
+    runtime.stop();
+  });
+
   it('stops a settings runtime that resolves after stop and supports a clean restart', async () => {
     const late = deferred(); mocks.settingsPromise = late.promise;
     const runtime = createXProductionContentRuntime(scope());

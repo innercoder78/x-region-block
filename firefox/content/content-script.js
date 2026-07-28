@@ -3718,6 +3718,8 @@
 
   const X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION = 1;
 
+  const X_ABOUT_ACCOUNT_RECOVERY_STATE_VERSION = 1;
+
   const supportedOrigins$2 = new Set(['https://x.com', 'https://twitter.com']);
   const IDENTITY_KEYS = Object.freeze([
     'handle', 'displayHandle', 'profileUrl', 'accountId', 'allowlistKey', 'source',
@@ -3808,6 +3810,9 @@
     let listener = null;
     let startup = null;
     let snapshot = null;
+    let recoveryGeneration = 0;
+    let authenticationGeneration = 0;
+    let acceptedAuthenticationFingerprint = null;
     let rejected = null;
     let refreshWaiters = new Set();
     const report = (error) => { try { onError(error); } catch { /* Error boundary is isolated. */ } };
@@ -3828,6 +3833,12 @@
             && createMetadataAuthenticationFingerprint(normalized.headers) === rejected.fingerprint) return;
           if (rejected?.kind === 'query' && normalized.queryId === rejected.queryId) return;
           snapshot = normalized;
+          recoveryGeneration += 1;
+          const authenticationFingerprint = createMetadataAuthenticationFingerprint(normalized.headers);
+          if (authenticationFingerprint !== acceptedAuthenticationFingerprint) {
+            acceptedAuthenticationFingerprint = authenticationFingerprint;
+            authenticationGeneration += 1;
+          }
           rejected = null;
           const waiters = refreshWaiters;
           refreshWaiters = new Set();
@@ -3931,6 +3942,13 @@
         snapshot = null;
       }, enumerable: false, configurable: false, writable: false,
     });
+    const invalidateRecovery = (kind) => createRequest.invalidateSnapshot(kind);
+    const getRecoveryState = () => {
+      if (snapshot === null) return null;
+      return Object.freeze({ version: X_ABOUT_ACCOUNT_RECOVERY_STATE_VERSION,
+        generation: recoveryGeneration, queryId: snapshot.queryId,
+        authenticationFingerprint: `auth-${authenticationGeneration}` });
+    };
     Object.defineProperty(createRequest, 'waitForFreshSnapshot', {
       value: (signal) => new Promise((resolve, reject) => {
         if (snapshot !== null) { resolve(); return; }
@@ -3950,7 +3968,8 @@
       }), enumerable: false, configurable: false, writable: false,
     });
 
-    return Object.freeze({ start, stop, createRequest, hasSnapshot: () => snapshot !== null, isActive: () => active });
+    return Object.freeze({ start, stop, createRequest, invalidateRecovery, getRecoveryState,
+      hasSnapshot: () => snapshot !== null, isActive: () => active });
   }
 
   const X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION = 1;
@@ -3958,44 +3977,55 @@
   const X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE = 'x-region-block:about-account:cancel';
   const X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE = 'x-region-block:about-account:response';
   const X_ABOUT_ACCOUNT_RESPONSE_LIMIT = 262_144;
+  const X_ABOUT_ACCOUNT_RETRY_LIMIT = 300_000;
 
   const ID = /^[A-Za-z0-9_-]{16,64}$/;
   const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
   const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK',
     'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
     'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
+  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
   const plain$1 = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
-    && [null, Object.prototype].includes(Object.getPrototypeOf(value));
+    && Object.getPrototypeOf(value) === Object.prototype;
   const exact = (value, keys) => plain$1(value) && Reflect.ownKeys(value).length === keys.length
-    && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+    && Reflect.ownKeys(value).every((key) => typeof key === 'string') && keys.every((key) => own(value, key));
+  const validStatus = (value) => value === null
+    || (Number.isInteger(value) && value >= 100 && value <= 599);
+  const validRetry = (value) => value === null
+    || (Number.isInteger(value) && value >= 0 && value <= X_ABOUT_ACCOUNT_RETRY_LIMIT);
+  const canonicalParse = (input, limit) => {
+    if (typeof input !== 'string' || input.length === 0 || input.length > limit) return null;
+    try {
+      const value = JSON.parse(input);
+      return JSON.stringify(value) === input ? value : null;
+    } catch { return null; }
+  };
 
   function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
   function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
-  function createAboutAccountRequestDetail(id, handle) {
+  function serializeAboutAccountRequest(id, handle) {
     if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle)) throw new TypeError('Invalid request');
-    return Object.freeze({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle });
+    return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle });
   }
-  function createAboutAccountCancelDetail(id) {
+  function serializeAboutAccountCancel(id) {
     if (!validOpaqueRequestId(id)) throw new TypeError('Invalid cancellation');
-    return Object.freeze({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id });
+    return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id });
   }
-  function parseAboutAccountResponseDetail(value) {
-    if (!plain$1(value)) return null;
-    let serialized;
-    try { serialized = JSON.stringify(value); } catch { return null; }
-    if (serialized.length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT || !validOpaqueRequestId(value.id)
-      || value.version !== X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION || typeof value.ok !== 'boolean') return null;
+  function parseAboutAccountResponseDetail(input) {
+    const value = canonicalParse(input, X_ABOUT_ACCOUNT_RESPONSE_LIMIT);
+    if (!value || value.version !== X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
+      || !validOpaqueRequestId(value.id) || typeof value.ok !== 'boolean') return null;
     if (value.ok) return exact(value, ['version', 'id', 'ok', 'payload'])
       ? { version: value.version, id: value.id, ok: true, payload: value.payload } : null;
     return exact(value, ['version', 'id', 'ok', 'code', 'status', 'retryAfterMs'])
-      && CODES.has(value.code) && (value.status === null || Number.isInteger(value.status))
-      && (value.retryAfterMs === null || (Number.isInteger(value.retryAfterMs) && value.retryAfterMs >= 0))
+      && CODES.has(value.code) && validStatus(value.status) && validRetry(value.retryAfterMs)
       ? { version: value.version, id: value.id, ok: false, code: value.code,
         status: value.status, retryAfterMs: value.retryAfterMs } : null;
   }
 
   const MAX_IN_FLIGHT = 4;
   const START_INTERVAL = 200;
+  const BRIDGE_TIMEOUT = 30_000;
   const abortError = () => Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
   const codedError = (code, status = null) => {
     const error = new Error('About Account lookup failed');
@@ -4005,34 +4035,46 @@
   function createXAboutAccountPageTransport(globalScope, options = {}) {
     const { document, CustomEvent } = globalScope;
     const now = options.now ?? (() => Date.now());
-    const delay = options.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const setTimer = options.setTimeout ?? ((callback, ms) => setTimeout(callback, ms));
+    const clearTimer = options.clearTimeout ?? ((timer) => clearTimeout(timer));
+    const onMetadataRejected = options.onMetadataRejected ?? (() => {});
     let sequence = 0; let active = true; let inFlight = 0; let lastStart = -Infinity;
-    let cooldownUntil = 0; let timerPending = false;
-    let metadataQuery = null; let metadataAuth = null;
+    let cooldownUntil = 0; let scheduleTimer = null;
+    let recoveryState = null; let rejectedState = null;
     const queue = []; const pending = new Map(); const waitingMetadata = new Set();
     const dispatch = (type, detail) => document.dispatchEvent(new CustomEvent(type,
       { detail, bubbles: false, cancelable: false, composed: false }));
     const schedule = () => {
-      if (!active || timerPending || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
+      if (!active || scheduleTimer !== null || rejectedState !== null || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
       const wait = Math.max(0, cooldownUntil - now(), START_INTERVAL - (now() - lastStart));
       if (wait > 0) {
-        timerPending = true;
-        void delay(wait).then(() => { timerPending = false; schedule(); });
+        scheduleTimer = setTimer(() => { scheduleTimer = null; schedule(); }, wait);
         return;
       }
       const entry = queue.shift();
       if (!entry || entry.cancelled) { schedule(); return; }
       entry.started = true; inFlight += 1; lastStart = now();
-      dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, createAboutAccountRequestDetail(entry.id, entry.handle));
+      try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, serializeAboutAccountRequest(entry.id, entry.handle)); }
+      catch {
+        entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
+        entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
+      }
+      entry.attemptTimer = setTimer(() => {
+        if (!active || !entry.started || pending.get(entry.id) !== entry) return;
+        entry.attemptTimer = null; entry.started = false; inFlight = Math.max(0, inFlight - 1);
+        dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(entry.id));
+        pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE'));
+        schedule();
+      }, BRIDGE_TIMEOUT);
       schedule();
     };
     const enqueueAttempt = (entry) => { entry.started = false; queue.push(entry); schedule(); };
     const response = (event) => {
       const result = parseAboutAccountResponseDetail(event?.detail);
-      // console.info('DEBUG', result);
       if (result === null) return;
       const entry = pending.get(result.id);
       if (!entry || !entry.started) return;
+      if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
       entry.started = false; inFlight = Math.max(0, inFlight - 1);
       if (entry.cancelled) { schedule(); return; }
       if (result.ok) { pending.delete(entry.id); entry.cleanup(); entry.resolve(result.payload); schedule(); return; }
@@ -4045,41 +4087,58 @@
         retryDelay = 1000 * (2 ** entry.transientRetries); entry.transientRetries += 1;
       } else if (['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(code)
         && entry.metadataRetries++ < 1) {
-        entry.rejectedMetadata = ['HTTP_400', 'HTTP_404'].includes(code) ? metadataQuery : metadataAuth;
         entry.metadataKind = ['HTTP_400', 'HTTP_404'].includes(code) ? 'query' : 'auth';
+        entry.rejectedMetadata = entry.metadataKind === 'query'
+          ? recoveryState?.queryId : recoveryState?.authenticationFingerprint;
+        rejectedState = { kind: entry.metadataKind, value: entry.rejectedMetadata };
+        try { onMetadataRejected(entry.metadataKind); } catch { /* categorized by owner */ }
         waitingMetadata.add(entry);
         schedule(); return;
       }
       if (retryDelay !== null) {
-        void delay(retryDelay).then(() => { if (active && !entry.cancelled) enqueueAttempt(entry); });
+        entry.delayTimer = setTimer(() => {
+          entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
+        }, retryDelay);
       } else {
         pending.delete(entry.id); entry.cleanup();
         entry.reject(code === 'ABORTED' ? abortError() : codedError(code, result.status));
       }
       schedule();
     };
-    const metadata = (event) => {
-      try {
-        const value = JSON.parse(event?.detail);
-        metadataQuery = value.queryId;
-        metadataAuth = JSON.stringify([value.headers?.authorization, value.headers?.['x-csrf-token'],
-          value.headers?.['x-guest-token'], value.headers?.['x-twitter-auth-type']]);
-      } catch { return; }
+    const updateRecoveryState = (value) => {
+      if (value === null || typeof value !== 'object' || Array.isArray(value)
+        || Object.getPrototypeOf(value) !== Object.prototype
+        || Reflect.ownKeys(value).length !== 4 || value.version !== 1
+        || !Number.isInteger(value.generation) || value.generation < 1
+        || !isValidXAboutAccountQueryId(value.queryId)
+        || typeof value.authenticationFingerprint !== 'string'
+        || value.authenticationFingerprint.length < 1 || value.authenticationFingerprint.length > 65_536) return false;
+      recoveryState = { version: 1, generation: value.generation, queryId: value.queryId,
+        authenticationFingerprint: value.authenticationFingerprint };
+      if (rejectedState !== null) {
+        const current = rejectedState.kind === 'query'
+          ? recoveryState.queryId : recoveryState.authenticationFingerprint;
+        if (current === rejectedState.value) return true;
+        rejectedState = null;
+      }
       for (const entry of [...waitingMetadata]) if (active && !entry.cancelled) {
-        if (entry.rejectedMetadata === null && entry.metadataKind === 'query') {
-          entry.rejectedMetadata = metadataQuery;
-          continue;
-        }
         const fresh = entry.metadataKind === 'query'
-          ? metadataQuery !== entry.rejectedMetadata : metadataAuth !== entry.rejectedMetadata;
+          ? recoveryState.queryId !== entry.rejectedMetadata
+          : recoveryState.authenticationFingerprint !== entry.rejectedMetadata;
         if (!fresh) continue;
         waitingMetadata.delete(entry);
         // Avoid starting reentrantly inside the ordinary page request being observed.
-        void delay(0).then(() => { if (active && !entry.cancelled) enqueueAttempt(entry); });
+        entry.delayTimer = setTimer(() => {
+          entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
+        }, 0);
       }
+      schedule();
+      return true;
     };
     document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
-    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, metadata);
+    if (options.recoveryState !== undefined && !updateRecoveryState(options.recoveryState)) {
+      throw new TypeError('Invalid recovery state');
+    }
     function loadPayload(identity, context) {
       let canonical;
       try { canonical = createAccountIdentity(identity); } catch { canonical = null; }
@@ -4091,12 +4150,16 @@
       const id = `${now().toString(36).padStart(10, '0')}_${(++sequence).toString(36).padStart(8, '0')}`;
       return new Promise((resolve, reject) => {
         const entry = { id, handle: canonical.handle, resolve, reject, started: false, cancelled: false,
-          transientRetries: 0, metadataRetries: 0, rateRetries: 0, cleanup: null };
+          transientRetries: 0, metadataRetries: 0, rateRetries: 0, cleanup: null,
+          attemptTimer: null, delayTimer: null };
         const cancel = () => {
           if (entry.cancelled) return; entry.cancelled = true; pending.delete(id);
           const index = queue.indexOf(entry); if (index >= 0) queue.splice(index, 1);
+          waitingMetadata.delete(entry);
+          if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
+          if (entry.delayTimer !== null) { clearTimer(entry.delayTimer); entry.delayTimer = null; }
           if (entry.started) { inFlight = Math.max(0, inFlight - 1);
-            dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, createAboutAccountCancelDetail(id)); }
+            dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(id)); }
           entry.cleanup(); reject(abortError()); schedule();
         };
         entry.cleanup = () => context.signal.removeEventListener('abort', cancel);
@@ -4104,13 +4167,15 @@
         pending.set(id, entry); enqueueAttempt(entry);
       });
     }
-    return Object.freeze({ loadPayload, notifyMetadata: metadata, stop() {
+    return Object.freeze({ loadPayload, updateRecoveryState, stop() {
       if (!active) return; active = false;
+      if (scheduleTimer !== null) { clearTimer(scheduleTimer); scheduleTimer = null; }
       document.removeEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
-      document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, metadata);
       for (const entry of pending.values()) {
         entry.cancelled = true; entry.cleanup();
-        if (entry.started) dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, createAboutAccountCancelDetail(entry.id));
+        if (entry.attemptTimer !== null) clearTimer(entry.attemptTimer);
+        if (entry.delayTimer !== null) clearTimer(entry.delayTimer);
+        if (entry.started) dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(entry.id));
         entry.reject(abortError());
       }
       pending.clear(); waitingMetadata.clear(); queue.length = 0; inFlight = 0;
@@ -4462,6 +4527,31 @@
       try { globalScope.console?.[level]?.(`[X Region Reveal & Block] ${code}`); } catch { /* local only */ }
     };
   }
+  const DIAGNOSTICS = Object.freeze({
+    DISCOVERY: 'Account target discovery failed.', PAGE_BRIDGE: 'About Account request bridge unavailable.',
+    METADATA: 'About Account metadata handling failed.', QUEUE: 'About Account request queue failed.',
+    HTTP_400: 'About Account request was rejected (HTTP 400).', HTTP_401: 'About Account authentication metadata rejected.',
+    HTTP_403: 'About Account authentication metadata rejected.', HTTP_404: 'About Account query ID rejected.',
+    HTTP_429: 'About Account lookup rate limited; scheduler cooldown started.', HTTP_5XX: 'About Account server request failed.',
+    NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
+    INVALID_PAYLOAD: 'About Account response payload was invalid.', PARSING: 'About Account payload parsing failed.',
+    PRESENTATION: 'Account target presentation failed.', ROUTE: 'Account route processing failed.',
+    CLEANUP: 'Account processing cleanup failed.', UNKNOWN: 'Account processing failed.',
+  });
+
+  function diagnosticCategory(error) {
+    const code = typeof error?.code === 'string' ? error.code : '';
+    if (Object.hasOwn(DIAGNOSTICS, code)) return code;
+    const message = typeof error?.message === 'string' ? error.message : '';
+    if (/metadata/i.test(message)) return 'METADATA';
+    if (/discover|target change/i.test(message)) return 'DISCOVERY';
+    if (/present/i.test(message)) return 'PRESENTATION';
+    if (/parse/i.test(message)) return 'PARSING';
+    if (/route|navigation/i.test(message)) return 'ROUTE';
+    if (/stop|clean|cancel/i.test(message)) return 'CLEANUP';
+    if (/broker|queue|load account/i.test(message)) return 'QUEUE';
+    return 'UNKNOWN';
+  }
 
   function usableExtensionApi(namespace) {
     try {
@@ -4511,7 +4601,10 @@
     let pending = null;
     let lifecycle = null;
     const diagnostic = createDiagnostic(globalScope);
-    const report = () => diagnostic('Account processing encountered a lifecycle error.', 'warn');
+    const report = (error) => {
+      const category = diagnosticCategory(error);
+      diagnostic(DIAGNOSTICS[category], 'warn');
+    };
 
     const owned = (state) => lifecycle === state && active && !state.claimed
       && generation === state.generation;
@@ -4579,8 +4672,12 @@
       state.routeStarting = true;
       let candidate = null;
       try {
+        const recoveryState = typeof state.bridge.getRecoveryState === 'function'
+          ? state.bridge.getRecoveryState() : undefined;
         const transport = createXAboutAccountPageTransport({
           document: dependencies.document, CustomEvent: dependencies.CustomEvent,
+          recoveryState,
+          onMetadataRejected: (kind) => state.bridge.invalidateRecovery?.(kind),
         });
         if (!owned(state)) throw new Error();
         state.transport = transport;
@@ -4657,9 +4754,10 @@
         dependencies.Promise.resolve().then(() => {
           state.metadataCheckPending = false;
           if (owned(state)) {
-            state.transport?.notifyMetadata();
-            if (ready && state.bridge?.hasSnapshot()) state.routeController?.retryRecoverable();
-            else startRoute(state);
+            const recoveryState = state.bridge && typeof state.bridge.getRecoveryState === 'function'
+              ? state.bridge.getRecoveryState() : null;
+            if (recoveryState !== null) state.transport?.updateRecoveryState(recoveryState);
+            if (!ready) startRoute(state);
           }
         });
       };

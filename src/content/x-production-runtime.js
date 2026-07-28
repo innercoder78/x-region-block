@@ -20,6 +20,31 @@ function createDiagnostic(globalScope) {
     try { globalScope.console?.[level]?.(`[X Region Reveal & Block] ${code}`); } catch { /* local only */ }
   };
 }
+const DIAGNOSTICS = Object.freeze({
+  DISCOVERY: 'Account target discovery failed.', PAGE_BRIDGE: 'About Account request bridge unavailable.',
+  METADATA: 'About Account metadata handling failed.', QUEUE: 'About Account request queue failed.',
+  HTTP_400: 'About Account request was rejected (HTTP 400).', HTTP_401: 'About Account authentication metadata rejected.',
+  HTTP_403: 'About Account authentication metadata rejected.', HTTP_404: 'About Account query ID rejected.',
+  HTTP_429: 'About Account lookup rate limited; scheduler cooldown started.', HTTP_5XX: 'About Account server request failed.',
+  NETWORK: 'About Account network request failed.', INVALID_RESPONSE: 'About Account response was invalid.',
+  INVALID_PAYLOAD: 'About Account response payload was invalid.', PARSING: 'About Account payload parsing failed.',
+  PRESENTATION: 'Account target presentation failed.', ROUTE: 'Account route processing failed.',
+  CLEANUP: 'Account processing cleanup failed.', UNKNOWN: 'Account processing failed.',
+});
+
+function diagnosticCategory(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  if (Object.hasOwn(DIAGNOSTICS, code)) return code;
+  const message = typeof error?.message === 'string' ? error.message : '';
+  if (/metadata/i.test(message)) return 'METADATA';
+  if (/discover|target change/i.test(message)) return 'DISCOVERY';
+  if (/present/i.test(message)) return 'PRESENTATION';
+  if (/parse/i.test(message)) return 'PARSING';
+  if (/route|navigation/i.test(message)) return 'ROUTE';
+  if (/stop|clean|cancel/i.test(message)) return 'CLEANUP';
+  if (/broker|queue|load account/i.test(message)) return 'QUEUE';
+  return 'UNKNOWN';
+}
 
 function usableExtensionApi(namespace) {
   try {
@@ -69,7 +94,10 @@ export function createXProductionContentRuntime(globalScope) {
   let pending = null;
   let lifecycle = null;
   const diagnostic = createDiagnostic(globalScope);
-  const report = () => diagnostic('Account processing encountered a lifecycle error.', 'warn');
+  const report = (error) => {
+    const category = diagnosticCategory(error);
+    diagnostic(DIAGNOSTICS[category], 'warn');
+  };
 
   const owned = (state) => lifecycle === state && active && !state.claimed
     && generation === state.generation;
@@ -137,8 +165,12 @@ export function createXProductionContentRuntime(globalScope) {
     state.routeStarting = true;
     let candidate = null;
     try {
+      const recoveryState = typeof state.bridge.getRecoveryState === 'function'
+        ? state.bridge.getRecoveryState() : undefined;
       const transport = createXAboutAccountPageTransport({
         document: dependencies.document, CustomEvent: dependencies.CustomEvent,
+        recoveryState,
+        onMetadataRejected: (kind) => state.bridge.invalidateRecovery?.(kind),
       });
       if (!owned(state)) throw new Error();
       state.transport = transport;
@@ -215,9 +247,10 @@ export function createXProductionContentRuntime(globalScope) {
       dependencies.Promise.resolve().then(() => {
         state.metadataCheckPending = false;
         if (owned(state)) {
-          state.transport?.notifyMetadata();
-          if (ready && state.bridge?.hasSnapshot()) state.routeController?.retryRecoverable();
-          else startRoute(state);
+          const recoveryState = state.bridge && typeof state.bridge.getRecoveryState === 'function'
+            ? state.bridge.getRecoveryState() : null;
+          if (recoveryState !== null) state.transport?.updateRecoveryState(recoveryState);
+          if (!ready) startRoute(state);
         }
       });
     };

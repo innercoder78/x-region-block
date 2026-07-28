@@ -24,6 +24,10 @@ export function executeWithOriginalXFetch(controller, ...args) {
   if (!execute) throw new TypeError('Inactive request capture');
   return execute(...args);
 }
+export function invalidatePrivateXAboutAccountSnapshot(controller, kind) {
+  const invalidate = privateCaptures.get(controller)?.invalidate;
+  return invalidate ? invalidate(kind) : false;
+}
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const isPlainObject = (value) => {
@@ -137,9 +141,15 @@ function captureSnapshot(state, input, init = undefined, suppliedXhrHeaders = un
     if (!validMetadataHeaderValue(value) || !metadataHeaderNames().includes(name)) return;
   }
   if (!hasOwn(headers, 'authorization') || !hasOwn(headers, 'x-csrf-token')) return;
-  if (operation === X_ABOUT_ACCOUNT_OPERATION_NAME) state.liveQueryId = queryId;
+  const authenticationFingerprint = createMetadataAuthenticationFingerprint(headers);
+  if (authenticationFingerprint === state.rejectedAuthentication) return;
+  if (operation === X_ABOUT_ACCOUNT_OPERATION_NAME) {
+    if (queryId === state.rejectedQueryId) return;
+    state.liveQueryId = queryId;
+  }
+  if (state.rejectedQueryId !== null && state.liveQueryId === state.rejectedQueryId) return;
   const publicationKey = JSON.stringify([
-    createMetadataAuthenticationFingerprint(headers),
+    authenticationFingerprint,
     state.liveQueryId ?? X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID,
   ]);
   if (publicationKey === state.publicationKey) return;
@@ -241,6 +251,19 @@ export function installXAboutAccountRequestCapture(globalScope) {
     try { return JSON.parse(state.snapshot); } catch { return null; }
   };
   privateRead.execute = (...args) => Reflect.apply(state.fetch, state.scope, args);
+  privateRead.invalidate = (kind) => {
+    if (phase !== 'active' || !state?.snapshot) return false;
+    let current;
+    try { current = JSON.parse(state.snapshot); } catch { return false; }
+    if (kind === 'authentication') {
+      state.rejectedAuthentication = createMetadataAuthenticationFingerprint(current.headers);
+    } else if (kind === 'query') {
+      state.rejectedQueryId = current.queryId;
+      if (state.liveQueryId === current.queryId) state.liveQueryId = null;
+    } else return false;
+    state.snapshot = null; state.publicationKey = null;
+    return true;
+  };
   privateCaptures.set(controller, privateRead);
   entry.controller = controller;
   installations.set(scope, entry);
@@ -274,7 +297,8 @@ export function installXAboutAccountRequestCapture(globalScope) {
     state = { scope, fetch, document, documentAddEventListener,
       documentRemoveEventListener, documentDispatchEvent, CustomEvent, URL, Headers, Request, origin,
       urlHref, requestUrl, requestMethod, requestHeaders, headersGet,
-      snapshot: null, publicationKey: null, liveQueryId: null, active: false };
+      snapshot: null, publicationKey: null, liveQueryId: null, active: false,
+      rejectedAuthentication: null, rejectedQueryId: null };
     if (typeof XMLHttpRequest === 'function') {
       const prototype = read(() => XMLHttpRequest.prototype);
       const originals = {

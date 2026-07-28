@@ -104,9 +104,15 @@ The page capture passively observes eligible same-origin GraphQL GETs made with 
 XMLHttpRequest without modifying them or reading bodies or responses. Generic traffic
 provides authentication headers; a live `AboutAccountQuery` also refreshes the query ID.
 The isolated world sends only a protocol version, opaque request ID, and canonical handle
-over exact same-document event schemas. The MAIN-world executor constructs the canonical
+as bounded JSON strings over exact same-document event schemas; cancellation and response
+details are strings as well, so neither side depends on cross-realm object prototypes. The
+MAIN-world executor constructs the canonical
 same-origin URL and closed header set from its private metadata snapshot and calls the
-original page fetch. Responses are bounded and revalidated by the isolated bridge.
+original page fetch. Responses are bounded and revalidated by the isolated bridge. The
+scheduler receives only the validated bridge's generation, query ID, and opaque authentication
+fingerprint. Authentication or query rejection globally invalidates the corresponding private
+page snapshot and pauses work until the first genuinely changed validated state. A 30-second
+bridge-response timeout cancels the page attempt and releases its scheduler slot.
 Normal empty discovery at `document_start` is informational: mutation discovery remains
 active. Diagnostics distinguish discovery, bridge, metadata, queue/HTTP, parsing,
 presentation, route, and cleanup categories without recording identities or request data.

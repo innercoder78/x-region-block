@@ -2,13 +2,14 @@ import { createAccountIdentity } from '../shared/account-identity.js';
 import { X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION } from './x-about-account-payload-broker.js';
 import {
   X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
-  X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, createAboutAccountCancelDetail,
-  createAboutAccountRequestDetail, parseAboutAccountResponseDetail,
+  X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, serializeAboutAccountCancel,
+  serializeAboutAccountRequest, parseAboutAccountResponseDetail,
 } from '../shared/x-about-account-request-event.js';
-import { X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE } from '../shared/x-about-account-request-metadata-event.js';
+import { isValidXAboutAccountQueryId } from '../shared/x-about-account-query.js';
 
 const MAX_IN_FLIGHT = 4;
 const START_INTERVAL = 200;
+const BRIDGE_TIMEOUT = 30_000;
 const abortError = () => Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
 const codedError = (code, status = null) => {
   const error = new Error('About Account lookup failed');
@@ -18,25 +19,37 @@ const codedError = (code, status = null) => {
 export function createXAboutAccountPageTransport(globalScope, options = {}) {
   const { document, CustomEvent } = globalScope;
   const now = options.now ?? (() => Date.now());
-  const delay = options.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const setTimer = options.setTimeout ?? ((callback, ms) => setTimeout(callback, ms));
+  const clearTimer = options.clearTimeout ?? ((timer) => clearTimeout(timer));
+  const onMetadataRejected = options.onMetadataRejected ?? (() => {});
   let sequence = 0; let active = true; let inFlight = 0; let lastStart = -Infinity;
-  let cooldownUntil = 0; let timerPending = false;
-  let metadataQuery = null; let metadataAuth = null;
+  let cooldownUntil = 0; let scheduleTimer = null;
+  let recoveryState = null; let rejectedState = null;
   const queue = []; const pending = new Map(); const waitingMetadata = new Set();
   const dispatch = (type, detail) => document.dispatchEvent(new CustomEvent(type,
     { detail, bubbles: false, cancelable: false, composed: false }));
   const schedule = () => {
-    if (!active || timerPending || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
+    if (!active || scheduleTimer !== null || rejectedState !== null || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
     const wait = Math.max(0, cooldownUntil - now(), START_INTERVAL - (now() - lastStart));
     if (wait > 0) {
-      timerPending = true;
-      void delay(wait).then(() => { timerPending = false; schedule(); });
+      scheduleTimer = setTimer(() => { scheduleTimer = null; schedule(); }, wait);
       return;
     }
     const entry = queue.shift();
     if (!entry || entry.cancelled) { schedule(); return; }
     entry.started = true; inFlight += 1; lastStart = now();
-    dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, createAboutAccountRequestDetail(entry.id, entry.handle));
+    try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, serializeAboutAccountRequest(entry.id, entry.handle)); }
+    catch {
+      entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
+      entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
+    }
+    entry.attemptTimer = setTimer(() => {
+      if (!active || !entry.started || pending.get(entry.id) !== entry) return;
+      entry.attemptTimer = null; entry.started = false; inFlight = Math.max(0, inFlight - 1);
+      dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(entry.id));
+      pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE'));
+      schedule();
+    }, BRIDGE_TIMEOUT);
     schedule();
   };
   const enqueueAttempt = (entry) => { entry.started = false; queue.push(entry); schedule(); };
@@ -45,6 +58,7 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     if (result === null) return;
     const entry = pending.get(result.id);
     if (!entry || !entry.started) return;
+    if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
     entry.started = false; inFlight = Math.max(0, inFlight - 1);
     if (entry.cancelled) { schedule(); return; }
     if (result.ok) { pending.delete(entry.id); entry.cleanup(); entry.resolve(result.payload); schedule(); return; }
@@ -57,41 +71,58 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
       retryDelay = 1000 * (2 ** entry.transientRetries); entry.transientRetries += 1;
     } else if (['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(code)
       && entry.metadataRetries++ < 1) {
-      entry.rejectedMetadata = ['HTTP_400', 'HTTP_404'].includes(code) ? metadataQuery : metadataAuth;
       entry.metadataKind = ['HTTP_400', 'HTTP_404'].includes(code) ? 'query' : 'auth';
+      entry.rejectedMetadata = entry.metadataKind === 'query'
+        ? recoveryState?.queryId : recoveryState?.authenticationFingerprint;
+      rejectedState = { kind: entry.metadataKind, value: entry.rejectedMetadata };
+      try { onMetadataRejected(entry.metadataKind); } catch { /* categorized by owner */ }
       waitingMetadata.add(entry);
       schedule(); return;
     }
     if (retryDelay !== null) {
-      void delay(retryDelay).then(() => { if (active && !entry.cancelled) enqueueAttempt(entry); });
+      entry.delayTimer = setTimer(() => {
+        entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
+      }, retryDelay);
     } else {
       pending.delete(entry.id); entry.cleanup();
       entry.reject(code === 'ABORTED' ? abortError() : codedError(code, result.status));
     }
     schedule();
   };
-  const metadata = (event) => {
-    try {
-      const value = JSON.parse(event?.detail);
-      metadataQuery = value.queryId;
-      metadataAuth = JSON.stringify([value.headers?.authorization, value.headers?.['x-csrf-token'],
-        value.headers?.['x-guest-token'], value.headers?.['x-twitter-auth-type']]);
-    } catch { return; }
+  const updateRecoveryState = (value) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)
+      || Object.getPrototypeOf(value) !== Object.prototype
+      || Reflect.ownKeys(value).length !== 4 || value.version !== 1
+      || !Number.isInteger(value.generation) || value.generation < 1
+      || !isValidXAboutAccountQueryId(value.queryId)
+      || typeof value.authenticationFingerprint !== 'string'
+      || value.authenticationFingerprint.length < 1 || value.authenticationFingerprint.length > 65_536) return false;
+    recoveryState = { version: 1, generation: value.generation, queryId: value.queryId,
+      authenticationFingerprint: value.authenticationFingerprint };
+    if (rejectedState !== null) {
+      const current = rejectedState.kind === 'query'
+        ? recoveryState.queryId : recoveryState.authenticationFingerprint;
+      if (current === rejectedState.value) return true;
+      rejectedState = null;
+    }
     for (const entry of [...waitingMetadata]) if (active && !entry.cancelled) {
-      if (entry.rejectedMetadata === null && entry.metadataKind === 'query') {
-        entry.rejectedMetadata = metadataQuery;
-        continue;
-      }
       const fresh = entry.metadataKind === 'query'
-        ? metadataQuery !== entry.rejectedMetadata : metadataAuth !== entry.rejectedMetadata;
+        ? recoveryState.queryId !== entry.rejectedMetadata
+        : recoveryState.authenticationFingerprint !== entry.rejectedMetadata;
       if (!fresh) continue;
       waitingMetadata.delete(entry);
       // Avoid starting reentrantly inside the ordinary page request being observed.
-      void delay(0).then(() => { if (active && !entry.cancelled) enqueueAttempt(entry); });
+      entry.delayTimer = setTimer(() => {
+        entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
+      }, 0);
     }
+    schedule();
+    return true;
   };
   document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
-  document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, metadata);
+  if (options.recoveryState !== undefined && !updateRecoveryState(options.recoveryState)) {
+    throw new TypeError('Invalid recovery state');
+  }
   function loadPayload(identity, context) {
     let canonical;
     try { canonical = createAccountIdentity(identity); } catch { canonical = null; }
@@ -103,12 +134,16 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     const id = `${now().toString(36).padStart(10, '0')}_${(++sequence).toString(36).padStart(8, '0')}`;
     return new Promise((resolve, reject) => {
       const entry = { id, handle: canonical.handle, resolve, reject, started: false, cancelled: false,
-        transientRetries: 0, metadataRetries: 0, rateRetries: 0, cleanup: null };
+        transientRetries: 0, metadataRetries: 0, rateRetries: 0, cleanup: null,
+        attemptTimer: null, delayTimer: null };
       const cancel = () => {
         if (entry.cancelled) return; entry.cancelled = true; pending.delete(id);
         const index = queue.indexOf(entry); if (index >= 0) queue.splice(index, 1);
+        waitingMetadata.delete(entry);
+        if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
+        if (entry.delayTimer !== null) { clearTimer(entry.delayTimer); entry.delayTimer = null; }
         if (entry.started) { inFlight = Math.max(0, inFlight - 1);
-          dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, createAboutAccountCancelDetail(id)); }
+          dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(id)); }
         entry.cleanup(); reject(abortError()); schedule();
       };
       entry.cleanup = () => context.signal.removeEventListener('abort', cancel);
@@ -116,13 +151,15 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
       pending.set(id, entry); enqueueAttempt(entry);
     });
   }
-  return Object.freeze({ loadPayload, notifyMetadata: metadata, stop() {
+  return Object.freeze({ loadPayload, updateRecoveryState, stop() {
     if (!active) return; active = false;
+    if (scheduleTimer !== null) { clearTimer(scheduleTimer); scheduleTimer = null; }
     document.removeEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
-    document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, metadata);
     for (const entry of pending.values()) {
       entry.cancelled = true; entry.cleanup();
-      if (entry.started) dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, createAboutAccountCancelDetail(entry.id));
+      if (entry.attemptTimer !== null) clearTimer(entry.attemptTimer);
+      if (entry.delayTimer !== null) clearTimer(entry.delayTimer);
+      if (entry.started) dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(entry.id));
       entry.reject(abortError());
     }
     pending.clear(); waitingMetadata.clear(); queue.length = 0; inFlight = 0;

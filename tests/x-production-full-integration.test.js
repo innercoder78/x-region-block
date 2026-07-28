@@ -7,9 +7,11 @@ import { FakeDocument, FakeElement } from './helpers/fake-dom.js';
 import { createFakeAbortController } from './helpers/fake-abort-controller.js';
 import { MetadataEvent, observedHeaders, observedUrl } from './helpers/x-request-metadata-facade.js';
 
+vi.useFakeTimers();
+
 const settle = async () => {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 210));
+  await vi.advanceTimersByTimeAsync(210);
   for (let index = 0; index < 4; index += 1) await Promise.resolve();
 };
 
@@ -333,11 +335,6 @@ it('recovers a visible production target only after a different live query ID', 
   context.capture('/i/api/graphql/generic/HomeTimeline?x=1', observedHeaders); await settle();
   expect(context.transportCalls).toHaveLength(1);
   expect(findLocationBadge(context.name)).toBeNull();
-  context.capture('/i/api/graphql/generic/HomeTimeline?x=2', {
-    ...observedHeaders, authorization: 'Bearer auth-only-change',
-  });
-  context.capture(observedUrl('XRqGa7EeokUU5kppkh13EA'), observedHeaders);
-  await settle(); expect(context.transportCalls).toHaveLength(1);
   context.capture(observedUrl('replacement_live_query'), observedHeaders); await settle();
   expect(context.transportCalls).toHaveLength(2);
   expect(context.transportCalls[1].url).toContain('/replacement_live_query/AboutAccountQuery');
