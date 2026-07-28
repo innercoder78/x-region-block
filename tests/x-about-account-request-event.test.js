@@ -10,17 +10,17 @@ const id = 'opaque_request_0001';
 
 describe('string-only About Account event protocol', () => {
   it('serializes every cross-world detail and reconstructs local objects', () => {
-    const foreign = vm.runInNewContext(`JSON.stringify({version:1,id:"${id}",handle:"OpenAI"})`);
+    const foreign = vm.runInNewContext(`JSON.stringify({version:1,id:"${id}",handle:"OpenAI",metadataRevision:1})`);
     const request = parseAboutAccountRequestDetail(foreign);
-    expect(typeof serializeAboutAccountRequest(id, 'OpenAI')).toBe('string');
+    expect(typeof serializeAboutAccountRequest(id, 'OpenAI', 1)).toBe('string');
     expect(typeof serializeAboutAccountCancel(id)).toBe('string');
     expect(typeof serializeAboutAccountResponse({ id, ok: true, payload: { value: 1 } })).toBe('string');
-    expect(request).toEqual({ version: 1, id, handle: 'OpenAI' });
+    expect(request).toEqual({ version: 1, id, handle: 'OpenAI', metadataRevision: 1 });
     expect(Object.getPrototypeOf(request)).toBe(Object.prototype);
   });
 
   it('rejects non-strings, malformed, noncanonical, duplicate, unknown, and oversized commands', () => {
-    const valid = serializeAboutAccountRequest(id, 'OpenAI');
+    const valid = serializeAboutAccountRequest(id, 'OpenAI', 1);
     const hostile = new Proxy({}, { get() { throw new Error('hostile'); } });
     for (const value of [null, {}, hostile, '', '{', `${valid} `,
       `{"version":1,"version":1,"id":"${id}","handle":"OpenAI"}`,

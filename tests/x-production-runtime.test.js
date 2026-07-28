@@ -122,7 +122,7 @@ describe('X production content runtime', () => {
     await Promise.resolve(); expect(runtime.isReady()).toBe(false);
     mocks.snapshot = true;
     fake.document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE));
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(runtime.isReady()).toBe(true);
     expect(mocks.route.start).toHaveBeenCalledOnce();
     expect(mocks.routeRoot).toBe(fake.document);

@@ -9,7 +9,7 @@ export const X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT = 2_147_483_647;
 
 const ID = /^[A-Za-z0-9_-]{16,64}$/;
 const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
-const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK',
+const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC', 'NETWORK',
   'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
   'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -54,16 +54,20 @@ const validateJsonValue = (value, ancestors = new Set(), depth = 0) => {
 
 export function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
 export function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
-export function serializeAboutAccountRequest(id, handle) {
-  if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle)) throw new TypeError('Invalid request');
-  return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle });
+export function serializeAboutAccountRequest(id, handle, metadataRevision) {
+  if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle) || !validRevision(metadataRevision)) {
+    throw new TypeError('Invalid request');
+  }
+  return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle, metadataRevision });
 }
 export function parseAboutAccountRequestDetail(input) {
   const value = canonicalParse(input, X_ABOUT_ACCOUNT_COMMAND_LIMIT);
-  return exact(value, ['version', 'id', 'handle'])
+  return exact(value, ['version', 'id', 'handle', 'metadataRevision'])
     && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
     && validOpaqueRequestId(value.id) && validCanonicalHandle(value.handle)
-    ? { version: value.version, id: value.id, handle: value.handle } : null;
+    && value.metadataRevision !== null && validRevision(value.metadataRevision)
+    ? { version: value.version, id: value.id, handle: value.handle,
+      metadataRevision: value.metadataRevision } : null;
 }
 export function serializeAboutAccountCancel(id) {
   if (!validOpaqueRequestId(id)) throw new TypeError('Invalid cancellation');

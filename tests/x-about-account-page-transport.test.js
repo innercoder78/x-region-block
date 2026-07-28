@@ -57,7 +57,7 @@ describe('global About Account page scheduler', () => {
     const start = document.events.find(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
     const command = parseAboutAccountRequestDetail(start.event.detail);
     document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
-      id: command.id, ok: false, code: 'HTTP_401', status: 401, retryAfterMs: null,
+      id: command.id, ok: false, code: 'HTTP_401', status: 401, retryAfterMs: null, metadataRevision: 1,
     }) }));
     expect(rejected).toHaveBeenCalledWith('auth', 1, 'auth_one');
     expect(transport.updateRecoveryState(recovery(2))).toBe(true);
@@ -66,6 +66,33 @@ describe('global About Account page scheduler', () => {
     transport.updateRecoveryState(recovery(3, 'query_one', 'auth_two'));
     await vi.advanceTimersByTimeAsync(200);
     expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(2);
+    controller.abort(); await expect(promise).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
+  });
+
+  it('synchronizes a mismatched attempt without consuming its metadata retry', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document(); const rejected = vi.fn();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event },
+      { recoveryState: recovery(), onMetadataRejected: rejected });
+    const controller = new AbortController();
+    const promise = transport.loadPayload(identity('OpenAI'), context(controller.signal));
+    let starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
+    expect(parseAboutAccountRequestDetail(starts[0].event.detail).metadataRevision).toBe(1);
+    transport.updateRecoveryState(recovery(2, 'query_two', 'auth_two'));
+    const first = parseAboutAccountRequestDetail(starts[0].event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: first.id, ok: false, code: 'HTTP_401', status: 401, retryAfterMs: null, metadataRevision: 2,
+    }) }));
+    await vi.advanceTimersByTimeAsync(200);
+    starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
+    expect(starts).toHaveLength(2);
+    expect(parseAboutAccountRequestDetail(starts[1].event.detail).metadataRevision).toBe(2);
+    expect(rejected).not.toHaveBeenCalled();
+    const second = parseAboutAccountRequestDetail(starts[1].event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: second.id, ok: false, code: 'HTTP_401', status: 401, retryAfterMs: null, metadataRevision: 2,
+    }) }));
+    expect(rejected).toHaveBeenCalledWith('auth', 2, 'auth_two');
     controller.abort(); await expect(promise).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
   });
 

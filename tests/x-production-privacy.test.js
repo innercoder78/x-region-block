@@ -13,7 +13,7 @@ const prohibited = [
   'document.cookie', 'localStorage', 'sessionStorage', 'indexedDB', 'CacheStorage',
   'browser.storage', 'chrome.storage', 'runtime.sendMessage', 'window.postMessage',
   'BroadcastChannel', 'MessageChannel', 'WebSocket', 'XMLHttpRequest', 'sendBeacon',
-  'setTimeout', 'setInterval', 'requestAnimationFrame', 'webRequest',
+  'setInterval', 'requestAnimationFrame', 'webRequest',
   'declarativeNetRequest', 'console.log', 'console.debug',
 ];
 

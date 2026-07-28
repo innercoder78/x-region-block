@@ -65,6 +65,8 @@ export function createXProductionContentRuntime(globalScope) {
     const document = globalScope.document;
     const { MutationObserver, AbortController, Event, URLSearchParams,
       Promise: PromiseConstructor } = globalScope;
+    const setTimeoutFunction = globalScope.setTimeout ?? setTimeout;
+    const clearTimeoutFunction = globalScope.clearTimeout ?? clearTimeout;
     const globalAdd = globalScope.addEventListener;
     const globalRemove = globalScope.removeEventListener;
     const documentAdd = document.addEventListener;
@@ -76,11 +78,14 @@ export function createXProductionContentRuntime(globalScope) {
       || typeof MutationObserver !== 'function' || typeof AbortController !== 'function'
       || typeof Event !== 'function'
       || typeof URLSearchParams !== 'function' || typeof PromiseConstructor !== 'function'
+      || typeof setTimeoutFunction !== 'function' || typeof clearTimeoutFunction !== 'function'
       || typeof globalAdd !== 'function' || typeof globalRemove !== 'function'
       || typeof documentAdd !== 'function' || typeof documentRemove !== 'function'
       || typeof documentDispatch !== 'function' || extensionApi === null) throw new Error();
     dependencies = { origin, document, MutationObserver, AbortController, Event,
       URLSearchParams, Promise: PromiseConstructor,
+      setTimeout: (callback, ms) => Reflect.apply(setTimeoutFunction, globalScope, [callback, ms]),
+      clearTimeout: (timer) => Reflect.apply(clearTimeoutFunction, globalScope, [timer]),
       CustomEvent: globalScope.CustomEvent ?? class extends Event {
         constructor(type, init = {}) { super(type, init); this.detail = init.detail; }
       },
@@ -141,6 +146,9 @@ export function createXProductionContentRuntime(globalScope) {
     stopComponent(state, 'injector');
     removePagehide(state);
     state.metadataCheckPending = false;
+    if (state.metadataScheduleTimer !== null) {
+      dependencies.clearTimeout(state.metadataScheduleTimer); state.metadataScheduleTimer = null;
+    }
     state.prerequisitesReady = false;
   };
   const rejectStartup = (state) => {
@@ -234,6 +242,7 @@ export function createXProductionContentRuntime(globalScope) {
       settingsRuntimeStopped: false, routeCandidateStopped: false,
       metadataListener: null, metadataMayBeAdded: false,
       metadataCheckPending: false, pagehideListener: null, pagehideMayBeAdded: false,
+      metadataScheduleTimer: null,
       prerequisitesReady: false, routeStarting: false,
     };
     state.promise = new dependencies.Promise((resolve, reject) => {
@@ -246,17 +255,14 @@ export function createXProductionContentRuntime(globalScope) {
     diagnostic('Waiting for X GraphQL authentication metadata.');
     const checkpoint = () => { if (!owned(state)) throw new Error('startup claimed'); };
     state.metadataListener = () => {
-      if (!owned(state) || state.metadataCheckPending) return;
-      state.metadataCheckPending = true;
-      dependencies.Promise.resolve().then(() => {
-        state.metadataCheckPending = false;
-        if (owned(state)) {
-          const recoveryState = state.bridge && typeof state.bridge.getRecoveryState === 'function'
-            ? state.bridge.getRecoveryState() : null;
-          if (recoveryState !== null) state.transport?.updateRecoveryState(recoveryState);
-          if (!ready) startRoute(state);
-        }
-      });
+      if (!owned(state)) return;
+      const recoveryState = state.bridge && typeof state.bridge.getRecoveryState === 'function'
+        ? state.bridge.getRecoveryState() : null;
+      if (recoveryState !== null) state.transport?.updateRecoveryState(recoveryState);
+      if (state.metadataScheduleTimer === null) state.metadataScheduleTimer = dependencies.setTimeout(() => {
+        state.metadataScheduleTimer = null;
+        if (owned(state) && !ready) startRoute(state);
+      }, 0);
     };
     state.pagehideListener = (event) => { if (event.persisted !== true && owned(state)) stop(); };
     try {

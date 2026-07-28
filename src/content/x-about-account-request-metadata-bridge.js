@@ -110,7 +110,7 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
   let recoveryGeneration = 0;
   let authenticationGeneration = 0;
   let acceptedAuthenticationFingerprint = null;
-  let rejected = null;
+  const rejected = { authentication: null, query: null };
   let refreshWaiters = new Set();
   const report = (error) => { try { onError(error); } catch { /* Error boundary is isolated. */ } };
 
@@ -127,17 +127,18 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
         const normalized = normalizeSnapshot(parsed, dependencies.origin);
         if (!active || ownedGeneration !== generation) return;
         if (snapshot !== null && normalized.revision <= snapshot.revision) return;
-        if (rejected?.kind === 'authentication'
-          && createMetadataAuthenticationFingerprint(normalized.headers) === rejected.fingerprint) return;
-        if (rejected?.kind === 'query' && normalized.queryId === rejected.queryId) return;
+        const authenticationFingerprint = createMetadataAuthenticationFingerprint(normalized.headers);
+        const candidateAuthentication = authenticationFingerprint === acceptedAuthenticationFingerprint
+          ? `auth-${authenticationGeneration}` : `auth-${authenticationGeneration + 1}`;
+        if (candidateAuthentication === rejected.authentication || normalized.queryId === rejected.query) return;
         snapshot = normalized;
         recoveryGeneration += 1;
-        const authenticationFingerprint = createMetadataAuthenticationFingerprint(normalized.headers);
         if (authenticationFingerprint !== acceptedAuthenticationFingerprint) {
           acceptedAuthenticationFingerprint = authenticationFingerprint;
           authenticationGeneration += 1;
         }
-        rejected = null;
+        if (candidateAuthentication !== rejected.authentication) rejected.authentication = null;
+        if (normalized.queryId !== rejected.query) rejected.query = null;
         const waiters = refreshWaiters;
         refreshWaiters = new Set();
         for (const resolve of waiters) resolve();
@@ -194,7 +195,7 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
     active = false;
     generation += 1;
     snapshot = null;
-    rejected = null;
+    rejected.authentication = null; rejected.query = null;
     for (const resolve of refreshWaiters) resolve();
     refreshWaiters.clear();
     refreshWaiters = new Set();
@@ -233,10 +234,8 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
   Object.defineProperty(createRequest, 'invalidateSnapshot', {
     value: (kind) => {
       if (snapshot === null) return;
-      rejected = kind === 'query'
-        ? { kind, queryId: snapshot.queryId }
-        : { kind: 'authentication',
-          fingerprint: createMetadataAuthenticationFingerprint(snapshot.headers) };
+      if (kind === 'query') rejected.query = snapshot.queryId;
+      else rejected.authentication = `auth-${authenticationGeneration}`;
       snapshot = null;
     }, enumerable: false, configurable: false, writable: false,
   });
@@ -244,10 +243,12 @@ export function createXAboutAccountRequestMetadataBridge(globalScope, options) {
     if (!Number.isInteger(revision) || revision < 1 || revision > X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT) return false;
     if ((kind !== 'query' && kind !== 'auth') || typeof rejectedValue !== 'string'
       || rejectedValue.length < 1 || rejectedValue.length > 65_536) return false;
+    const rejectionKind = kind === 'query' ? 'query' : 'authentication';
+    rejected[rejectionKind] = rejectedValue;
     if (snapshot === null) return true;
     const currentValue = kind === 'query' ? snapshot.queryId : `auth-${authenticationGeneration}`;
     if (snapshot.revision !== revision && currentValue !== rejectedValue) return true;
-    createRequest.invalidateSnapshot(kind); return true;
+    snapshot = null; return true;
   };
   const getRecoveryState = () => {
     if (snapshot === null) return null;

@@ -3745,7 +3745,7 @@
 
   const ID = /^[A-Za-z0-9_-]{16,64}$/;
   const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
-  const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK',
+  const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC', 'NETWORK',
     'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
     'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
   const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -3769,9 +3769,11 @@
 
   function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
   function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
-  function serializeAboutAccountRequest(id, handle) {
-    if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle)) throw new TypeError('Invalid request');
-    return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle });
+  function serializeAboutAccountRequest(id, handle, metadataRevision) {
+    if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle) || !validRevision(metadataRevision)) {
+      throw new TypeError('Invalid request');
+    }
+    return JSON.stringify({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle, metadataRevision });
   }
   function serializeAboutAccountCancel(id) {
     if (!validOpaqueRequestId(id)) throw new TypeError('Invalid cancellation');
@@ -3888,7 +3890,7 @@
     let recoveryGeneration = 0;
     let authenticationGeneration = 0;
     let acceptedAuthenticationFingerprint = null;
-    let rejected = null;
+    const rejected = { authentication: null, query: null };
     let refreshWaiters = new Set();
     const report = (error) => { try { onError(error); } catch { /* Error boundary is isolated. */ } };
 
@@ -3905,17 +3907,18 @@
           const normalized = normalizeSnapshot(parsed, dependencies.origin);
           if (!active || ownedGeneration !== generation) return;
           if (snapshot !== null && normalized.revision <= snapshot.revision) return;
-          if (rejected?.kind === 'authentication'
-            && createMetadataAuthenticationFingerprint(normalized.headers) === rejected.fingerprint) return;
-          if (rejected?.kind === 'query' && normalized.queryId === rejected.queryId) return;
+          const authenticationFingerprint = createMetadataAuthenticationFingerprint(normalized.headers);
+          const candidateAuthentication = authenticationFingerprint === acceptedAuthenticationFingerprint
+            ? `auth-${authenticationGeneration}` : `auth-${authenticationGeneration + 1}`;
+          if (candidateAuthentication === rejected.authentication || normalized.queryId === rejected.query) return;
           snapshot = normalized;
           recoveryGeneration += 1;
-          const authenticationFingerprint = createMetadataAuthenticationFingerprint(normalized.headers);
           if (authenticationFingerprint !== acceptedAuthenticationFingerprint) {
             acceptedAuthenticationFingerprint = authenticationFingerprint;
             authenticationGeneration += 1;
           }
-          rejected = null;
+          if (candidateAuthentication !== rejected.authentication) rejected.authentication = null;
+          if (normalized.queryId !== rejected.query) rejected.query = null;
           const waiters = refreshWaiters;
           refreshWaiters = new Set();
           for (const resolve of waiters) resolve();
@@ -3972,7 +3975,7 @@
       active = false;
       generation += 1;
       snapshot = null;
-      rejected = null;
+      rejected.authentication = null; rejected.query = null;
       for (const resolve of refreshWaiters) resolve();
       refreshWaiters.clear();
       refreshWaiters = new Set();
@@ -4011,10 +4014,8 @@
     Object.defineProperty(createRequest, 'invalidateSnapshot', {
       value: (kind) => {
         if (snapshot === null) return;
-        rejected = kind === 'query'
-          ? { kind, queryId: snapshot.queryId }
-          : { kind: 'authentication',
-            fingerprint: createMetadataAuthenticationFingerprint(snapshot.headers) };
+        if (kind === 'query') rejected.query = snapshot.queryId;
+        else rejected.authentication = `auth-${authenticationGeneration}`;
         snapshot = null;
       }, enumerable: false, configurable: false, writable: false,
     });
@@ -4022,10 +4023,12 @@
       if (!Number.isInteger(revision) || revision < 1 || revision > X_ABOUT_ACCOUNT_METADATA_REVISION_LIMIT) return false;
       if ((kind !== 'query' && kind !== 'auth') || typeof rejectedValue !== 'string'
         || rejectedValue.length < 1 || rejectedValue.length > 65_536) return false;
+      const rejectionKind = kind === 'query' ? 'query' : 'authentication';
+      rejected[rejectionKind] = rejectedValue;
       if (snapshot === null) return true;
       const currentValue = kind === 'query' ? snapshot.queryId : `auth-${authenticationGeneration}`;
       if (snapshot.revision !== revision && currentValue !== rejectedValue) return true;
-      createRequest.invalidateSnapshot(kind); return true;
+      snapshot = null; return true;
     };
     const getRecoveryState = () => {
       if (snapshot === null) return null;
@@ -4072,7 +4075,7 @@
     const clearTimer = options.clearTimeout ?? ((timer) => clearTimeout(timer));
     const onMetadataRejected = options.onMetadataRejected ?? (() => {});
     let sequence = 0; let active = true; let inFlight = 0; let lastStart = -Infinity;
-    let cooldownUntil = 0; let scheduleTimer = null;
+    let cooldownUntil = 0; let scheduleTimer = null; let resumeTimer = null;
     let recoveryState = null;
     const blockedMetadata = { auth: new Set(), query: new Set() };
     const queue = []; const pending = new Map(); const waitingMetadata = new Set();
@@ -4096,7 +4099,12 @@
       entry.attemptRevision = recoveryState?.revision ?? null;
       entry.attemptAuthentication = recoveryState?.authenticationFingerprint ?? null;
       entry.attemptQuery = recoveryState?.queryId ?? null;
-      try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, serializeAboutAccountRequest(entry.id, entry.handle)); }
+      if (entry.attemptRevision === null) {
+        entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
+        entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
+      }
+      try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
+        serializeAboutAccountRequest(entry.id, entry.handle, entry.attemptRevision)); }
       catch {
         entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
         entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
@@ -4120,9 +4128,19 @@
       entry.started = false; inFlight = Math.max(0, inFlight - 1);
       if (entry.cancelled) { schedule(); return; }
       if (result.ok) { pending.delete(entry.id); entry.cleanup(); entry.resolve(result.payload); schedule(); return; }
-      const code = result.code;
+      const rejectionCode = ['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(result.code);
+      const code = rejectionCode && result.metadataRevision !== entry.attemptRevision
+        ? 'METADATA_SYNC' : result.code;
       let retryDelay = null;
-      if (code === 'HTTP_429') {
+      if (code === 'METADATA_SYNC') {
+        if (entry.syncRetries++ < 2) {
+          const synchronized = recoveryState !== null
+            && recoveryState.revision !== entry.attemptRevision
+            && recoveryState.revision === result.metadataRevision;
+          if (synchronized) retryDelay = 0;
+          else retryDelay = 0;
+        }
+      } else if (code === 'HTTP_429') {
         cooldownUntil = Math.max(cooldownUntil, now() + Math.min(300_000, result.retryAfterMs ?? 60_000));
         if (entry.rateRetries++ < 1) retryDelay = 0;
       } else if ((code === 'NETWORK' || code === 'HTTP_5XX') && entry.transientRetries < 2) {
@@ -4131,8 +4149,10 @@
         entry.metadataKind = ['HTTP_400', 'HTTP_404'].includes(code) ? 'query' : 'auth';
         entry.rejectedMetadata = entry.metadataKind === 'query' ? entry.attemptQuery : entry.attemptAuthentication;
         if (entry.rejectedMetadata !== null) blockedMetadata[entry.metadataKind].add(entry.rejectedMetadata);
-        try { onMetadataRejected(entry.metadataKind, result.metadataRevision ?? entry.attemptRevision,
-          entry.rejectedMetadata); } catch { /* categorized by owner */ }
+        if (result.metadataRevision === entry.attemptRevision) {
+          try { onMetadataRejected(entry.metadataKind, entry.attemptRevision,
+            entry.rejectedMetadata); } catch { /* categorized by owner */ }
+        }
         const current = entry.metadataKind === 'query'
           ? recoveryState?.queryId : recoveryState?.authenticationFingerprint;
         const rejectedRevision = result.metadataRevision ?? entry.attemptRevision;
@@ -4184,7 +4204,9 @@
           entry.delayTimer = null; if (active && !entry.cancelled) enqueueAttempt(entry);
         }, 0);
       }
-      schedule();
+      if (active && resumeTimer === null) resumeTimer = setTimer(() => {
+        resumeTimer = null; schedule();
+      }, 0);
       return true;
     };
     document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
@@ -4202,7 +4224,7 @@
       const id = `${now().toString(36).padStart(10, '0')}_${(++sequence).toString(36).padStart(8, '0')}`;
       return new Promise((resolve, reject) => {
         const entry = { id, handle: canonical.handle, resolve, reject, started: false, cancelled: false,
-          transientRetries: 0, metadataRetries: 0, rateRetries: 0, cleanup: null,
+          transientRetries: 0, metadataRetries: 0, syncRetries: 0, rateRetries: 0, cleanup: null,
           attemptRevision: null, attemptAuthentication: null, attemptQuery: null, rejectedRevision: null,
           attemptTimer: null, delayTimer: null };
         const cancel = () => {
@@ -4222,6 +4244,7 @@
     return Object.freeze({ loadPayload, updateRecoveryState, stop() {
       if (!active) return; active = false;
       if (scheduleTimer !== null) { clearTimer(scheduleTimer); scheduleTimer = null; }
+      if (resumeTimer !== null) { clearTimer(resumeTimer); resumeTimer = null; }
       document.removeEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
       for (const entry of pending.values()) {
         entry.cancelled = true; entry.cleanup();
@@ -4625,6 +4648,8 @@
       const document = globalScope.document;
       const { MutationObserver, AbortController, Event, URLSearchParams,
         Promise: PromiseConstructor } = globalScope;
+      const setTimeoutFunction = globalScope.setTimeout ?? setTimeout;
+      const clearTimeoutFunction = globalScope.clearTimeout ?? clearTimeout;
       const globalAdd = globalScope.addEventListener;
       const globalRemove = globalScope.removeEventListener;
       const documentAdd = document.addEventListener;
@@ -4636,11 +4661,14 @@
         || typeof MutationObserver !== 'function' || typeof AbortController !== 'function'
         || typeof Event !== 'function'
         || typeof URLSearchParams !== 'function' || typeof PromiseConstructor !== 'function'
+        || typeof setTimeoutFunction !== 'function' || typeof clearTimeoutFunction !== 'function'
         || typeof globalAdd !== 'function' || typeof globalRemove !== 'function'
         || typeof documentAdd !== 'function' || typeof documentRemove !== 'function'
         || typeof documentDispatch !== 'function' || extensionApi === null) throw new Error();
       dependencies = { origin, document, MutationObserver, AbortController, Event,
         URLSearchParams, Promise: PromiseConstructor,
+        setTimeout: (callback, ms) => Reflect.apply(setTimeoutFunction, globalScope, [callback, ms]),
+        clearTimeout: (timer) => Reflect.apply(clearTimeoutFunction, globalScope, [timer]),
         CustomEvent: globalScope.CustomEvent ?? class extends Event {
           constructor(type, init = {}) { super(type, init); this.detail = init.detail; }
         },
@@ -4701,6 +4729,9 @@
       stopComponent(state, 'injector');
       removePagehide(state);
       state.metadataCheckPending = false;
+      if (state.metadataScheduleTimer !== null) {
+        dependencies.clearTimeout(state.metadataScheduleTimer); state.metadataScheduleTimer = null;
+      }
       state.prerequisitesReady = false;
     };
     const rejectStartup = (state) => {
@@ -4794,6 +4825,7 @@
         settingsRuntimeStopped: false, routeCandidateStopped: false,
         metadataListener: null, metadataMayBeAdded: false,
         metadataCheckPending: false, pagehideListener: null, pagehideMayBeAdded: false,
+        metadataScheduleTimer: null,
         prerequisitesReady: false, routeStarting: false,
       };
       state.promise = new dependencies.Promise((resolve, reject) => {
@@ -4806,17 +4838,14 @@
       diagnostic('Waiting for X GraphQL authentication metadata.');
       const checkpoint = () => { if (!owned(state)) throw new Error('startup claimed'); };
       state.metadataListener = () => {
-        if (!owned(state) || state.metadataCheckPending) return;
-        state.metadataCheckPending = true;
-        dependencies.Promise.resolve().then(() => {
-          state.metadataCheckPending = false;
-          if (owned(state)) {
-            const recoveryState = state.bridge && typeof state.bridge.getRecoveryState === 'function'
-              ? state.bridge.getRecoveryState() : null;
-            if (recoveryState !== null) state.transport?.updateRecoveryState(recoveryState);
-            if (!ready) startRoute(state);
-          }
-        });
+        if (!owned(state)) return;
+        const recoveryState = state.bridge && typeof state.bridge.getRecoveryState === 'function'
+          ? state.bridge.getRecoveryState() : null;
+        if (recoveryState !== null) state.transport?.updateRecoveryState(recoveryState);
+        if (state.metadataScheduleTimer === null) state.metadataScheduleTimer = dependencies.setTimeout(() => {
+          state.metadataScheduleTimer = null;
+          if (owned(state) && !ready) startRoute(state);
+        }, 0);
       };
       state.pagehideListener = (event) => { if (event.persisted !== true && owned(state)) stop(); };
       try {
