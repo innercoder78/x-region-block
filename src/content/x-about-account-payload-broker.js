@@ -244,10 +244,16 @@ export function createXAboutAccountPayloadBroker(options) {
     let sharedAbort;
     try {
       if (sharedController === null || typeof sharedController !== 'object'
-        || !hasOwn(sharedController, 'signal')) throw new TypeError();
-      sharedAbort = sharedController.abort;
-      if (typeof sharedAbort !== 'function') throw new TypeError();
+        || Array.isArray(sharedController)) throw new TypeError();
+      // Native browser members are inherited. Read each possibly hostile getter only once,
+      // then use cross-realm structural validation rather than instanceof.
       sharedSignal = sharedController.signal;
+      sharedAbort = sharedController.abort;
+      if (sharedSignal === null || typeof sharedSignal !== 'object'
+        || typeof sharedSignal.aborted !== 'boolean'
+        || typeof sharedSignal.addEventListener !== 'function'
+        || typeof sharedSignal.removeEventListener !== 'function'
+        || typeof sharedAbort !== 'function') throw new TypeError();
     } catch {
       return Promise.reject(
         new TypeError('abortControllerFactory returned an invalid controller'),

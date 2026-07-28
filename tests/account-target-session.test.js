@@ -38,6 +38,10 @@ function appendTimelineTarget(root, handle) {
 }
 
 const settle = () => Promise.resolve().then(() => Promise.resolve());
+const spyAbortController = () => ({
+  signal: Object.freeze({ aborted: false, addEventListener() {}, removeEventListener() {} }),
+  abort: vi.fn(),
+});
 
 function dependencies(overrides = {}) {
   const fakeObservers = createFakeObserverFactory();
@@ -56,7 +60,7 @@ function dependencies(overrides = {}) {
     settingsRuntime: runtime,
     observerFactory: fakeObservers.factory,
     loadAboutAccountPayload: vi.fn(() => ({})),
-    abortControllerFactory: vi.fn(() => ({ signal: Object.freeze({}), abort: vi.fn() })),
+    abortControllerFactory: vi.fn(spyAbortController),
     onError: vi.fn(),
     ...overrides,
   };
@@ -251,7 +255,7 @@ describe('account target session integration', () => {
       source: 'timeline',
       loadAboutAccountPayload: vi.fn(() => lookups.shift().promise),
       abortControllerFactory: vi.fn(() => {
-        const controller = { signal: Object.freeze({}), abort: vi.fn() };
+        const controller = spyAbortController();
         controllers.push(controller);
         return controller;
       }),
@@ -322,7 +326,7 @@ describe('account target session integration', () => {
         return observer;
       },
       loadAboutAccountPayload: vi.fn(() => { order.push('lookup'); return payload(); }),
-      abortControllerFactory: () => ({ signal: {}, abort() {} }),
+      abortControllerFactory: spyAbortController,
       onError: vi.fn(),
     };
     const session = createXAccountTargetSession(document, options);

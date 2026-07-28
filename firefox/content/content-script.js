@@ -2183,15 +2183,24 @@
     };
     const startLookup = (entry) => {
       let controller;
+      let signal;
+      let abort;
       let promise;
       try {
         controller = normalized.abortControllerFactory();
-        if (!isObject(controller) || !hasOwn$5(controller, 'signal')
-          || typeof controller.abort !== 'function') throw new TypeError('invalid abort controller');
-        entry.controller = controller;
+        if (!isObject(controller)) throw new TypeError('invalid abort controller');
+        // AbortController members are prototype accessors/methods in browsers. Capture each
+        // potentially caller-controlled property once and validate structurally across realms.
+        signal = controller.signal;
+        abort = controller.abort;
+        if (!isObject(signal) || typeof signal.aborted !== 'boolean'
+          || typeof signal.addEventListener !== 'function'
+          || typeof signal.removeEventListener !== 'function'
+          || typeof abort !== 'function') throw new TypeError('invalid abort controller');
+        entry.controller = Object.freeze({ abort: () => abort.call(controller) });
         const context = Object.freeze({
           version: ACCOUNT_TARGET_PROCESSOR_VERSION,
-          signal: controller.signal,
+          signal,
         });
         promise = Promise.resolve(normalized.loadAboutAccountPayload(entry.identity, context));
         entry.pending = promise;
@@ -2585,10 +2594,16 @@
       let sharedAbort;
       try {
         if (sharedController === null || typeof sharedController !== 'object'
-          || !hasOwn$4(sharedController, 'signal')) throw new TypeError();
-        sharedAbort = sharedController.abort;
-        if (typeof sharedAbort !== 'function') throw new TypeError();
+          || Array.isArray(sharedController)) throw new TypeError();
+        // Native browser members are inherited. Read each possibly hostile getter only once,
+        // then use cross-realm structural validation rather than instanceof.
         sharedSignal = sharedController.signal;
+        sharedAbort = sharedController.abort;
+        if (sharedSignal === null || typeof sharedSignal !== 'object'
+          || typeof sharedSignal.aborted !== 'boolean'
+          || typeof sharedSignal.addEventListener !== 'function'
+          || typeof sharedSignal.removeEventListener !== 'function'
+          || typeof sharedAbort !== 'function') throw new TypeError();
       } catch {
         return Promise.reject(
           new TypeError('abortControllerFactory returned an invalid controller'),

@@ -79,7 +79,12 @@ function setup(overrides = {}) {
     settings: {},
     loadAboutAccountPayload: vi.fn(() => payload()),
     abortControllerFactory: vi.fn(() => {
-      const controller = { signal: Object.freeze({}), abort: vi.fn() };
+      const controller = {
+        signal: Object.freeze({
+          aborted: false, addEventListener() {}, removeEventListener() {},
+        }),
+        abort: vi.fn(),
+      };
       controllers.push(controller);
       return controller;
     }),
@@ -138,6 +143,76 @@ describe('account target processor API', () => {
 });
 
 describe('lookup, reconciliation, and races', () => {
+  it('accepts a native AbortController with inherited signal and abort members', () => {
+    const controller = new AbortController();
+    expect(Object.hasOwn(controller, 'signal')).toBe(false);
+    expect(Object.hasOwn(controller, 'abort')).toBe(false);
+    const loader = vi.fn(() => new Promise(() => {}));
+    const { processor } = setup({
+      loadAboutAccountPayload: loader,
+      abortControllerFactory: () => controller,
+    });
+    processor.start();
+    processor.processChange(change([target()]));
+    expect(loader.mock.calls[0][1].signal).toBe(controller.signal);
+    processor.stop();
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it('accepts browser-like prototype members and aborts with the controller receiver', () => {
+    const signal = { aborted: false, addEventListener() {}, removeEventListener() {} };
+    class BrowserController {
+      get signal() { return signal; }
+      abort() {
+        if (this !== controller) throw new TypeError('Illegal invocation');
+        signal.aborted = true;
+      }
+    }
+    const controller = new BrowserController();
+    const { processor } = setup({
+      loadAboutAccountPayload: vi.fn(() => new Promise(() => {})),
+      abortControllerFactory: () => controller,
+    });
+    processor.start();
+    processor.processChange(change([target()]));
+    processor.stop();
+    expect(signal.aborted).toBe(true);
+  });
+
+  it.each([
+    ['null', null],
+    ['a primitive', 1],
+    ['a missing signal', { abort() {} }],
+    ['a throwing signal getter', { abort() {}, get signal() { throw new Error('hostile'); } }],
+    ['an invalid aborted value', {
+      signal: { aborted: 'no', addEventListener() {}, removeEventListener() {} }, abort() {},
+    }],
+    ['a signal missing addEventListener', {
+      signal: { aborted: false, removeEventListener() {} }, abort() {},
+    }],
+    ['a signal missing removeEventListener', {
+      signal: { aborted: false, addEventListener() {} }, abort() {},
+    }],
+    ['a missing abort method', {
+      signal: { aborted: false, addEventListener() {}, removeEventListener() {} },
+    }],
+    ['a throwing abort getter', {
+      signal: { aborted: false, addEventListener() {}, removeEventListener() {} },
+      get abort() { throw new Error('hostile'); },
+    }],
+  ])('safely rejects %s from the AbortController factory', async (_label, controller) => {
+    const loader = vi.fn();
+    const { processor, options } = setup({
+      loadAboutAccountPayload: loader,
+      abortControllerFactory: () => controller,
+    });
+    processor.start();
+    expect(() => processor.processChange(change([target()]))).not.toThrow();
+    await settle();
+    expect(loader).not.toHaveBeenCalled();
+    expect(options.onError).toHaveBeenCalledOnce();
+  });
+
   it('deduplicates a lookup and presents every same-account target', async () => {
     const first = target();
     const second = target();
@@ -416,7 +491,9 @@ describe('additional asynchronous boundary coverage', () => {
     const current = target();
     const { processor } = setup({
       loadAboutAccountPayload: vi.fn(configured.loader ?? (() => payload())),
-      abortControllerFactory: vi.fn(configured.controller ?? (() => ({ signal: {}, abort: vi.fn() }))),
+      abortControllerFactory: vi.fn(configured.controller ?? (() => ({
+        signal: { aborted: false, addEventListener() {}, removeEventListener() {} }, abort: vi.fn(),
+      }))),
       onError: (error) => errors.push(error.message),
     });
     processor.start();

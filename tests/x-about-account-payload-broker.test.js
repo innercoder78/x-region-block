@@ -34,6 +34,38 @@ const setup = (overrides = {}) => {
 };
 
 describe('X About Account payload broker', () => {
+  it('passes a native AbortController signal to the transport loader', async () => {
+    const shared = new AbortController();
+    const consumer = new AbortController();
+    const loadPayload = vi.fn(() => 'native payload');
+    const { broker } = setup({ loadPayload, abortControllerFactory: () => shared });
+    broker.start();
+    await expect(broker.loadAboutAccountPayload(identity(), context(consumer.signal)))
+      .resolves.toBe('native payload');
+    expect(Object.hasOwn(shared, 'signal')).toBe(false);
+    expect(Object.hasOwn(shared, 'abort')).toBe(false);
+    expect(loadPayload.mock.calls[0][1].signal).toBe(shared.signal);
+  });
+
+  it('accepts prototype members and preserves the abort receiver on cancellation', async () => {
+    const signal = { aborted: false, addEventListener() {}, removeEventListener() {} };
+    let receiver = null;
+    class BrowserController {
+      get signal() { return signal; }
+      abort() { receiver = this; signal.aborted = true; }
+    }
+    const shared = new BrowserController();
+    const consumer = new AbortController();
+    const { broker, loadPayload } = setup({ abortControllerFactory: () => shared });
+    broker.start();
+    const result = broker.loadAboutAccountPayload(identity(), context(consumer.signal));
+    expect(loadPayload.mock.calls[0][1].signal).toBe(signal);
+    consumer.abort();
+    await expect(result).rejects.toMatchObject({ name: 'AbortError' });
+    expect(receiver).toBe(shared);
+    expect(signal.aborted).toBe(true);
+  });
+
   it('exposes the exact frozen lazy controller API', () => {
     const { broker, loadPayload } = setup();
     expect(X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION).toBe(1);
@@ -294,7 +326,7 @@ describe('X About Account payload broker', () => {
       signal: {},
       get abort() { throw new Error('private abort failure'); },
     })],
-    ['an inherited signal', () => {
+    ['an inherited malformed signal', () => {
       const controller = Object.create({ signal: {} });
       controller.abort = () => {};
       return controller;
