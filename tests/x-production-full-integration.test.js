@@ -9,6 +9,8 @@ import { MetadataEvent, observedHeaders, observedUrl } from './helpers/x-request
 
 const settle = async () => {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 210));
+  for (let index = 0; index < 4; index += 1) await Promise.resolve();
 };
 
 function accountTargets(document) {
@@ -300,7 +302,7 @@ it('recovers the same visible production target after genuinely fresh authentica
   const context = await recoveryHarness({ failureStatus: 401, settings });
   context.capture('/i/api/graphql/generic/HomeTimeline?x=1', observedHeaders); await settle();
   expect(context.transportCalls).toHaveLength(1);
-  expect(findLocationBadge(context.name).textContent).toContain('Location unavailable');
+  expect(findLocationBadge(context.name)).toBeNull();
   for (const headers of [
     { ...observedHeaders, 'x-client-transaction-id': 'volatile' },
     { ...observedHeaders, 'x-twitter-client-language': 'fr' },
@@ -330,7 +332,7 @@ it('recovers a visible production target only after a different live query ID', 
   const context = await recoveryHarness({ failureStatus: 404, settings });
   context.capture('/i/api/graphql/generic/HomeTimeline?x=1', observedHeaders); await settle();
   expect(context.transportCalls).toHaveLength(1);
-  expect(findLocationBadge(context.name).textContent).toContain('Location unavailable');
+  expect(findLocationBadge(context.name)).toBeNull();
   context.capture('/i/api/graphql/generic/HomeTimeline?x=2', {
     ...observedHeaders, authorization: 'Bearer auth-only-change',
   });

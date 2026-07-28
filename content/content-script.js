@@ -302,9 +302,9 @@
   const SOURCES = new Set(ACCOUNT_IDENTITY_SOURCES);
   const RESERVED_HANDLES = new Set(RESERVED_X_ROUTE_SEGMENTS);
   const EMPTY$4 = Object.freeze([]);
-  const hasOwn$b = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const hasOwn$a = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 
-  function isPlainObject$7(value) {
+  function isPlainObject$6(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
     try {
       const prototype = Object.getPrototypeOf(value);
@@ -324,13 +324,13 @@
   }
 
   function validateRoute(route) {
-    if (!isPlainObject$7(route)) throw new TypeError('Invalid X route descriptor');
+    if (!isPlainObject$6(route)) throw new TypeError('Invalid X route descriptor');
     let keys;
     let values;
     try {
       keys = Reflect.ownKeys(route);
       if (keys.length !== ROUTE_KEYS.length || keys.some((key) => typeof key !== 'string')
-        || ROUTE_KEYS.some((key) => !hasOwn$b(route, key))) throw new Error('invalid');
+        || ROUTE_KEYS.some((key) => !hasOwn$a(route, key))) throw new Error('invalid');
       values = ROUTE_KEYS.map((key) => route[key]);
     } catch {
       throw new TypeError('Invalid X route descriptor');
@@ -364,13 +364,13 @@
   }
 
   function normalizeOptions$5(options) {
-    if (!isPlainObject$7(options)) {
+    if (!isPlainObject$6(options)) {
       throw new TypeError('account target route planner options must be a plain object');
     }
     try {
       const keys = Reflect.ownKeys(options);
       if (keys.length > 1 || keys.some((key) => key !== 'baseUrl')) throw new Error('invalid');
-      if (!hasOwn$b(options, 'baseUrl')) return { hasBaseUrl: false };
+      if (!hasOwn$a(options, 'baseUrl')) return { hasBaseUrl: false };
       return { hasBaseUrl: true, baseUrl: options.baseUrl };
     } catch {
       throw new TypeError('Invalid account target route planner options');
@@ -403,7 +403,7 @@
     }));
   }
 
-  const hasOwn$a = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
+  const hasOwn$9 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
 
   function validateLink(link) {
     if (
@@ -424,7 +424,7 @@
     if (options === null || typeof options !== 'object' || Array.isArray(options)) {
       throw new TypeError('Invalid account link options');
     }
-    if (hasOwn$a(options, 'accountId')) {
+    if (hasOwn$9(options, 'accountId')) {
       throw new TypeError('accountId is not supported by the account link reader');
     }
   }
@@ -441,7 +441,7 @@
 
   function readBaseUrl(link, options) {
     try {
-      return hasOwn$a(options, 'baseUrl') ? options.baseUrl : link.ownerDocument.baseURI;
+      return hasOwn$9(options, 'baseUrl') ? options.baseUrl : link.ownerDocument.baseURI;
     } catch {
       return undefined;
     }
@@ -758,7 +758,7 @@
     return 1;
   }
 
-  function isPlainObject$6(value) {
+  function isPlainObject$5(value) {
     if (value === null || typeof value !== 'object') return false;
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
@@ -766,9 +766,9 @@
 
   /** Creates the minimal, deeply immutable input accepted by the filter engine. */
   function createFilterSubject(input) {
-    if (!isPlainObject$6(input)) throw new TypeError('filter subject input must be a plain object');
-    if (!isPlainObject$6(input.identity)) throw new TypeError('identity must be a plain object');
-    if (!isPlainObject$6(input.location)) throw new TypeError('location must be a plain object');
+    if (!isPlainObject$5(input)) throw new TypeError('filter subject input must be a plain object');
+    if (!isPlainObject$5(input.identity)) throw new TypeError('identity must be a plain object');
+    if (!isPlainObject$5(input.location)) throw new TypeError('location must be a plain object');
 
     const identity = createAccountIdentity(input.identity);
     const location = createLocationResult(input.location);
@@ -852,9 +852,9 @@
 
   const ACCOUNT_EVALUATION_VERSION = 1;
 
-  const hasOwn$9 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
+  const hasOwn$8 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
 
-  function isPlainObject$5(value) {
+  function isPlainObject$4(value) {
     if (value === null || typeof value !== 'object') return false;
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
@@ -865,21 +865,21 @@
    * This boundary deliberately performs no discovery, rendering, lookup, or page mutation.
    */
   function evaluateXAccountLink(link, observation, settings) {
-    if (!isPlainObject$5(observation)) {
+    if (!isPlainObject$4(observation)) {
       throw new TypeError('account observation must be a plain object');
     }
-    if (hasOwn$9(observation, 'accountId')) {
+    if (hasOwn$8(observation, 'accountId')) {
       throw new TypeError('accountId is not supported by account evaluation');
     }
 
     const readerOptions = Object.create(null);
-    if (hasOwn$9(observation, 'source')) readerOptions.source = observation.source;
-    if (hasOwn$9(observation, 'baseUrl')) readerOptions.baseUrl = observation.baseUrl;
+    if (hasOwn$8(observation, 'source')) readerOptions.source = observation.source;
+    if (hasOwn$8(observation, 'baseUrl')) readerOptions.baseUrl = observation.baseUrl;
 
     const identity = readXAccountIdentityFromLink(link, readerOptions);
     if (identity === null) return null;
 
-    if (!hasOwn$9(observation, 'location')) {
+    if (!hasOwn$8(observation, 'location')) {
       throw new TypeError('account observation location is required');
     }
     const evaluation = evaluateFilterSubject({ identity, location: observation.location }, settings);
@@ -1069,7 +1069,7 @@
     accountLink: 'a[href]',
   });
 
-  const hasOwn$8 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
+  const hasOwn$7 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
 
   function validateRoot(root) {
     if (root === null || typeof root !== 'object' || Array.isArray(root)
@@ -1086,17 +1086,17 @@
     if (prototype !== Object.prototype && prototype !== null) {
       throw new TypeError('account discovery options must be a plain object');
     }
-    if (hasOwn$8(options, 'accountId')) {
+    if (hasOwn$7(options, 'accountId')) {
       throw new TypeError('accountId is not supported by account discovery');
     }
-    if (!hasOwn$8(options, 'source') || typeof options.source !== 'string') {
+    if (!hasOwn$7(options, 'source') || typeof options.source !== 'string') {
       throw new TypeError('Invalid account discovery source');
     }
     const source = options.source.trim().toLowerCase();
     if (!ACCOUNT_IDENTITY_SOURCES.includes(source)) {
       throw new TypeError('Invalid account discovery source');
     }
-    return { source, hasBaseUrl: hasOwn$8(options, 'baseUrl'), baseUrl: options.baseUrl };
+    return { source, hasBaseUrl: hasOwn$7(options, 'baseUrl'), baseUrl: options.baseUrl };
   }
 
   function attribute(element, name) {
@@ -1222,7 +1222,7 @@
   const ACCOUNT_TARGET_OBSERVER_VERSION = 1;
 
   const EMPTY$3 = Object.freeze([]);
-  const hasOwn$7 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
+  const hasOwn$6 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
 
   function normalizeOptions$3(options) {
     if (options === null || typeof options !== 'object' || Array.isArray(options)
@@ -1230,28 +1230,28 @@
         && Object.getPrototypeOf(options) !== null)) {
       throw new TypeError('account target observer options must be a plain object');
     }
-    if (hasOwn$7(options, 'accountId')) {
+    if (hasOwn$6(options, 'accountId')) {
       throw new TypeError('accountId is not supported by account target observation');
     }
-    if (!hasOwn$7(options, 'source') || typeof options.source !== 'string') {
+    if (!hasOwn$6(options, 'source') || typeof options.source !== 'string') {
       throw new TypeError('Invalid account target observer source');
     }
     const source = options.source.trim().toLowerCase();
     if (!ACCOUNT_IDENTITY_SOURCES.includes(source)) {
       throw new TypeError('Invalid account target observer source');
     }
-    if (!hasOwn$7(options, 'observerFactory') || typeof options.observerFactory !== 'function') {
+    if (!hasOwn$6(options, 'observerFactory') || typeof options.observerFactory !== 'function') {
       throw new TypeError('observerFactory must be a function');
     }
-    if (!hasOwn$7(options, 'onChange') || typeof options.onChange !== 'function') {
+    if (!hasOwn$6(options, 'onChange') || typeof options.onChange !== 'function') {
       throw new TypeError('onChange must be a function');
     }
-    if (!hasOwn$7(options, 'onError') || typeof options.onError !== 'function') {
+    if (!hasOwn$6(options, 'onError') || typeof options.onError !== 'function') {
       throw new TypeError('onError must be a function');
     }
     return {
       source,
-      hasBaseUrl: hasOwn$7(options, 'baseUrl'),
+      hasBaseUrl: hasOwn$6(options, 'baseUrl'),
       baseUrl: options.baseUrl,
       observerFactory: options.observerFactory,
       onChange: options.onChange,
@@ -1404,7 +1404,7 @@
 
   const OTHER_STATUSES = new Set(['hidden', 'missing', 'unavailable', 'unknown']);
 
-  function isPlainObject$4(value) {
+  function isPlainObject$3(value) {
     if (value === null || typeof value !== 'object') return false;
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
@@ -1438,7 +1438,7 @@
 
   function category(input, name) {
     if (!(name in input)) return {};
-    if (!isPlainObject$4(input[name])) throw new TypeError(`${name} must be a plain object`);
+    if (!isPlainObject$3(input[name])) throw new TypeError(`${name} must be a plain object`);
     return input[name];
   }
 
@@ -1496,7 +1496,7 @@
    * Unknown properties are intentionally omitted from the canonical result.
    */
   function normalizeSettings(input) {
-    if (!isPlainObject$4(input)) throw new TypeError('settings must be a plain object');
+    if (!isPlainObject$3(input)) throw new TypeError('settings must be a plain object');
 
     const country = category(input, 'country');
     const region = category(input, 'region');
@@ -1538,7 +1538,7 @@
   /** Migrates supported legacy shapes into the current canonical schema. */
   function migrateSettings(input) {
     if (input === undefined || input === null) return createDefaultSettings();
-    if (!isPlainObject$4(input)) throw new TypeError('settings must be a plain object');
+    if (!isPlainObject$3(input)) throw new TypeError('settings must be a plain object');
 
     const version = 'schemaVersion' in input ? input.schemaVersion : 0;
     if (!Number.isInteger(version)) throw new TypeError('schemaVersion must be an integer');
@@ -1881,14 +1881,14 @@
 
   const X_ABOUT_ACCOUNT_LOCATION_SOURCE = 'x-about-account';
 
-  function isPlainObject$3(value) {
+  function isPlainObject$2(value) {
     if (value === null || typeof value !== 'object') return false;
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
   }
 
   function readOwn(object, property) {
-    if (!isPlainObject$3(object) || !Object.prototype.hasOwnProperty.call(object, property)) {
+    if (!isPlainObject$2(object) || !Object.prototype.hasOwnProperty.call(object, property)) {
       return { usable: false };
     }
     return { usable: true, value: object[property] };
@@ -1900,7 +1900,7 @@
   function parseXAboutAccountLocationPayload(payload) {
     let topLevelIsPlain;
     try {
-      topLevelIsPlain = isPlainObject$3(payload);
+      topLevelIsPlain = isPlainObject$2(payload);
     } catch {
       topLevelIsPlain = false;
     }
@@ -1913,7 +1913,7 @@
         if (!next.usable) return unavailable();
         current = next.value;
       }
-      if (!isPlainObject$3(current)) return unavailable();
+      if (!isPlainObject$2(current)) return unavailable();
 
       if (!Object.prototype.hasOwnProperty.call(current, 'account_based_in')) {
         return createMissingLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
@@ -1952,31 +1952,31 @@
 
   const EMPTY$2 = Object.freeze([]);
   const REASONS = new Set(['initial', 'mutation', 'manual']);
-  const hasOwn$6 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
+  const hasOwn$5 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
   const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-  const isPlainObject$2 = (value) => {
+  const isPlainObject$1 = (value) => {
     if (!isObject(value)) return false;
     const prototype = Object.getPrototypeOf(value);
     if (prototype === null || prototype === Object.prototype) return true;
     // A different realm has a different Object.prototype identity. Its Object.prototype still
     // terminates the prototype chain directly, unlike a class prototype.
     return Object.getPrototypeOf(prototype) === null
-      && hasOwn$6(prototype, 'constructor')
+      && hasOwn$5(prototype, 'constructor')
       && Function.prototype.toString.call(prototype.constructor)
         === Function.prototype.toString.call(Object);
   };
   const TARGET_KEYS = Object.freeze([
     'version', 'source', 'accountContainer', 'link', 'badgeContainer', 'identity',
   ]);
-  const IDENTITY_KEYS$2 = Object.freeze([
+  const IDENTITY_KEYS$1 = Object.freeze([
     'handle', 'displayHandle', 'profileUrl', 'accountId', 'allowlistKey', 'source',
   ]);
   const UPDATED_KEYS = Object.freeze(['previous', 'current']);
 
   function hasExactlyOwnKeys(value, keys) {
-    if (!isPlainObject$2(value)) return false;
+    if (!isPlainObject$1(value)) return false;
     const ownKeys = Reflect.ownKeys(value);
-    return ownKeys.length === keys.length && keys.every((key) => hasOwn$6(value, key));
+    return ownKeys.length === keys.length && keys.every((key) => hasOwn$5(value, key));
   }
 
   function normalizeOptions$2(options) {
@@ -1987,10 +1987,10 @@
     if (prototype !== Object.prototype && prototype !== null) {
       throw new TypeError('account target processor options must be a plain object');
     }
-    if (hasOwn$6(options, 'accountId')) {
+    if (hasOwn$5(options, 'accountId')) {
       throw new TypeError('accountId is not supported by account target processing');
     }
-    if (!hasOwn$6(options, 'source') || typeof options.source !== 'string') {
+    if (!hasOwn$5(options, 'source') || typeof options.source !== 'string') {
       throw new TypeError('Invalid account target processor source');
     }
     const source = options.source.trim().toLowerCase();
@@ -1999,26 +1999,26 @@
     }
     // Normalize before retaining any callback or other caller-supplied reference. An inherited
     // value is deliberately read as absent.
-    const suppliedSettings = hasOwn$6(options, 'settings') ? options.settings : undefined;
+    const suppliedSettings = hasOwn$5(options, 'settings') ? options.settings : undefined;
     const settings = normalizeSettings(suppliedSettings);
-    if (!hasOwn$6(options, 'loadAboutAccountPayload')
+    if (!hasOwn$5(options, 'loadAboutAccountPayload')
       || typeof options.loadAboutAccountPayload !== 'function') {
       throw new TypeError('loadAboutAccountPayload must be a function');
     }
-    if (!hasOwn$6(options, 'abortControllerFactory')
+    if (!hasOwn$5(options, 'abortControllerFactory')
       || typeof options.abortControllerFactory !== 'function') {
       throw new TypeError('abortControllerFactory must be a function');
     }
-    if (!hasOwn$6(options, 'onError') || typeof options.onError !== 'function') {
+    if (!hasOwn$5(options, 'onError') || typeof options.onError !== 'function') {
       throw new TypeError('onError must be a function');
     }
-    if (hasOwn$6(options, 'resolveFlagAssetUrl') && typeof options.resolveFlagAssetUrl !== 'function') {
+    if (hasOwn$5(options, 'resolveFlagAssetUrl') && typeof options.resolveFlagAssetUrl !== 'function') {
       throw new TypeError('resolveFlagAssetUrl must be a function');
     }
     return {
       source,
       settings,
-      hasBaseUrl: hasOwn$6(options, 'baseUrl'),
+      hasBaseUrl: hasOwn$5(options, 'baseUrl'),
       baseUrl: options.baseUrl,
       loadAboutAccountPayload: options.loadAboutAccountPayload,
       abortControllerFactory: options.abortControllerFactory,
@@ -2033,7 +2033,7 @@
       || !isObject(target.accountContainer) || !isObject(target.link)
       || typeof target.link.tagName !== 'string' || target.link.tagName.toLowerCase() !== 'a'
       || !isObject(target.link.ownerDocument) || typeof target.link.getAttribute !== 'function'
-      || !hasExactlyOwnKeys(target.identity, IDENTITY_KEYS$2)) return false;
+      || !hasExactlyOwnKeys(target.identity, IDENTITY_KEYS$1)) return false;
 
     const identity = target.identity;
     let canonical;
@@ -2046,7 +2046,7 @@
       // This invokes the existing renderer's non-mutating container validation boundary.
       findLocationBadge(target.badgeContainer);
     } catch { return false; }
-    return identity.source === source && IDENTITY_KEYS$2.every((key) => identity[key] === canonical[key]);
+    return identity.source === source && IDENTITY_KEYS$1.every((key) => identity[key] === canonical[key]);
   }
 
   function validAuxiliary(change, source) {
@@ -2059,7 +2059,7 @@
   function validateChange(change, source) {
     let valid = false;
     try {
-      valid = isPlainObject$2(change) && change.version === ACCOUNT_TARGET_OBSERVER_VERSION
+      valid = isPlainObject$1(change) && change.version === ACCOUNT_TARGET_OBSERVER_VERSION
         && REASONS.has(change.reason) && change.source === source
         && Array.isArray(change.current) && Array.isArray(change.added)
         && Array.isArray(change.updated) && Array.isArray(change.removed)
@@ -2133,10 +2133,16 @@
       if (!isCurrent(entry)) return;
       entry.pending = null;
       entry.controller = null;
+      if (error?.name === 'AbortError' || error?.code === 'ABORTED') return;
       entry.location = createUnavailableLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
       entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
         || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
-      report(new Error(message));
+      const diagnostic = error?.code === 'INVALID_PAYLOAD' ? 'About Account response payload was invalid.'
+        : error?.code === 'NETWORK' || error?.code === 'HTTP_5XX' ? 'About Account network request failed.'
+          : error?.code === 'PAGE_BRIDGE_UNAVAILABLE' ? 'About Account request bridge unavailable.'
+            : error?.code === 'HTTP_429' ? 'About Account lookup rate limited; scheduler cooldown exhausted.'
+              : message;
+      report(new Error(diagnostic));
       presentEntry(entry);
     };
     const startLookup = (entry) => {
@@ -2144,7 +2150,7 @@
       let promise;
       try {
         controller = normalized.abortControllerFactory();
-        if (!isObject(controller) || !hasOwn$6(controller, 'signal')
+        if (!isObject(controller) || !hasOwn$5(controller, 'signal')
           || typeof controller.abort !== 'function') throw new TypeError('invalid abort controller');
         entry.controller = controller;
         const context = Object.freeze({
@@ -2302,16 +2308,16 @@
 
   const X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION = 1;
 
-  const hasOwn$5 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-  const REQUEST_ERROR$1 = 'Invalid X About Account payload broker request';
+  const hasOwn$4 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const REQUEST_ERROR = 'Invalid X About Account payload broker request';
 
-  function isPlainObject$1(value) {
+  function isPlainObject(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
     try {
       const prototype = Object.getPrototypeOf(value);
       if (prototype === null || prototype === Object.prototype) return true;
       return Object.getPrototypeOf(prototype) === null
-        && hasOwn$5(prototype, 'constructor')
+        && hasOwn$4(prototype, 'constructor')
         && Function.prototype.toString.call(prototype.constructor)
           === Function.prototype.toString.call(Object);
     } catch {
@@ -2319,11 +2325,11 @@
     }
   }
 
-  function hasExactKeys$1(value, keys) {
-    if (!isPlainObject$1(value)) return false;
+  function hasExactKeys(value, keys) {
+    if (!isPlainObject(value)) return false;
     try {
       const ownKeys = Reflect.ownKeys(value);
-      return ownKeys.length === keys.length && keys.every((key) => hasOwn$5(value, key));
+      return ownKeys.length === keys.length && keys.every((key) => hasOwn$4(value, key));
     } catch {
       return false;
     }
@@ -2341,7 +2347,7 @@
     ];
     const contextKeys = ['version', 'signal'];
     try {
-      if (!hasExactKeys$1(identity, identityKeys) || !hasExactKeys$1(context, contextKeys)) return null;
+      if (!hasExactKeys(identity, identityKeys) || !hasExactKeys(context, contextKeys)) return null;
       const canonical = createAccountIdentity({
         handle: identity.handle,
         accountId: identity.accountId,
@@ -2373,14 +2379,14 @@
       || (optionsPrototype !== null && optionsPrototype !== Object.prototype)) {
       throw new TypeError('X About Account payload broker options must be a plain object');
     }
-    if (!hasOwn$5(options, 'loadPayload') || typeof options.loadPayload !== 'function') {
+    if (!hasOwn$4(options, 'loadPayload') || typeof options.loadPayload !== 'function') {
       throw new TypeError('loadPayload must be a function');
     }
-    if (!hasOwn$5(options, 'abortControllerFactory')
+    if (!hasOwn$4(options, 'abortControllerFactory')
       || typeof options.abortControllerFactory !== 'function') {
       throw new TypeError('abortControllerFactory must be a function');
     }
-    if (!hasOwn$5(options, 'onError') || typeof options.onError !== 'function') {
+    if (!hasOwn$4(options, 'onError') || typeof options.onError !== 'function') {
       throw new TypeError('onError must be a function');
     }
     const loadPayload = options.loadPayload;
@@ -2527,7 +2533,7 @@
     function loadAboutAccountPayload(identity, context) {
       if (!active) throw new TypeError('X About Account payload broker is not active');
       const request = validateRequest(identity, context);
-      if (request === null) throw new TypeError(REQUEST_ERROR$1);
+      if (request === null) throw new TypeError(REQUEST_ERROR);
       if (request.aborted) return Promise.reject(abortError$1());
       const key = JSON.stringify([request.handle, request.accountId]);
       const existing = entries.get(key);
@@ -2543,7 +2549,7 @@
       let sharedAbort;
       try {
         if (sharedController === null || typeof sharedController !== 'object'
-          || !hasOwn$5(sharedController, 'signal')) throw new TypeError();
+          || !hasOwn$4(sharedController, 'signal')) throw new TypeError();
         sharedAbort = sharedController.abort;
         if (typeof sharedAbort !== 'function') throw new TypeError();
         sharedSignal = sharedController.signal;
@@ -2598,7 +2604,7 @@
   }
 
   const EMPTY$1 = Object.freeze([]);
-  const hasOwn$4 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
+  const hasOwn$3 = (value, property) => Object.prototype.hasOwnProperty.call(value, property);
 
   function normalizeOptions$1(options) {
     if (options === null || typeof options !== 'object' || Array.isArray(options)
@@ -2606,17 +2612,17 @@
         && Object.getPrototypeOf(options) !== null)) {
       throw new TypeError('account target session options must be a plain object');
     }
-    if (hasOwn$4(options, 'accountId')) {
+    if (hasOwn$3(options, 'accountId')) {
       throw new TypeError('accountId is not supported by account target sessions');
     }
-    if (!hasOwn$4(options, 'source') || typeof options.source !== 'string') {
+    if (!hasOwn$3(options, 'source') || typeof options.source !== 'string') {
       throw new TypeError('Invalid account target session source');
     }
     const source = options.source.trim().toLowerCase();
     if (!ACCOUNT_IDENTITY_SOURCES.includes(source)) {
       throw new TypeError('Invalid account target session source');
     }
-    const settingsRuntime = hasOwn$4(options, 'settingsRuntime') ? options.settingsRuntime : null;
+    const settingsRuntime = hasOwn$3(options, 'settingsRuntime') ? options.settingsRuntime : null;
     if (settingsRuntime === null || typeof settingsRuntime !== 'object'
       || typeof settingsRuntime.getSettings !== 'function'
       || typeof settingsRuntime.subscribe !== 'function') {
@@ -2628,23 +2634,23 @@
       ['abortControllerFactory', 'abortControllerFactory must be a function'],
       ['onError', 'onError must be a function'],
     ]) {
-      if (!hasOwn$4(options, property) || typeof options[property] !== 'function') {
+      if (!hasOwn$3(options, property) || typeof options[property] !== 'function') {
         throw new TypeError(message);
       }
     }
-    if (hasOwn$4(options, 'resolveFlagAssetUrl') && typeof options.resolveFlagAssetUrl !== 'function') {
+    if (hasOwn$3(options, 'resolveFlagAssetUrl') && typeof options.resolveFlagAssetUrl !== 'function') {
       throw new TypeError('resolveFlagAssetUrl must be a function');
     }
     return {
       source,
-      hasBaseUrl: hasOwn$4(options, 'baseUrl'),
+      hasBaseUrl: hasOwn$3(options, 'baseUrl'),
       baseUrl: options.baseUrl,
       settingsRuntime,
       observerFactory: options.observerFactory,
       loadAboutAccountPayload: options.loadAboutAccountPayload,
       abortControllerFactory: options.abortControllerFactory,
       onError: options.onError,
-      resolveFlagAssetUrl: hasOwn$4(options, 'resolveFlagAssetUrl') ? options.resolveFlagAssetUrl : () => '',
+      resolveFlagAssetUrl: hasOwn$3(options, 'resolveFlagAssetUrl') ? options.resolveFlagAssetUrl : () => '',
     };
   }
 
@@ -2776,26 +2782,26 @@
 
   const ACCOUNT_TARGET_ROUTE_SESSION_CONTROLLER_VERSION = 1;
   const EMPTY = Object.freeze([]);
-  const hasOwn$3 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-  const OPTION_KEYS$1 = new Set([
+  const hasOwn$2 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const OPTION_KEYS = new Set([
     'settingsRuntime', 'observerFactory', 'loadPayload', 'brokerAbortControllerFactory',
     'consumerAbortControllerFactory', 'navigationObserverFactory', 'onError', 'baseUrl',
     'resolveFlagAssetUrl',
   ]);
 
-  function plain$1(value) {
+  function plain$2(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
     try { return Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null; } catch { return false; }
   }
 
   function normalizeOptions(options) {
-    if (!plain$1(options)) throw new TypeError('account target route session options must be a plain object');
+    if (!plain$2(options)) throw new TypeError('account target route session options must be a plain object');
     let keys;
     try { keys = Reflect.ownKeys(options); } catch { throw new TypeError('Invalid account target route session options'); }
     if (keys.includes('accountId')) {
       throw new TypeError('accountId is not supported by account target route sessions');
     }
-    if (keys.some((key) => typeof key !== 'string' || !OPTION_KEYS$1.has(key))) {
+    if (keys.some((key) => typeof key !== 'string' || !OPTION_KEYS.has(key))) {
       throw new TypeError('Invalid account target route session options');
     }
     const values = {};
@@ -2829,8 +2835,8 @@
   }
 
   function samePlan(left, right) {
-    const leftBase = hasOwn$3(left, 'baseUrl');
-    const rightBase = hasOwn$3(right, 'baseUrl');
+    const leftBase = hasOwn$2(left, 'baseUrl');
+    const rightBase = hasOwn$2(right, 'baseUrl');
     return left.root === right.root && left.source === right.source && leftBase === rightBase
       && (!leftBase || Object.is(left.baseUrl, right.baseUrl));
   }
@@ -2897,7 +2903,7 @@
         },
         resolveFlagAssetUrl: dependencies.resolveFlagAssetUrl,
       });
-      if (hasOwn$3(plan, 'baseUrl')) sessionOptions.baseUrl = plan.baseUrl;
+      if (hasOwn$2(plan, 'baseUrl')) sessionOptions.baseUrl = plan.baseUrl;
       session = createXAccountTargetSession(plan.root, sessionOptions);
       record.session = session;
       if (record.state === 'constructing') record.state = 'candidate';
@@ -3119,7 +3125,7 @@
         if (!startupCurrent()) {
           try {
             if (createdNavigation !== null && typeof createdNavigation === 'object'
-              && hasOwn$3(createdNavigation, 'stop')) startup.methods.stop = createdNavigation.stop;
+              && hasOwn$2(createdNavigation, 'stop')) startup.methods.stop = createdNavigation.stop;
           } catch { /* Claimed startup cleanup is best effort. */ }
           return finishClaimedStartup();
         }
@@ -3129,7 +3135,7 @@
           const methodKeys = ['stop', 'start', 'getCurrentUrl', 'isActive'];
           createdNavigationMethods = Object.create(null);
           for (const key of methodKeys) {
-            if (!hasOwn$3(createdNavigation, key)) throw new Error();
+            if (!hasOwn$2(createdNavigation, key)) throw new Error();
             createdNavigationMethods[key] = createdNavigation[key];
             startup.methods[key] = createdNavigationMethods[key];
             if (typeof createdNavigationMethods[key] !== 'function') throw new Error();
@@ -3614,14 +3620,14 @@
   }
 
   const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-  const HEADER_NAMES$1 = Object.freeze([
+  const HEADER_NAMES = Object.freeze([
     'authorization', 'x-csrf-token', 'x-twitter-active-user', 'x-twitter-auth-type',
     'x-twitter-client-language', 'x-guest-token', 'x-client-transaction-id',
   ]);
 
   const METADATA_DETAIL_LIMIT = 65_536;
 
-  function metadataHeaderNames() { return HEADER_NAMES$1; }
+  function metadataHeaderNames() { return HEADER_NAMES; }
 
   function createMetadataAuthenticationFingerprint(headers) {
     if (!isMetadataPlainObject(headers)) throw new TypeError('Invalid metadata authentication headers');
@@ -3711,344 +3717,6 @@
   }
 
   const X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION = 1;
-
-  const hasOwn$2 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-  const REQUEST_ERROR = 'Invalid X About Account request transport request';
-  const DESCRIPTOR_ERROR = 'Invalid X About Account request descriptor';
-  const RESPONSE_ERROR = 'Invalid X About Account response';
-  const IDENTITY_KEYS$1 = Object.freeze([
-    'handle', 'displayHandle', 'profileUrl', 'accountId', 'allowlistKey', 'source',
-  ]);
-  const CONTEXT_KEYS = Object.freeze(['version', 'signal']);
-  const DESCRIPTOR_KEYS = Object.freeze(['url', 'headers']);
-  const OPTION_KEYS = Object.freeze(['fetch', 'createRequest']);
-  const QUERY_NAMES = new Set(['variables']);
-  const HEADER_NAMES = new Set([
-    'authorization',
-    'x-csrf-token',
-    'x-twitter-active-user',
-    'x-twitter-auth-type',
-    'x-twitter-client-language',
-    'x-guest-token',
-    'x-client-transaction-id',
-  ]);
-  function recoverableError(code) {
-    const error = new Error('X About Account request requires fresh metadata');
-    Object.defineProperty(error, 'code', { value: code, enumerable: false });
-    return error;
-  }
-  const diagnosticTimes = new Map();
-  function diagnose(code) {
-    const now = Date.now();
-    if (now - (diagnosticTimes.get(code) ?? 0) < 30_000) return;
-    diagnosticTimes.set(code, now);
-    try { console.warn(`[X Region Reveal & Block] ${code}`); } catch { /* local only */ }
-  }
-
-  function isPlainObject(value) {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-    const prototype = Object.getPrototypeOf(value);
-    return prototype === null || prototype === Object.prototype;
-  }
-
-  function hasExactKeys(value, keys) {
-    if (!isPlainObject(value)) return false;
-    const ownKeys = Reflect.ownKeys(value);
-    return ownKeys.length === keys.length && keys.every((key) => hasOwn$2(value, key));
-  }
-
-  function abortError() {
-    const error = new Error('The operation was aborted');
-    error.name = 'AbortError';
-    return error;
-  }
-
-  function isAborted(signal) {
-    try { return signal.aborted === true; } catch { return false; }
-  }
-
-  function validatePublicRequest(identity, context) {
-    try {
-      if (!hasExactKeys(identity, IDENTITY_KEYS$1) || !hasExactKeys(context, CONTEXT_KEYS)) return null;
-      const canonical = createAccountIdentity({
-        handle: identity.handle,
-        accountId: identity.accountId,
-        source: identity.source,
-      });
-      if (canonical.source !== null
-        || IDENTITY_KEYS$1.some((key) => canonical[key] !== identity[key])
-        || context.version !== X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION) return null;
-      const signal = context.signal;
-      if (signal === null || typeof signal !== 'object'
-        || typeof signal.aborted !== 'boolean'
-        || typeof signal.addEventListener !== 'function'
-        || typeof signal.removeEventListener !== 'function') return null;
-      return signal;
-    } catch {
-      return null;
-    }
-  }
-
-  function parseObjectParameter(value) {
-    let parsed;
-    try { parsed = JSON.parse(value); } catch { throw new TypeError(DESCRIPTOR_ERROR); }
-    if (!isPlainObject(parsed)) throw new TypeError(DESCRIPTOR_ERROR);
-    return parsed;
-  }
-
-  function containsControl(value) {
-    return [...value].some((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 31 || code === 127;
-    });
-  }
-
-  function canonicalizeUrl(value, handle) {
-    if (typeof value !== 'string' || value.trim() !== value
-      || containsControl(value) || value.includes('\\')
-      || !/^https:\/\/(?:x\.com|twitter\.com)\//.test(value) || value.includes('#')) {
-      throw new TypeError(DESCRIPTOR_ERROR);
-    }
-    const supplied = /^https:\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?$/.exec(value);
-    if (!supplied) throw new TypeError(DESCRIPTOR_ERROR);
-    const [, authority, rawPathname, rawQuery] = supplied;
-    let url;
-    try { url = new URL(value); } catch { throw new TypeError(DESCRIPTOR_ERROR); }
-    if ((url.hostname !== 'x.com' && url.hostname !== 'twitter.com')
-      || url.protocol !== 'https:' || url.username !== '' || url.password !== ''
-      || url.port !== '' || url.hash !== '') throw new TypeError(DESCRIPTOR_ERROR);
-    if (authority !== url.host || rawPathname === '' || rawPathname.endsWith('/')
-      || rawPathname.includes('//')) throw new TypeError(DESCRIPTOR_ERROR);
-    const rawSegments = rawPathname.slice(1).split('/');
-    if (rawSegments.length !== 5) throw new TypeError(DESCRIPTOR_ERROR);
-    const segments = rawSegments.map((segment) => {
-      if (segment === '' || segment.includes('\\') || containsControl(segment)) {
-        throw new TypeError(DESCRIPTOR_ERROR);
-      }
-      let decoded;
-      try { decoded = decodeURIComponent(segment); } catch { throw new TypeError(DESCRIPTOR_ERROR); }
-      if (decoded.includes('/') || decoded.includes('\\') || containsControl(decoded)
-        || decoded === '.' || decoded === '..') throw new TypeError(DESCRIPTOR_ERROR);
-      return decoded;
-    });
-    const [first, second, third, queryId, operation] = segments;
-    if (first !== 'i' || second !== 'api' || third !== 'graphql'
-      || operation !== X_ABOUT_ACCOUNT_OPERATION_NAME || !isValidXAboutAccountQueryId(queryId)) {
-      throw new TypeError(DESCRIPTOR_ERROR);
-    }
-
-    const parameters = Object.create(null);
-    if (rawQuery === undefined || rawQuery === '') throw new TypeError(DESCRIPTOR_ERROR);
-    for (const component of rawQuery.split('&')) {
-      const separator = component.indexOf('=');
-      const encodedName = separator < 0 ? component : component.slice(0, separator);
-      const encodedValue = separator < 0 ? '' : component.slice(separator + 1);
-      let name;
-      let decodedValue;
-      try {
-        name = decodeURIComponent(encodedName.replace(/\+/g, ' '));
-        decodedValue = decodeURIComponent(encodedValue.replace(/\+/g, ' '));
-      } catch {
-        throw new TypeError(DESCRIPTOR_ERROR);
-      }
-      if (!QUERY_NAMES.has(name) || hasOwn$2(parameters, name)) throw new TypeError(DESCRIPTOR_ERROR);
-      parameters[name] = parseObjectParameter(decodedValue);
-    }
-    if (!hasOwn$2(parameters, 'variables')
-      || Reflect.ownKeys(parameters.variables).length !== 1
-      || !hasOwn$2(parameters.variables, 'screenName')
-      || parameters.variables.screenName !== handle) throw new TypeError(DESCRIPTOR_ERROR);
-
-    const canonicalParameters = new URLSearchParams();
-    for (const name of ['variables']) {
-      if (hasOwn$2(parameters, name)) canonicalParameters.set(name, JSON.stringify(parameters[name]));
-    }
-    return `${url.origin}/i/api/graphql/${queryId}/${X_ABOUT_ACCOUNT_OPERATION_NAME}?${canonicalParameters}`;
-  }
-
-  function canonicalizeHeaders(value) {
-    if (!isPlainObject(value)) throw new TypeError(DESCRIPTOR_ERROR);
-    let keys;
-    try { keys = Reflect.ownKeys(value); } catch { throw new TypeError(DESCRIPTOR_ERROR); }
-    if (keys.some((key) => typeof key !== 'string')) throw new TypeError(DESCRIPTOR_ERROR);
-    const headers = Object.create(null);
-    for (const key of keys) {
-      const normalized = key.toLowerCase();
-      if (!HEADER_NAMES.has(normalized) || hasOwn$2(headers, normalized)) {
-        throw new TypeError(DESCRIPTOR_ERROR);
-      }
-      let headerValue;
-      try { headerValue = value[key]; } catch { throw new TypeError(DESCRIPTOR_ERROR); }
-      if (typeof headerValue !== 'string' || headerValue.length === 0
-        || containsControl(headerValue)) throw new TypeError(DESCRIPTOR_ERROR);
-      headers[normalized] = headerValue;
-    }
-    if (!hasOwn$2(headers, 'authorization') || !hasOwn$2(headers, 'x-csrf-token')) {
-      throw new TypeError(DESCRIPTOR_ERROR);
-    }
-    headers.accept = 'application/json';
-    headers['accept-language'] = 'en-US,en;q=0.9';
-    return headers;
-  }
-
-  function prepareDescriptor(descriptor, handle) {
-    try {
-      if (!hasExactKeys(descriptor, DESCRIPTOR_KEYS)) throw new TypeError();
-      const url = descriptor.url;
-      const headers = descriptor.headers;
-      return { url: canonicalizeUrl(url, handle), headers: canonicalizeHeaders(headers) };
-    } catch {
-      throw new TypeError(DESCRIPTOR_ERROR);
-    }
-  }
-
-  function ownInvalidThenable(value) {
-    if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return false;
-    let then;
-    try { then = value.then; } catch { throw new TypeError(DESCRIPTOR_ERROR); }
-    if (typeof then !== 'function') return false;
-    const discard = () => undefined;
-    try { then.call(value, discard, discard); } catch { /* Invalid metadata stays private. */ }
-    // Reading and invoking `then` here owns both outcomes without ever accepting
-    // asynchronous metadata; repeated callback attempts are harmless discards.
-    return true;
-  }
-
-  function captureResponse(response) {
-    try {
-      if (response === null || typeof response !== 'object') throw new TypeError();
-      const ok = response.ok;
-      const status = response.status;
-      const json = response.json;
-      if (typeof ok !== 'boolean' || !Number.isInteger(status) || status < 100 || status > 599
-        || typeof json !== 'function') throw new TypeError();
-      return { ok, status, json };
-    } catch {
-      throw new TypeError(RESPONSE_ERROR);
-    }
-  }
-
-  function createXAboutAccountRequestTransport(options) {
-    let prototype;
-    try { prototype = Object.getPrototypeOf(options); } catch { prototype = undefined; }
-    if (options === null || typeof options !== 'object' || Array.isArray(options)
-      || (prototype !== null && prototype !== Object.prototype)) {
-      throw new TypeError('X About Account request transport options must be a plain object');
-    }
-    let ownKeys;
-    try { ownKeys = Reflect.ownKeys(options); } catch {
-      throw new TypeError('Invalid X About Account request transport options');
-    }
-    if (ownKeys.length !== OPTION_KEYS.length
-      || ownKeys.some((key) => typeof key !== 'string')
-      || !OPTION_KEYS.every((key) => hasOwn$2(options, key))) {
-      throw new TypeError('Invalid X About Account request transport options');
-    }
-    let fetchDependency;
-    let createRequest;
-    try {
-      fetchDependency = options.fetch;
-      createRequest = options.createRequest;
-    } catch {
-      throw new TypeError('Invalid X About Account request transport options');
-    }
-    if (typeof fetchDependency !== 'function') throw new TypeError('fetch must be a function');
-    if (typeof createRequest !== 'function') throw new TypeError('createRequest must be a function');
-    const invalidateSnapshot = typeof createRequest.invalidateSnapshot === 'function'
-      ? createRequest.invalidateSnapshot : null;
-
-    function loadPayload(identity, context) {
-      const signal = validatePublicRequest(identity, context);
-      if (signal === null) return Promise.reject(new TypeError(REQUEST_ERROR));
-      if (isAborted(signal)) return Promise.reject(abortError());
-      let descriptor;
-      try {
-        descriptor = createRequest(identity, Object.freeze({
-          version: X_ABOUT_ACCOUNT_REQUEST_TRANSPORT_VERSION,
-        }));
-      } catch {
-        return Promise.reject(isAborted(signal)
-          ? abortError() : new Error('Unable to prepare X About Account request'));
-      }
-      let prepared;
-      try {
-        if (ownInvalidThenable(descriptor)) throw new TypeError(DESCRIPTOR_ERROR);
-        prepared = prepareDescriptor(descriptor, identity.handle);
-      } catch (error) {
-        return Promise.reject(isAborted(signal) ? abortError() : error);
-      }
-      descriptor = null;
-      if (isAborted(signal)) return Promise.reject(abortError());
-
-      let fetchResult;
-      try {
-        fetchResult = fetchDependency(prepared.url, {
-          method: 'GET',
-          credentials: 'include',
-          cache: 'no-store',
-          redirect: 'error',
-          headers: prepared.headers,
-          signal,
-        });
-      } catch {
-        return Promise.reject(isAborted(signal)
-          ? abortError() : new Error('X About Account request failed'));
-      }
-      const ownedFetch = Promise.resolve(fetchResult).then(
-        (response) => ({ succeeded: true, response }),
-        () => ({ succeeded: false }),
-      );
-      prepared = null;
-      fetchResult = null;
-      if (isAborted(signal)) {
-        return Promise.reject(abortError());
-      }
-
-      return ownedFetch.then(async (settlement) => {
-        if (!settlement.succeeded) {
-          throw isAborted(signal) ? abortError() : new Error('X About Account request failed');
-        }
-        const { response } = settlement;
-        if (isAborted(signal)) throw abortError();
-        let captured;
-        try { captured = captureResponse(response); } catch (error) {
-          throw isAborted(signal) ? abortError() : error;
-        }
-        if (isAborted(signal)) throw abortError();
-        if (!captured.ok) {
-          if ([400, 401, 403, 404].includes(captured.status)) {
-            const kind = captured.status === 401 || captured.status === 403 ? 'authentication' : 'query';
-            try { invalidateSnapshot?.(kind); } catch { /* Metadata invalidation is best effort. */ }
-          }
-          if (captured.status === 401 || captured.status === 403) {
-            diagnose('About Account lookup rejected because authentication became stale.');
-          } else if (captured.status === 400 || captured.status === 404) {
-            diagnose('About Account query ID rejected or obsolete.');
-          }
-          if (captured.status === 401 || captured.status === 403) {
-            throw recoverableError(X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION);
-          }
-          if (captured.status === 400 || captured.status === 404) {
-            throw recoverableError(X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY);
-          }
-          throw new Error('X About Account request failed');
-        }
-        if (isAborted(signal)) throw abortError();
-        let jsonResult;
-        try { jsonResult = captured.json.call(response); } catch {
-          throw isAborted(signal) ? abortError() : new Error('Unable to parse X About Account response');
-        }
-        let payload;
-        try { payload = await jsonResult; } catch {
-          throw isAborted(signal) ? abortError() : new Error('Unable to parse X About Account response');
-        }
-        if (isAborted(signal)) throw abortError();
-        return payload;
-      });
-    }
-
-    return Object.freeze({ loadPayload });
-  }
 
   const supportedOrigins$2 = new Set(['https://x.com', 'https://twitter.com']);
   const IDENTITY_KEYS = Object.freeze([
@@ -4283,6 +3951,170 @@
     });
 
     return Object.freeze({ start, stop, createRequest, hasSnapshot: () => snapshot !== null, isActive: () => active });
+  }
+
+  const X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION = 1;
+  const X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE = 'x-region-block:about-account:request';
+  const X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE = 'x-region-block:about-account:cancel';
+  const X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE = 'x-region-block:about-account:response';
+  const X_ABOUT_ACCOUNT_RESPONSE_LIMIT = 262_144;
+
+  const ID = /^[A-Za-z0-9_-]{16,64}$/;
+  const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
+  const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'NETWORK',
+    'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
+    'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'UNKNOWN']);
+  const plain$1 = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+    && [null, Object.prototype].includes(Object.getPrototypeOf(value));
+  const exact = (value, keys) => plain$1(value) && Reflect.ownKeys(value).length === keys.length
+    && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+
+  function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
+  function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
+  function createAboutAccountRequestDetail(id, handle) {
+    if (!validOpaqueRequestId(id) || !validCanonicalHandle(handle)) throw new TypeError('Invalid request');
+    return Object.freeze({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, handle });
+  }
+  function createAboutAccountCancelDetail(id) {
+    if (!validOpaqueRequestId(id)) throw new TypeError('Invalid cancellation');
+    return Object.freeze({ version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id });
+  }
+  function parseAboutAccountResponseDetail(value) {
+    if (!plain$1(value)) return null;
+    let serialized;
+    try { serialized = JSON.stringify(value); } catch { return null; }
+    if (serialized.length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT || !validOpaqueRequestId(value.id)
+      || value.version !== X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION || typeof value.ok !== 'boolean') return null;
+    if (value.ok) return exact(value, ['version', 'id', 'ok', 'payload'])
+      ? { version: value.version, id: value.id, ok: true, payload: value.payload } : null;
+    return exact(value, ['version', 'id', 'ok', 'code', 'status', 'retryAfterMs'])
+      && CODES.has(value.code) && (value.status === null || Number.isInteger(value.status))
+      && (value.retryAfterMs === null || (Number.isInteger(value.retryAfterMs) && value.retryAfterMs >= 0))
+      ? { version: value.version, id: value.id, ok: false, code: value.code,
+        status: value.status, retryAfterMs: value.retryAfterMs } : null;
+  }
+
+  const MAX_IN_FLIGHT = 4;
+  const START_INTERVAL = 200;
+  const abortError = () => Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+  const codedError = (code, status = null) => {
+    const error = new Error('About Account lookup failed');
+    Object.defineProperties(error, { code: { value: code }, status: { value: status } });
+    return error;
+  };
+  function createXAboutAccountPageTransport(globalScope, options = {}) {
+    const { document, CustomEvent } = globalScope;
+    const now = options.now ?? (() => Date.now());
+    const delay = options.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    let sequence = 0; let active = true; let inFlight = 0; let lastStart = -Infinity;
+    let cooldownUntil = 0; let timerPending = false;
+    let metadataQuery = null; let metadataAuth = null;
+    const queue = []; const pending = new Map(); const waitingMetadata = new Set();
+    const dispatch = (type, detail) => document.dispatchEvent(new CustomEvent(type,
+      { detail, bubbles: false, cancelable: false, composed: false }));
+    const schedule = () => {
+      if (!active || timerPending || !queue.length || inFlight >= MAX_IN_FLIGHT) return;
+      const wait = Math.max(0, cooldownUntil - now(), START_INTERVAL - (now() - lastStart));
+      if (wait > 0) {
+        timerPending = true;
+        void delay(wait).then(() => { timerPending = false; schedule(); });
+        return;
+      }
+      const entry = queue.shift();
+      if (!entry || entry.cancelled) { schedule(); return; }
+      entry.started = true; inFlight += 1; lastStart = now();
+      dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, createAboutAccountRequestDetail(entry.id, entry.handle));
+      schedule();
+    };
+    const enqueueAttempt = (entry) => { entry.started = false; queue.push(entry); schedule(); };
+    const response = (event) => {
+      const result = parseAboutAccountResponseDetail(event?.detail);
+      // console.info('DEBUG', result);
+      if (result === null) return;
+      const entry = pending.get(result.id);
+      if (!entry || !entry.started) return;
+      entry.started = false; inFlight = Math.max(0, inFlight - 1);
+      if (entry.cancelled) { schedule(); return; }
+      if (result.ok) { pending.delete(entry.id); entry.cleanup(); entry.resolve(result.payload); schedule(); return; }
+      const code = result.code;
+      let retryDelay = null;
+      if (code === 'HTTP_429' && entry.rateRetries++ < 1) {
+        cooldownUntil = Math.max(cooldownUntil, now() + Math.min(300_000, result.retryAfterMs ?? 60_000));
+        retryDelay = 0;
+      } else if ((code === 'NETWORK' || code === 'HTTP_5XX') && entry.transientRetries < 2) {
+        retryDelay = 1000 * (2 ** entry.transientRetries); entry.transientRetries += 1;
+      } else if (['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(code)
+        && entry.metadataRetries++ < 1) {
+        entry.rejectedMetadata = ['HTTP_400', 'HTTP_404'].includes(code) ? metadataQuery : metadataAuth;
+        entry.metadataKind = ['HTTP_400', 'HTTP_404'].includes(code) ? 'query' : 'auth';
+        waitingMetadata.add(entry);
+        schedule(); return;
+      }
+      if (retryDelay !== null) {
+        void delay(retryDelay).then(() => { if (active && !entry.cancelled) enqueueAttempt(entry); });
+      } else {
+        pending.delete(entry.id); entry.cleanup();
+        entry.reject(code === 'ABORTED' ? abortError() : codedError(code, result.status));
+      }
+      schedule();
+    };
+    const metadata = (event) => {
+      try {
+        const value = JSON.parse(event?.detail);
+        metadataQuery = value.queryId;
+        metadataAuth = JSON.stringify([value.headers?.authorization, value.headers?.['x-csrf-token'],
+          value.headers?.['x-guest-token'], value.headers?.['x-twitter-auth-type']]);
+      } catch { return; }
+      for (const entry of [...waitingMetadata]) if (active && !entry.cancelled) {
+        if (entry.rejectedMetadata === null && entry.metadataKind === 'query') {
+          entry.rejectedMetadata = metadataQuery;
+          continue;
+        }
+        const fresh = entry.metadataKind === 'query'
+          ? metadataQuery !== entry.rejectedMetadata : metadataAuth !== entry.rejectedMetadata;
+        if (!fresh) continue;
+        waitingMetadata.delete(entry);
+        // Avoid starting reentrantly inside the ordinary page request being observed.
+        void delay(0).then(() => { if (active && !entry.cancelled) enqueueAttempt(entry); });
+      }
+    };
+    document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
+    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, metadata);
+    function loadPayload(identity, context) {
+      let canonical;
+      try { canonical = createAccountIdentity(identity); } catch { canonical = null; }
+      if (!active || canonical === null || canonical.handle !== identity.handle
+        || context?.version !== X_ABOUT_ACCOUNT_PAYLOAD_BROKER_VERSION || !context.signal) {
+        return Promise.reject(codedError('PAGE_BRIDGE_UNAVAILABLE'));
+      }
+      if (context.signal.aborted) return Promise.reject(abortError());
+      const id = `${now().toString(36).padStart(10, '0')}_${(++sequence).toString(36).padStart(8, '0')}`;
+      return new Promise((resolve, reject) => {
+        const entry = { id, handle: canonical.handle, resolve, reject, started: false, cancelled: false,
+          transientRetries: 0, metadataRetries: 0, rateRetries: 0, cleanup: null };
+        const cancel = () => {
+          if (entry.cancelled) return; entry.cancelled = true; pending.delete(id);
+          const index = queue.indexOf(entry); if (index >= 0) queue.splice(index, 1);
+          if (entry.started) { inFlight = Math.max(0, inFlight - 1);
+            dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, createAboutAccountCancelDetail(id)); }
+          entry.cleanup(); reject(abortError()); schedule();
+        };
+        entry.cleanup = () => context.signal.removeEventListener('abort', cancel);
+        context.signal.addEventListener('abort', cancel, { once: true });
+        pending.set(id, entry); enqueueAttempt(entry);
+      });
+    }
+    return Object.freeze({ loadPayload, notifyMetadata: metadata, stop() {
+      if (!active) return; active = false;
+      document.removeEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
+      document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_METADATA_EVENT_TYPE, metadata);
+      for (const entry of pending.values()) {
+        entry.cancelled = true; entry.cleanup();
+        if (entry.started) dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, createAboutAccountCancelDetail(entry.id));
+        entry.reject(abortError());
+      }
+      pending.clear(); waitingMetadata.clear(); queue.length = 0; inFlight = 0;
+    } });
   }
 
   const X_NAVIGATION_EVENT_TYPE = 'x-region-block:navigation';
@@ -4648,7 +4480,6 @@
       const document = globalScope.document;
       const { MutationObserver, AbortController, Event, URLSearchParams,
         Promise: PromiseConstructor } = globalScope;
-      const fetchMethod = globalScope.fetch;
       const globalAdd = globalScope.addEventListener;
       const globalRemove = globalScope.removeEventListener;
       const documentAdd = document.addEventListener;
@@ -4658,14 +4489,16 @@
         ?? usableExtensionApi(globalScope.chrome);
       if (!supportedOrigins.has(origin) || typeof document.querySelectorAll !== 'function'
         || typeof MutationObserver !== 'function' || typeof AbortController !== 'function'
-        || typeof fetchMethod !== 'function' || typeof Event !== 'function'
+        || typeof Event !== 'function'
         || typeof URLSearchParams !== 'function' || typeof PromiseConstructor !== 'function'
         || typeof globalAdd !== 'function' || typeof globalRemove !== 'function'
         || typeof documentAdd !== 'function' || typeof documentRemove !== 'function'
         || typeof documentDispatch !== 'function' || extensionApi === null) throw new Error();
       dependencies = { origin, document, MutationObserver, AbortController, Event,
         URLSearchParams, Promise: PromiseConstructor,
-        fetch: (...args) => Reflect.apply(fetchMethod, globalScope, args),
+        CustomEvent: globalScope.CustomEvent ?? class extends Event {
+          constructor(type, init = {}) { super(type, init); this.detail = init.detail; }
+        },
         globalAdd, globalRemove, documentAdd, documentRemove,
         resolveFlagAssetUrl: (countryCode) => extensionApi.runtime.getURL(
           `assets/flags/${normalizeCountryCode(countryCode).toLowerCase()}.png`,
@@ -4713,12 +4546,12 @@
       removeMetadata(state);
       stopComponent(state, 'routeCandidate');
       stopComponent(state, 'routeController', 'routeCandidateStopped');
+      stopComponent(state, 'transport');
       stopComponent(state, 'bridge');
       stopComponent(state, 'settingsCandidate');
       stopComponent(state, 'settingsRuntime');
       stopComponent(state, 'injector');
       removePagehide(state);
-      state.transport = null;
       state.metadataCheckPending = false;
       state.prerequisitesReady = false;
     };
@@ -4746,9 +4579,8 @@
       state.routeStarting = true;
       let candidate = null;
       try {
-        const bridge = state.bridge;
-        const transport = createXAboutAccountRequestTransport({
-          fetch: dependencies.fetch, createRequest: bridge.createRequest,
+        const transport = createXAboutAccountPageTransport({
+          document: dependencies.document, CustomEvent: dependencies.CustomEvent,
         });
         if (!owned(state)) throw new Error();
         state.transport = transport;
@@ -4777,9 +4609,7 @@
         state.routeController = candidate; state.routeCandidate = null;
         ready = true;
         diagnostic('Metadata accepted and account processing started.');
-        if (Array.isArray(discovered) && discovered.length === 0) {
-          diagnostic('Account discovery started but no supported targets were found.', 'warn');
-        }
+        if (Array.isArray(discovered) && discovered.length === 0) diagnostic('Account discovery is awaiting dynamic targets.');
       } catch {
         if (candidate !== null && state.routeCandidate === null) state.routeCandidate = candidate;
         stopComponent(state, 'routeCandidate');
@@ -4827,6 +4657,7 @@
         dependencies.Promise.resolve().then(() => {
           state.metadataCheckPending = false;
           if (owned(state)) {
+            state.transport?.notifyMetadata();
             if (ready && state.bridge?.hasSnapshot()) state.routeController?.retryRecoverable();
             else startRoute(state);
           }

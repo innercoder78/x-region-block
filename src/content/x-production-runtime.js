@@ -3,7 +3,7 @@ import { createXAccountTargetRouteSessionController,
   ACCOUNT_TARGET_ROUTE_SESSION_CONTROLLER_VERSION } from './account-target-route-session-controller.js';
 import { initializeContentSettings } from './initialize-content-settings.js';
 import { createXAboutAccountRequestMetadataBridge } from './x-about-account-request-metadata-bridge.js';
-import { createXAboutAccountRequestTransport } from './x-about-account-request-transport.js';
+import { createXAboutAccountPageTransport } from './x-about-account-page-transport.js';
 import { createXNavigationObserver } from './x-navigation-observer.js';
 import { createXPageScriptInjector } from './x-page-script-injector.js';
 import { normalizeCountryCode } from '../shared/country-regions.js';
@@ -38,7 +38,6 @@ export function createXProductionContentRuntime(globalScope) {
     const document = globalScope.document;
     const { MutationObserver, AbortController, Event, URLSearchParams,
       Promise: PromiseConstructor } = globalScope;
-    const fetchMethod = globalScope.fetch;
     const globalAdd = globalScope.addEventListener;
     const globalRemove = globalScope.removeEventListener;
     const documentAdd = document.addEventListener;
@@ -48,14 +47,16 @@ export function createXProductionContentRuntime(globalScope) {
       ?? usableExtensionApi(globalScope.chrome);
     if (!supportedOrigins.has(origin) || typeof document.querySelectorAll !== 'function'
       || typeof MutationObserver !== 'function' || typeof AbortController !== 'function'
-      || typeof fetchMethod !== 'function' || typeof Event !== 'function'
+      || typeof Event !== 'function'
       || typeof URLSearchParams !== 'function' || typeof PromiseConstructor !== 'function'
       || typeof globalAdd !== 'function' || typeof globalRemove !== 'function'
       || typeof documentAdd !== 'function' || typeof documentRemove !== 'function'
       || typeof documentDispatch !== 'function' || extensionApi === null) throw new Error();
     dependencies = { origin, document, MutationObserver, AbortController, Event,
       URLSearchParams, Promise: PromiseConstructor,
-      fetch: (...args) => Reflect.apply(fetchMethod, globalScope, args),
+      CustomEvent: globalScope.CustomEvent ?? class extends Event {
+        constructor(type, init = {}) { super(type, init); this.detail = init.detail; }
+      },
       globalAdd, globalRemove, documentAdd, documentRemove,
       resolveFlagAssetUrl: (countryCode) => extensionApi.runtime.getURL(
         `assets/flags/${normalizeCountryCode(countryCode).toLowerCase()}.png`,
@@ -103,12 +104,12 @@ export function createXProductionContentRuntime(globalScope) {
     removeMetadata(state);
     stopComponent(state, 'routeCandidate');
     stopComponent(state, 'routeController', 'routeCandidateStopped');
+    stopComponent(state, 'transport');
     stopComponent(state, 'bridge');
     stopComponent(state, 'settingsCandidate');
     stopComponent(state, 'settingsRuntime');
     stopComponent(state, 'injector');
     removePagehide(state);
-    state.transport = null;
     state.metadataCheckPending = false;
     state.prerequisitesReady = false;
   };
@@ -136,9 +137,8 @@ export function createXProductionContentRuntime(globalScope) {
     state.routeStarting = true;
     let candidate = null;
     try {
-      const bridge = state.bridge;
-      const transport = createXAboutAccountRequestTransport({
-        fetch: dependencies.fetch, createRequest: bridge.createRequest,
+      const transport = createXAboutAccountPageTransport({
+        document: dependencies.document, CustomEvent: dependencies.CustomEvent,
       });
       if (!owned(state)) throw new Error();
       state.transport = transport;
@@ -167,9 +167,7 @@ export function createXProductionContentRuntime(globalScope) {
       state.routeController = candidate; state.routeCandidate = null;
       ready = true;
       diagnostic('Metadata accepted and account processing started.');
-      if (Array.isArray(discovered) && discovered.length === 0) {
-        diagnostic('Account discovery started but no supported targets were found.', 'warn');
-      }
+      if (Array.isArray(discovered) && discovered.length === 0) diagnostic('Account discovery is awaiting dynamic targets.');
     } catch {
       if (candidate !== null && state.routeCandidate === null) state.routeCandidate = candidate;
       stopComponent(state, 'routeCandidate');
@@ -217,6 +215,7 @@ export function createXProductionContentRuntime(globalScope) {
       dependencies.Promise.resolve().then(() => {
         state.metadataCheckPending = false;
         if (owned(state)) {
+          state.transport?.notifyMetadata();
           if (ready && state.bridge?.hasSnapshot()) state.routeController?.retryRecoverable();
           else startRoute(state);
         }

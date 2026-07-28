@@ -14,6 +14,16 @@ import {
 export const X_ABOUT_ACCOUNT_REQUEST_CAPTURE_VERSION = 2;
 
 const installations = new WeakMap();
+const privateCaptures = new WeakMap();
+export function readPrivateXAboutAccountSnapshot(controller) {
+  const read = privateCaptures.get(controller);
+  return read ? read() : null;
+}
+export function executeWithOriginalXFetch(controller, ...args) {
+  const execute = privateCaptures.get(controller)?.execute;
+  if (!execute) throw new TypeError('Inactive request capture');
+  return execute(...args);
+}
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const isPlainObject = (value) => {
@@ -187,6 +197,7 @@ export function installXAboutAccountRequestCapture(globalScope) {
   const stopped = Object.freeze({ stopped: true });
 
   function cleanup(final = !installationRunning) {
+    if (final && entry.controller) privateCaptures.delete(entry.controller);
     if (state) {
       state.active = false;
       state.snapshot = null;
@@ -225,6 +236,12 @@ export function installXAboutAccountRequestCapture(globalScope) {
   }
   const controller = Object.freeze({ stop, isActive: () => phase === 'active',
     hasSnapshot: () => phase === 'active' && state?.snapshot !== null && state?.snapshot !== undefined });
+  const privateRead = () => {
+    if (phase !== 'active' || !state?.snapshot) return null;
+    try { return JSON.parse(state.snapshot); } catch { return null; }
+  };
+  privateRead.execute = (...args) => Reflect.apply(state.fetch, state.scope, args);
+  privateCaptures.set(controller, privateRead);
   entry.controller = controller;
   installations.set(scope, entry);
   const checkpoint = () => { if (phase !== 'pending') throw stopped; };

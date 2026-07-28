@@ -198,10 +198,16 @@ export function createXAccountTargetProcessor(options) {
     if (!isCurrent(entry)) return;
     entry.pending = null;
     entry.controller = null;
+    if (error?.name === 'AbortError' || error?.code === 'ABORTED') return;
     entry.location = createUnavailableLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
     entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
       || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
-    report(new Error(message));
+    const diagnostic = error?.code === 'INVALID_PAYLOAD' ? 'About Account response payload was invalid.'
+      : error?.code === 'NETWORK' || error?.code === 'HTTP_5XX' ? 'About Account network request failed.'
+        : error?.code === 'PAGE_BRIDGE_UNAVAILABLE' ? 'About Account request bridge unavailable.'
+          : error?.code === 'HTTP_429' ? 'About Account lookup rate limited; scheduler cooldown exhausted.'
+            : message;
+    report(new Error(diagnostic));
     presentEntry(entry);
   };
   const startLookup = (entry) => {

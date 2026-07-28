@@ -93,16 +93,24 @@ keeps one active-only payload broker across route changes.
 The payload broker deduplicates only current work, gives each consumer an independent
 cancellation path, and aborts shared work after its final consumer leaves. Entries are
 removed on resolution, rejection, cancellation, or stop, so it introduces no resolved
-payload or parsed-location cache. The transport obtains a fresh request descriptor from
-the bridge for every request, validates the endpoint and closed header allowlist, and
-passes successful JSON unchanged to the established parser.
+payload or parsed-location cache. One runtime-wide FIFO scheduler permits at most four
+requests in flight and spaces starts by at least 200 milliseconds. A 429 applies one
+global, bounded cooldown (60 seconds when numeric timing headers are unusable) and one
+retry; network and 5xx failures retry after one and two seconds. Authentication or query
+rejections receive one retry with fresh metadata. Cancellation remains effective while
+queued, delayed, or in flight.
 
 The page capture passively observes eligible same-origin GraphQL GETs made with fetch or
 XMLHttpRequest without modifying them or reading bodies or responses. Generic traffic
 provides authentication headers; a live `AboutAccountQuery` also refreshes the query ID.
-The isolated-world bridge treats the same-document event as untrusted input, validates
-and deeply copies it, and adds each canonical target handle only when creating a fresh
-About Account descriptor.
+The isolated world sends only a protocol version, opaque request ID, and canonical handle
+over exact same-document event schemas. The MAIN-world executor constructs the canonical
+same-origin URL and closed header set from its private metadata snapshot and calls the
+original page fetch. Responses are bounded and revalidated by the isolated bridge.
+Normal empty discovery at `document_start` is informational: mutation discovery remains
+active. Diagnostics distinguish discovery, bridge, metadata, queue/HTTP, parsing,
+presentation, route, and cleanup categories without recording identities or request data.
+Automated tests do not prove behavior against live X; Chrome and Firefox must be retested.
 
 ## Download and install
 

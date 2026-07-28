@@ -34,6 +34,9 @@
 | Content and page scripts start | Not run | Not run | |
 | Active but not ready before snapshot | Not run | Not run | |
 | Ready only after eligible request | Not run | Not run | |
+| Empty initial scan remains informational; later mutation processes | Not run | Not run | |
+| Global concurrency ≤4 and start spacing ≥200 ms | Not run | Not run | |
+| Cooldown and bounded retries observed | Not run | Not run | Record only sanitized HTTP category. |
 
 ## Per-surface results
 
@@ -81,6 +84,10 @@
 ## Sanitized defects found
 
 - None recorded; testing has not run.
+
+Diagnostics may be recorded only as discovery, bridge, metadata, queue, HTTP, parsing,
+presentation, route, or cleanup categories. Never include URLs, query strings, headers,
+tokens, cookies, payloads, account identities, or account IDs.
 
 ## Explicit unresolved risks
 

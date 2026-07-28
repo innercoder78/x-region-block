@@ -74,7 +74,17 @@
   }
 
   const installations$2 = new WeakMap();
-  const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
+  const privateCaptures = new WeakMap();
+  function readPrivateXAboutAccountSnapshot(controller) {
+    const read = privateCaptures.get(controller);
+    return read ? read() : null;
+  }
+  function executeWithOriginalXFetch(controller, ...args) {
+    const execute = privateCaptures.get(controller)?.execute;
+    if (!execute) throw new TypeError('Inactive request capture');
+    return execute(...args);
+  }
+  const supportedOrigins$1 = new Set(['https://x.com', 'https://twitter.com']);
   const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
   const isPlainObject = (value) => {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -247,6 +257,7 @@
     const stopped = Object.freeze({ stopped: true });
 
     function cleanup(final = !installationRunning) {
+      if (final && entry.controller) privateCaptures.delete(entry.controller);
       if (state) {
         state.active = false;
         state.snapshot = null;
@@ -285,6 +296,12 @@
     }
     const controller = Object.freeze({ stop, isActive: () => phase === 'active',
       hasSnapshot: () => phase === 'active' && state?.snapshot !== null && state?.snapshot !== undefined });
+    const privateRead = () => {
+      if (phase !== 'active' || !state?.snapshot) return null;
+      try { return JSON.parse(state.snapshot); } catch { return null; }
+    };
+    privateRead.execute = (...args) => Reflect.apply(state.fetch, state.scope, args);
+    privateCaptures.set(controller, privateRead);
     entry.controller = controller;
     installations$2.set(scope, entry);
     const checkpoint = () => { if (phase !== 'pending') throw stopped; };
@@ -309,7 +326,7 @@
       const requestMethod = read(() => intrinsicGetter(Request, 'method'));
       const requestHeaders = read(() => intrinsicGetter(Request, 'headers'));
       const headersGet = read(() => Headers.prototype.get);
-      if (typeof fetch !== 'function' || !supportedOrigins.has(origin)
+      if (typeof fetch !== 'function' || !supportedOrigins$1.has(origin)
         || typeof Event !== 'function' || typeof CustomEvent !== 'function'
         || typeof URLSearchParams !== 'function' || typeof headersGet !== 'function'
         || typeof documentAddEventListener !== 'function'
@@ -417,6 +434,116 @@
       cleanup(true);
       throw new Error('Unable to install X About Account request capture');
     }
+  }
+
+  const X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION = 1;
+  const X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE = 'x-region-block:about-account:request';
+  const X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE = 'x-region-block:about-account:cancel';
+  const X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE = 'x-region-block:about-account:response';
+  const X_ABOUT_ACCOUNT_RESPONSE_LIMIT = 262_144;
+
+  const ID = /^[A-Za-z0-9_-]{16,64}$/;
+  const HANDLE = /^[A-Za-z0-9_]{1,15}$/;
+  const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+    && [null, Object.prototype].includes(Object.getPrototypeOf(value));
+  const exact = (value, keys) => plain(value) && Reflect.ownKeys(value).length === keys.length
+    && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+
+  function validOpaqueRequestId(value) { return typeof value === 'string' && ID.test(value); }
+  function validCanonicalHandle(value) { return typeof value === 'string' && HANDLE.test(value); }
+  function parseAboutAccountRequestDetail(value) {
+    return exact(value, ['version', 'id', 'handle'])
+      && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
+      && validOpaqueRequestId(value.id) && validCanonicalHandle(value.handle)
+      ? { version: value.version, id: value.id, handle: value.handle } : null;
+  }
+  function parseAboutAccountCancelDetail(value) {
+    return exact(value, ['version', 'id']) && value.version === X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION
+      && validOpaqueRequestId(value.id) ? { version: value.version, id: value.id } : null;
+  }
+
+  const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
+  const statusCode = (status) => {
+    if ([400, 401, 403, 404, 429].includes(status)) return `HTTP_${status}`;
+    if (status >= 500) return 'HTTP_5XX';
+    return 'UNKNOWN';
+  };
+  function parseRateLimitDelay(headers, now = Date.now()) {
+    const retry = headers?.get?.('retry-after');
+    if (/^\d+$/.test(retry ?? '')) return Math.min(300_000, Number(retry) * 1000);
+    const reset = headers?.get?.('x-rate-limit-reset');
+    if (/^\d+$/.test(reset ?? '')) return Math.min(300_000, Math.max(0, Number(reset) * 1000 - now));
+    return 60_000;
+  }
+  function installXAboutAccountRequestExecutor(globalScope, capture) {
+    const { document, CustomEvent, AbortController, location } = globalScope;
+    if (!supportedOrigins.has(location.origin)) throw new TypeError('Unsupported origin');
+    const requests = new Map();
+    let active = true;
+    const emit = (detail) => {
+      if (!active || JSON.stringify(detail).length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT) return;
+      document.dispatchEvent(new CustomEvent(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE,
+        { detail, bubbles: false, cancelable: false, composed: false }));
+    };
+    const fail = (id, code, status = null, retryAfterMs = null) => emit({
+      version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id, ok: false, code, status, retryAfterMs,
+    });
+    const request = async (event) => {
+      const command = parseAboutAccountRequestDetail(event?.detail);
+      if (!active || command === null || requests.has(command.id)) return;
+      const controller = new AbortController();
+      requests.set(command.id, controller);
+      try {
+        const metadata = readPrivateXAboutAccountSnapshot(capture);
+        if (!metadata || metadata.origin !== location.origin || !isValidXAboutAccountQueryId(metadata.queryId)) {
+          fail(command.id, 'NO_METADATA'); return;
+        }
+        const headers = Object.create(null);
+        for (const name of metadataHeaderNames()) {
+          const value = metadata.headers?.[name];
+          if (value !== undefined) {
+            if (!validMetadataHeaderValue(value)) { fail(command.id, 'NO_METADATA'); return; }
+            headers[name] = value;
+          }
+        }
+        if (!headers.authorization || !headers['x-csrf-token']) { fail(command.id, 'NO_METADATA'); return; }
+        headers.accept = 'application/json'; headers['accept-language'] = 'en-US,en;q=0.9';
+        const variables = new URLSearchParams({ variables: JSON.stringify({ screenName: command.handle }) });
+        const url = `${location.origin}/i/api/graphql/${metadata.queryId}/${X_ABOUT_ACCOUNT_OPERATION_NAME}?${variables}`;
+        let response;
+        try { response = await executeWithOriginalXFetch(capture, url, { method: 'GET', credentials: 'include',
+          cache: 'no-store', redirect: 'error', headers, signal: controller.signal }); } catch (error) {
+          fail(command.id, controller.signal.aborted || error?.name === 'AbortError' ? 'ABORTED' : 'NETWORK'); return;
+        }
+        if (!response || typeof response.status !== 'number' || typeof response.json !== 'function') {
+          fail(command.id, 'INVALID_RESPONSE'); return;
+        }
+        if (!response.ok) {
+          fail(command.id, statusCode(response.status), response.status,
+            response.status === 429 ? parseRateLimitDelay(response.headers) : null); return;
+        }
+        let payload;
+        try { payload = await response.json(); } catch { fail(command.id, 'INVALID_PAYLOAD'); return; }
+        const detail = { version: X_ABOUT_ACCOUNT_REQUEST_PROTOCOL_VERSION, id: command.id, ok: true, payload };
+        let serialized;
+        try { serialized = JSON.stringify(detail); } catch { serialized = ''; }
+        if (!serialized || serialized.length > X_ABOUT_ACCOUNT_RESPONSE_LIMIT) fail(command.id, 'INVALID_PAYLOAD');
+        else emit(detail);
+      } finally { requests.delete(command.id); }
+    };
+    const cancel = (event) => {
+      const command = parseAboutAccountCancelDetail(event?.detail);
+      if (command !== null) requests.get(command.id)?.abort();
+    };
+    document.addEventListener(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, request);
+    document.addEventListener(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, cancel);
+    return Object.freeze({ stop() {
+      if (!active) return; active = false;
+      document.removeEventListener(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, request);
+      document.removeEventListener(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, cancel);
+      for (const controller of requests.values()) controller.abort();
+      requests.clear();
+    }, isActive: () => active });
   }
 
   const X_NAVIGATION_EVENT_TYPE = 'x-region-block:navigation';
@@ -569,7 +696,7 @@
       document, Event: EventConstructor, add, remove, dispatch,
       active: false, claimed: false, finalized: false, probeMayBeAdded: false,
       requestMayBeAdded: false, stopMayBeAdded: false, navigation: null, capture: null,
-      probe: null, respond: null, stopListener: null, controller: null,
+      probe: null, respond: null, stopListener: null, controller: null, executor: null,
     };
     const current = () => ownerScope !== null && installations.get(ownerScope) === state
       && !state.claimed;
@@ -597,6 +724,7 @@
       state.finalized = true;
       state.active = false;
       removeOwnedListeners();
+      try { state.executor?.stop(); } catch { /* contained */ }
       try { state.capture?.stop(); } catch { /* contained */ }
       try { state.navigation?.stop(); } catch { /* contained */ }
       state.capture = null; state.navigation = null;
@@ -656,6 +784,8 @@
       checkpoint();
       state.capture = installXAboutAccountRequestCapture(ownerScope);
       if (!current()) { try { state.capture?.stop(); } catch { /* contained */ } }
+      checkpoint();
+      state.executor = installXAboutAccountRequestExecutor(ownerScope, state.capture);
       checkpoint();
       state.requestMayBeAdded = true;
       Reflect.apply(add, document, [X_PAGE_RUNTIME_REQUEST_EVENT_TYPE, state.respond]);
