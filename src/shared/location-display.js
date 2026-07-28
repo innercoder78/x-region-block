@@ -1,4 +1,3 @@
-import { normalizeCountryCode } from './country-regions.js';
 import { createLocationResult, LOCATION_STATUSES } from './location-model.js';
 
 export const LOCATION_DISPLAY_MODEL_VERSION = 1;
@@ -10,22 +9,6 @@ export const LOCATION_STATUS_LABELS = Object.freeze({
   unavailable: 'Location unavailable',
   unknown: 'Location unknown',
 });
-
-const REGIONAL_INDICATOR_OFFSET = 0x1f1e6 - 0x41;
-
-/** Returns the Unicode flag for a supported ISO alpha-2 country code. */
-export function countryCodeToFlagEmoji(value) {
-  let code;
-  try {
-    code = normalizeCountryCode(value);
-  } catch {
-    throw new TypeError('Unsupported country code');
-  }
-
-  return [...code]
-    .map((character) => String.fromCodePoint(character.codePointAt(0) + REGIONAL_INDICATOR_OFFSET))
-    .join('');
-}
 
 function createRegionDescriptor(code, name, label, ariaLabel) {
   return Object.freeze({
@@ -60,7 +43,6 @@ export function createLocationDisplayModel(input) {
   const country = Object.freeze({
     code: location.countryCode,
     name: countryName,
-    symbol: countryCodeToFlagEmoji(location.countryCode),
     label: countryName,
     title: countryName,
     ariaLabel: `Country: ${countryName}`,

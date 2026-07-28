@@ -4,9 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { auditRelease } from './release-audit.js';
 import { X_ABOUT_ACCOUNT_FALLBACK_QUERY_ID, X_ABOUT_ACCOUNT_OPERATION_NAME } from '../src/shared/x-about-account-query.js';
+import { flagAssetPaths, validateFlagAssets } from './flag-assets.js';
 
 export const browsers = ['chrome', 'firefox'];
 export const expectedFiles = [
+  ...flagAssetPaths,
   'background/service-worker.js',
   'content/account-actions.css',
   'content/content-script.js',
@@ -18,7 +20,7 @@ export const expectedFiles = [
   'popup/popup.css',
   'popup/popup.html',
   'popup/popup.js',
-];
+].sort();
 
 function invariant(value, message) {
   if (!value) throw new Error(message);
@@ -123,6 +125,7 @@ function artifactNames(packageJson) {
 export async function packageRelease({
   distRoot = 'dist', artifactRoot = 'artifacts', packagePath = 'package.json', audit = true,
 } = {}) {
+  const sourceFlags = await validateFlagAssets();
   if (audit) await auditRelease({ distRoot, packagePath });
   const packageJson = await metadata(packagePath);
   await rm(artifactRoot, { recursive: true, force: true });
@@ -132,6 +135,10 @@ export async function packageRelease({
   for (const browser of browsers) {
     const root = path.join(distRoot, browser);
     const files = await buildFiles(root);
+    for (const flag of sourceFlags) {
+      const generated = await readFile(path.join(root, 'assets/flags', flag.name));
+      invariant(generated.equals(flag.contents), `${browser} flag bytes differ from source: ${flag.name}`);
+    }
     const manifest = JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8'));
     invariant(manifest.version === packageJson.version, `${browser} manifest version mismatch`);
     const output = path.join(artifactRoot, names[browser]);
@@ -188,6 +195,7 @@ function assertSafeContents(name, entries) {
 }
 
 export async function verifyPackages({ artifactRoot = 'artifacts', packagePath = 'package.json' } = {}) {
+  const sourceFlags = await validateFlagAssets();
   const packageJson = await metadata(packagePath);
   const names = artifactNames(packageJson);
   const expectedArtifacts = [...Object.values(names), 'SHA256SUMS.txt'].sort();
@@ -205,6 +213,10 @@ export async function verifyPackages({ artifactRoot = 'artifacts', packagePath =
     `${name} contains an unsafe archive path`);
     invariant(JSON.stringify(paths) === JSON.stringify(expectedFiles),
       `${name} has incomplete or unexpected contents`);
+    for (const flag of sourceFlags) {
+      invariant(entries.get(`assets/flags/${flag.name}`)?.equals(flag.contents),
+        `${name} flag bytes differ from source: ${flag.name}`);
+    }
     invariant(!paths.some((entry) => /(?:\.map$|(^|\/)(?:src|tests?)(\/|$))/i.test(entry)),
       `${name} contains source, test, or source-map files`);
     assertSafeContents(name, entries);

@@ -6,3 +6,24 @@
   outline: 2px solid Highlight !important;
   outline-offset: -2px !important;
 }
+
+.x-region-block-location-country {
+  display: inline-flex;
+  width: 16px;
+  height: 12px;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  flex: 0 0 16px;
+}
+
+.x-region-block-location-country-flag {
+  display: block;
+  max-width: 16px;
+  max-height: 12px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}

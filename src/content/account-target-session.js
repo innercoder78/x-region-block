@@ -39,6 +39,9 @@ function normalizeOptions(options) {
       throw new TypeError(message);
     }
   }
+  if (hasOwn(options, 'resolveFlagAssetUrl') && typeof options.resolveFlagAssetUrl !== 'function') {
+    throw new TypeError('resolveFlagAssetUrl must be a function');
+  }
   return {
     source,
     hasBaseUrl: hasOwn(options, 'baseUrl'),
@@ -48,6 +51,7 @@ function normalizeOptions(options) {
     loadAboutAccountPayload: options.loadAboutAccountPayload,
     abortControllerFactory: options.abortControllerFactory,
     onError: options.onError,
+    resolveFlagAssetUrl: hasOwn(options, 'resolveFlagAssetUrl') ? options.resolveFlagAssetUrl : () => '',
   };
 }
 
@@ -95,6 +99,7 @@ export function createXAccountTargetSession(root, options) {
             stopContext.failed = true;
           } else if (current(lifecycle, createdProcessor)) report(error);
         },
+        resolveFlagAssetUrl: normalized.resolveFlagAssetUrl,
       };
       if (normalized.hasBaseUrl) processorOptions.baseUrl = normalized.baseUrl;
       createdProcessor = createXAccountTargetProcessor(processorOptions);

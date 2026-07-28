@@ -22,6 +22,7 @@ describe('location badge renderer boundary', () => {
     expect(LOCATION_BADGE_ATTRIBUTE_VALUE).toBe('1');
     expect(LOCATION_BADGE_CLASSES).toEqual({
       root: 'x-region-block-location-badge', country: 'x-region-block-location-country',
+      countryFlag: 'x-region-block-location-country-flag',
       separator: 'x-region-block-location-separator', region: 'x-region-block-location-region',
     });
     expect(Object.isFrozen(LOCATION_BADGE_CLASSES)).toBe(true);
@@ -64,6 +65,27 @@ describe('location badge renderer boundary', () => {
 });
 
 describe('known location rendering', () => {
+  it('renders a local decorative PNG and falls back to the country code after one image error', () => {
+    const { container } = createContainer();
+    const resolver = vi.fn((code) => `chrome-extension://test/assets/flags/${code.toLowerCase()}.png`);
+    const root = renderLocationBadge(container, known('US', 'United States'), resolver);
+    const country = root.children[0];
+    const image = country.children[0];
+    expect(resolver).toHaveBeenCalledOnce();
+    expect(resolver).toHaveBeenCalledWith('US');
+    expect(image.tagName).toBe('IMG');
+    expect(attributesOf(image)).toMatchObject({
+      src: 'chrome-extension://test/assets/flags/us.png', alt: '',
+      'aria-hidden': 'true', draggable: 'false', tabindex: '-1', contenteditable: 'false',
+    });
+    expect(root.getAttribute('aria-label')).toBe('Country: United States; Region: North America');
+    expect(root.getAttribute('title')).toBe('United States · North America');
+    image.dispatchEvent({ type: 'error' });
+    image.dispatchEvent({ type: 'error' });
+    expect(country.textContent).toBe('US');
+    expect(root.textContent).toBe('US 🌐 North America');
+  });
+
   it('renders Canada with exact semantics, order, text, and safe attributes', () => {
     const { container } = createContainer();
     const root = renderLocationBadge(container, known());
@@ -82,7 +104,7 @@ describe('known location rendering', () => {
       class: LOCATION_BADGE_CLASSES.country, 'aria-hidden': 'true', title: 'Canada',
       'data-x-region-block-country-code': 'CA',
     });
-    expect(root.children[0].textContent).toBe('🇨🇦');
+    expect(root.children[0].textContent).toBe('CA');
     expect(attributesOf(root.children[1])).toEqual({
       class: LOCATION_BADGE_CLASSES.separator, 'aria-hidden': 'true',
     });
@@ -128,7 +150,7 @@ describe('Antarctica and non-known locations', () => {
     expect(root.getAttribute('data-x-region-block-status')).toBe('known');
     expect(root.getAttribute('aria-label')).toBe('Country: Antarctica; Region: Unknown');
     expect(root.getAttribute('title')).toBe('Antarctica · Unknown region');
-    expect(root.children[0].textContent).toBe('🇦🇶');
+    expect(root.children[0].textContent).toBe('AQ');
     expect(root.children[0].getAttribute('data-x-region-block-country-code')).toBe('AQ');
     expect(root.children[2].textContent).toBe('🌐 Unknown region');
     expect(root.children[2].hasAttribute('data-x-region-block-region-code')).toBe(false);
@@ -162,7 +184,7 @@ describe('idempotence and direct-child ownership', () => {
     expect(container.children).toHaveLength(1);
 
     renderLocationBadge(container, known('JP', 'Japan'));
-    expect(first.children.map((child) => child.textContent)).toEqual(['🇯🇵', ' ', '🌐 Asia']);
+    expect(first.children.map((child) => child.textContent)).toEqual(['JP', ' ', '🌐 Asia']);
     renderLocationBadge(container, { status: 'hidden' });
     expect(first.children.map((child) => child.textContent)).toEqual(['🌐 Location hidden']);
     renderLocationBadge(container, known());

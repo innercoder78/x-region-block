@@ -7,6 +7,7 @@ export const LOCATION_BADGE_ATTRIBUTE_VALUE = '1';
 export const LOCATION_BADGE_CLASSES = Object.freeze({
   root: 'x-region-block-location-badge',
   country: 'x-region-block-location-country',
+  countryFlag: 'x-region-block-location-country-flag',
   separator: 'x-region-block-location-separator',
   region: 'x-region-block-location-region',
 });
@@ -59,7 +60,38 @@ function createRegionElement(ownerDocument, region) {
   return element;
 }
 
-export function renderLocationBadge(container, location) {
+function createCountryElement(ownerDocument, country, resolveFlagAssetUrl) {
+  const wrapper = ownerDocument.createElement('span');
+  setCommonChildAttributes(wrapper, LOCATION_BADGE_CLASSES.country, country.title);
+  wrapper.setAttribute(COUNTRY_CODE_ATTRIBUTE, country.code);
+  let failed = false;
+  const fallback = () => {
+    if (failed) return;
+    failed = true;
+    wrapper.textContent = country.code;
+  };
+  try {
+    if (typeof resolveFlagAssetUrl !== 'function') throw new TypeError();
+    const url = resolveFlagAssetUrl(country.code);
+    const expectedPath = `/assets/flags/${country.code.toLowerCase()}.png`;
+    if (typeof url !== 'string'
+      || !/^(?:chrome|moz)-extension:\/\/[^/]+\/assets\/flags\/[a-z]{2}\.png$/.test(url)
+      || !url.endsWith(expectedPath)) throw new TypeError();
+    const image = ownerDocument.createElement('img');
+    image.setAttribute('class', LOCATION_BADGE_CLASSES.countryFlag);
+    image.setAttribute('src', url);
+    image.setAttribute('alt', '');
+    image.setAttribute('aria-hidden', 'true');
+    image.setAttribute('draggable', 'false');
+    image.setAttribute('tabindex', '-1');
+    image.setAttribute('contenteditable', 'false');
+    image.addEventListener('error', fallback, { once: true });
+    wrapper.appendChild(image);
+  } catch { fallback(); }
+  return wrapper;
+}
+
+export function renderLocationBadge(container, location, resolveFlagAssetUrl) {
   validateContainer(container);
   const display = createLocationDisplayModel(location);
   const existing = ownedChildren(container);
@@ -90,10 +122,7 @@ export function renderLocationBadge(container, location) {
   root.removeAttribute('contenteditable');
 
   if (display.country !== null) {
-    const country = container.ownerDocument.createElement('span');
-    setCommonChildAttributes(country, LOCATION_BADGE_CLASSES.country, display.country.title);
-    country.setAttribute(COUNTRY_CODE_ATTRIBUTE, display.country.code);
-    country.textContent = display.country.symbol;
+    const country = createCountryElement(container.ownerDocument, display.country, resolveFlagAssetUrl);
 
     const separator = container.ownerDocument.createElement('span');
     setCommonChildAttributes(separator, LOCATION_BADGE_CLASSES.separator, null);

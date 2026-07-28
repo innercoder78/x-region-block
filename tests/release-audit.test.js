@@ -36,7 +36,7 @@ async function fixture() {
         css: [required[5]],
         run_at: 'document_start',
       }],
-      web_accessible_resources: [{ resources: [required[2]], matches: expectedMatches }],
+      web_accessible_resources: [{ resources: [required[2], 'assets/flags/*.png'], matches: expectedMatches }],
       action: { default_popup: 'popup/popup.html' },
       ...(browser === 'chrome'
         ? { options_page: 'options/options.html' }

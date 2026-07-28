@@ -77,6 +77,9 @@ function normalizeOptions(options) {
   if (!hasOwn(options, 'onError') || typeof options.onError !== 'function') {
     throw new TypeError('onError must be a function');
   }
+  if (hasOwn(options, 'resolveFlagAssetUrl') && typeof options.resolveFlagAssetUrl !== 'function') {
+    throw new TypeError('resolveFlagAssetUrl must be a function');
+  }
   return {
     source,
     settings,
@@ -85,6 +88,7 @@ function normalizeOptions(options) {
     loadAboutAccountPayload: options.loadAboutAccountPayload,
     abortControllerFactory: options.abortControllerFactory,
     onError: options.onError,
+    resolveFlagAssetUrl: options.resolveFlagAssetUrl ?? (() => ''),
   };
 }
 
@@ -174,7 +178,8 @@ export function createXAccountTargetProcessor(options) {
       ? { source: normalized.source, location, baseUrl: normalized.baseUrl }
       : { source: normalized.source, location };
     try {
-      const evaluation = presentXAccountLink(target.link, target.badgeContainer, observation, settings);
+      const evaluation = presentXAccountLink(target.link, target.badgeContainer, observation, settings,
+        normalized.resolveFlagAssetUrl);
       if (evaluation === null) removeAction(target);
       else applyAccountAction(target.accountContainer, evaluation.action);
     } catch {

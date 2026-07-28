@@ -1,5 +1,6 @@
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { validateFlagAssets } from './flag-assets.js';
 
 const browsers = ['chrome', 'firefox'];
 const expectedName = 'X Region Reveal & Block';
@@ -82,14 +83,19 @@ async function validateBrowser(browser) {
   assert(manifest.web_accessible_resources?.length === 1,
     `${browser} manifest must have one web-accessible-resource declaration`);
   const exposed = manifest.web_accessible_resources[0];
-  assert(JSON.stringify(exposed.resources) === JSON.stringify(['page/page-script.js']),
-    `${browser} manifest must expose only the page script`);
+  assert(JSON.stringify(exposed.resources) === JSON.stringify(['page/page-script.js', 'assets/flags/*.png']),
+    `${browser} manifest must expose only the page script and local flags`);
   assert(JSON.stringify(exposed.matches) === JSON.stringify(expectedMatches),
     `${browser} page script has unexpected match patterns`);
   assert(!manifest.content_scripts.some((entry) => entry.js.includes('page/page-script.js')),
     `${browser} page script must not be an isolated-world content script`);
   await requireFile(root, 'page/page-script.js');
   await requireFile(root, expectedContentCss[0]);
+  const flags = await validateFlagAssets();
+  for (const flag of flags) {
+    const generated = await readFile(await requireFile(root, `assets/flags/${flag.name}`));
+    assert(generated.equals(flag.contents), `${browser} flag bytes differ: ${flag.name}`);
+  }
 
   for (const file of expectedJavaScriptEntries) {
     await requireFile(root, file);

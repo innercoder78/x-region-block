@@ -63,15 +63,15 @@ describe('account presentation boundary', () => {
 
 describe('rendering and action independence', () => {
   it.each([
-    ['CA', 'Canada', 'NORTH_AMERICA', '🇨🇦', '🌐 North America'],
-    ['ZA', 'South Africa', 'AFRICA', '🇿🇦', '🌐 Africa'],
-    ['JP', 'Japan', 'ASIA', '🇯🇵', '🌐 Asia'],
-    ['FR', 'France', 'EUROPE', '🇫🇷', '🌐 Europe'],
-    ['AE', 'United Arab Emirates', 'MIDDLE_EAST', '🇦🇪', '🌐 Middle East'],
-    ['AU', 'Australia', 'OCEANIA', '🇦🇺', '🌐 Oceania'],
-    ['BR', 'Brazil', 'SOUTH_AMERICA', '🇧🇷', '🌐 South America'],
-    ['JM', 'Jamaica', 'CARIBBEAN', '🇯🇲', '🌐 Caribbean'],
-    ['CR', 'Costa Rica', 'CENTRAL_AMERICA', '🇨🇷', '🌐 Central America'],
+    ['CA', 'Canada', 'NORTH_AMERICA', 'CA', '🌐 North America'],
+    ['ZA', 'South Africa', 'AFRICA', 'ZA', '🌐 Africa'],
+    ['JP', 'Japan', 'ASIA', 'JP', '🌐 Asia'],
+    ['FR', 'France', 'EUROPE', 'FR', '🌐 Europe'],
+    ['AE', 'United Arab Emirates', 'MIDDLE_EAST', 'AE', '🌐 Middle East'],
+    ['AU', 'Australia', 'OCEANIA', 'AU', '🌐 Oceania'],
+    ['BR', 'Brazil', 'SOUTH_AMERICA', 'BR', '🌐 South America'],
+    ['JM', 'Jamaica', 'CARIBBEAN', 'JM', '🌐 Caribbean'],
+    ['CR', 'Costa Rica', 'CENTRAL_AMERICA', 'CR', '🌐 Central America'],
   ])('renders canonical region-enriched %s presentation', (code, name, region, flag, label) => {
     const { container } = createContainer();
     const result = present(container, { location: known(code, name) });
@@ -103,7 +103,7 @@ describe('rendering and action independence', () => {
     const { container } = createContainer();
     present(container, { location: known('AQ', 'Antarctica') });
     const root = findLocationBadge(container);
-    expect(root.children.map((child) => child.textContent)).toEqual(['🇦🇶', ' ', '🌐 Unknown region']);
+    expect(root.children.map((child) => child.textContent)).toEqual(['AQ', ' ', '🌐 Unknown region']);
     expect(root.children[2].hasAttribute('data-x-region-block-region-code')).toBe(false);
   });
 
@@ -193,11 +193,11 @@ describe('cleanup, atomicity, and updates', () => {
     expect(findLocationBadge(container)).toBe(root);
     expect(container.children).toHaveLength(1);
     present(container, { location: known('JP', 'Japan') });
-    expect(root.textContent).toBe('🇯🇵 🌐 Asia');
+    expect(root.textContent).toBe('JP 🌐 Asia');
     present(container, { location: { status: 'hidden' } });
     expect(root.children).toHaveLength(1);
     present(container);
-    expect(root.textContent).toBe('🇨🇦 🌐 North America');
+    expect(root.textContent).toBe('CA 🌐 North America');
     present(container, { location: known('AQ', 'Antarctica') });
     expect(root.children[2].hasAttribute('data-x-region-block-region-code')).toBe(false);
     present(container);

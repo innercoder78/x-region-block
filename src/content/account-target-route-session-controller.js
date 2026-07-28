@@ -9,6 +9,7 @@ const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const OPTION_KEYS = new Set([
   'settingsRuntime', 'observerFactory', 'loadPayload', 'brokerAbortControllerFactory',
   'consumerAbortControllerFactory', 'navigationObserverFactory', 'onError', 'baseUrl',
+  'resolveFlagAssetUrl',
 ]);
 
 function plain(value) {
@@ -50,6 +51,7 @@ function normalizeOptions(options) {
     consumerAbortControllerFactory: values.consumerAbortControllerFactory,
     navigationObserverFactory: values.navigationObserverFactory, onError: values.onError,
     hasBaseUrl,
+    resolveFlagAssetUrl: values.resolveFlagAssetUrl ?? (() => ''),
   };
   if (hasBaseUrl) normalized.baseUrl = values.baseUrl;
   return normalized;
@@ -122,6 +124,7 @@ export function createXAccountTargetRouteSessionController(root, options) {
           && broker === candidateTransaction.broker
           && record.state === 'committed' && records?.includes(record)) report(error);
       },
+      resolveFlagAssetUrl: dependencies.resolveFlagAssetUrl,
     });
     if (hasOwn(plan, 'baseUrl')) sessionOptions.baseUrl = plan.baseUrl;
     session = createXAccountTargetSession(plan.root, sessionOptions);

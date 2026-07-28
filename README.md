@@ -61,10 +61,17 @@ and storage-repository contracts. Known, hidden, missing, unavailable, and unkno
 locations retain their established behavior. Allowlist and always-show exceptions,
 badge rendering, and reversible show, highlight, and hide actions are unchanged.
 
+Known countries are presented with the bundled local Flagpedia PNG files already committed in
+this repository; no country flag is downloaded while browsing X. The source images are 20 pixels
+wide and retain their original aspect ratios, including unusually shaped flags, while CSS contains
+each image in an approximately 16×12 CSS-pixel presentation box. Regions continue to use the
+Unicode globe (`🌐`) followed by region text.
+
 Settings are stored through the extension's established local-storage adapters. No
 other production data uses extension storage. Chrome and Firefox manifests request only
-the `storage` permission, request no host permissions, and expose only
-`page/page-script.js` to the existing X and Twitter match patterns.
+the `storage` permission, request no host permissions, and expose only the page runtime
+(`page/page-script.js`) and local flag pattern (`assets/flags/*.png`) to the existing X and
+Twitter match patterns.
 
 ### Component architecture
 
@@ -163,6 +170,7 @@ the extension is release-ready.
 Tests use injected fake page/browser facades and do not contact X, Twitter, or any other
 external service. Production composition is not live-X certification and performs no
 real user-facing or external action during tests.
+Automated tests do not verify visual appearance on the live X website.
 
 ## Current limitations
 

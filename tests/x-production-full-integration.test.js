@@ -312,7 +312,8 @@ it('recovers the same visible production target after genuinely fresh authentica
   });
   await settle();
   expect(context.transportCalls).toHaveLength(2);
-  expect(findLocationBadge(context.name).textContent).toContain('🇨🇦');
+  expect(findLocationBadge(context.name).children[0].children[0].getAttribute('src'))
+    .toContain('assets/flags/ca.png');
   expect(findLocationBadge(context.name).textContent).toContain('North America');
   expect(getAccountAction(context.tweet)).toBe('highlight');
   context.capture('/i/api/graphql/generic/HomeTimeline?replay=1', {
@@ -338,7 +339,8 @@ it('recovers a visible production target only after a different live query ID', 
   context.capture(observedUrl('replacement_live_query'), observedHeaders); await settle();
   expect(context.transportCalls).toHaveLength(2);
   expect(context.transportCalls[1].url).toContain('/replacement_live_query/AboutAccountQuery');
-  expect(findLocationBadge(context.name).textContent).toContain('🇨🇦');
+  expect(findLocationBadge(context.name).children[0].children[0].getAttribute('src'))
+    .toContain('assets/flags/ca.png');
   expect(getAccountAction(context.tweet)).toBe('show');
   context.capture(observedUrl('XRqGa7EeokUU5kppkh13EA'), observedHeaders); await settle();
   expect(context.transportCalls).toHaveLength(2);

@@ -260,7 +260,7 @@ describe('lookup, reconciliation, and races', () => {
     expect(current.badgeContainer.textContent).toContain('unavailable');
     expect(processor.retryRecoverable()).toBe(1);
     await settle();
-    expect(current.badgeContainer.textContent).toContain('🇨🇦');
+    expect(current.badgeContainer.textContent).toContain('CA');
     expect(current.badgeContainer.textContent).toContain('North America');
     expect(getAccountAction(current.accountContainer)).toBe('highlight');
     expect(processor.retryRecoverable()).toBe(0);

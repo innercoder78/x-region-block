@@ -20,7 +20,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["page/page-script.js"],
+      "resources": ["page/page-script.js", "assets/flags/*.png"],
       "matches": ["https://x.com/*", "https://twitter.com/*"]
     }
   ],
