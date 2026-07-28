@@ -626,6 +626,7 @@
           }
         }
         if (!headers.authorization || !headers['x-csrf-token']) { fail(command.id, 'NO_METADATA'); return; }
+        headers['accept-language'] = 'en-US,en;q=0.9';
         const variables = new URLSearchParams({ variables: JSON.stringify({ screenName: command.handle }) });
         const url = `${location.origin}/i/api/graphql/${metadata.queryId}/${X_ABOUT_ACCOUNT_OPERATION_NAME}?${variables}`;
         let response;

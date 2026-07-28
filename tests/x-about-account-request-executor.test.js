@@ -20,7 +20,8 @@ describe('MAIN-world About Account executor', () => {
     document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
     const capture = installXAboutAccountRequestCapture(page);
     page.fetch('/i/api/graphql/live_query/AboutAccountQuery?variables=%7B%7D', { headers: {
-      ...observedHeaders, 'x-client-transaction-id': 'request-specific-stale-value',
+      ...observedHeaders, 'x-twitter-client-language': 'fr',
+      'x-client-transaction-id': 'request-specific-stale-value',
     } });
     fetch.mockClear();
     const executor = installXAboutAccountRequestExecutor(page, capture);
@@ -35,6 +36,8 @@ describe('MAIN-world About Account executor', () => {
     expect(options).not.toHaveProperty('cache');
     expect(options).not.toHaveProperty('redirect');
     expect(options.headers).not.toHaveProperty('x-client-transaction-id');
+    expect(options.headers['accept-language']).toBe('en-US,en;q=0.9');
+    expect(options.headers['x-twitter-client-language']).toBe('fr');
     expect(typeof responses[0]).toBe('string');
     expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({
       ok: true, payload: { version: 1, accountBasedIn: 'United States' },
