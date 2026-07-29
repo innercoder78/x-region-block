@@ -8,12 +8,18 @@ function tweet(document, parent = null) {
   const article = document.createElement('article'); article.setAttribute('data-testid', 'tweet');
   const shell = document.createElement('div'); const column = document.createElement('div');
   const pinned = document.createElement('div'); pinned.textContent = 'Pinned';
-  const row = document.createElement('div'); const name = document.createElement('div');
+  const row = document.createElement('div'); const nameShell = document.createElement('div');
+  const nameInner = document.createElement('div'); const name = document.createElement('div');
   name.setAttribute('data-testid', 'User-Name'); name.textContent = 'Author · now';
-  const menu = document.createElement('button'); menu.textContent = 'Menu';
-  row.appendChild(name); row.appendChild(menu); column.appendChild(pinned); column.appendChild(row);
+  nameInner.appendChild(name); nameShell.appendChild(nameInner);
+  const menu = document.createElement('button'); menu.setAttribute('data-testid', 'caret'); menu.textContent = 'Menu';
+  const text = document.createElement('div'); text.setAttribute('data-testid', 'tweetText'); text.textContent = 'Post';
+  const actions = document.createElement('div'); const reply = document.createElement('button');
+  reply.setAttribute('data-testid', 'reply'); actions.appendChild(reply);
+  row.appendChild(nameShell); row.appendChild(menu); column.appendChild(pinned); column.appendChild(row);
+  column.appendChild(text); column.appendChild(actions);
   shell.appendChild(column); article.appendChild(shell); (parent ?? document).appendChild(article);
-  return { article, shell, column, pinned, row, name, menu,
+  return { article, shell, column, pinned, row, nameShell, nameInner, name, menu, text, actions,
     target: { source: 'timeline', accountContainer: article, badgeContainer: name } };
 }
 
@@ -24,10 +30,11 @@ describe('tweet location header', () => {
     expect(resolvePostLocationHeaderHost(post.target)).toMatchObject({
       authorRow: post.row, contentColumn: post.column,
     });
-    expect(post.column.children).toEqual([post.pinned, header, post.row]);
-    expect(header.parentElement).toBe(post.column); expect(post.row.children).toEqual([post.name, post.menu]);
+    expect(post.column.children).toEqual([post.pinned, header, post.row, post.text, post.actions]);
+    expect(header.parentElement).toBe(post.column); expect(post.row.children).toEqual([post.nameShell, post.menu]);
     expect(post.name.textContent).toBe('Author · now');
-    expect(post.name.children).not.toContain(header); expect(post.row.children).not.toContain(header);
+    expect(post.name.children).not.toContain(header); expect(post.nameInner.children).not.toContain(header);
+    expect(post.nameShell.children).not.toContain(header); expect(post.row.children).not.toContain(header);
   });
 
   it('does not render inline while a host is unavailable and reconciles after hydration', () => {
@@ -38,6 +45,7 @@ describe('tweet location header', () => {
     expect(reconcilePostLocationHeader(target)).toBeNull(); expect(name.children).toHaveLength(0);
     const shell = document.createElement('div'); const column = document.createElement('div');
     const row = document.createElement('div'); article.removeChild(name); row.appendChild(name);
+    const menu = document.createElement('button'); menu.setAttribute('data-testid', 'caret'); row.appendChild(menu);
     column.appendChild(row); shell.appendChild(column); article.appendChild(shell);
     const header = reconcilePostLocationHeader(target);
     expect(column.children).toEqual([header, row]); expect(name.children).toHaveLength(0);
@@ -78,7 +86,9 @@ describe('tweet location header', () => {
   it('removes stale headers when the author row and content column are replaced', () => {
     const document = new FakeDocument(); const post = tweet(document); const old = reconcilePostLocationHeader(post.target);
     const nextColumn = document.createElement('div'); const nextRow = document.createElement('div');
-    post.row.removeChild(post.name); nextRow.appendChild(post.name); nextColumn.appendChild(nextRow);
+    post.nameInner.removeChild(post.name); nextRow.appendChild(post.name);
+    const menu = document.createElement('button'); menu.setAttribute('data-testid', 'caret'); nextRow.appendChild(menu);
+    nextColumn.appendChild(nextRow);
     post.shell.removeChild(post.column); post.shell.appendChild(nextColumn);
     const current = reconcilePostLocationHeader(post.target);
     expect(old.parentElement).toBeNull(); expect(nextColumn.children).toEqual([current, nextRow]);

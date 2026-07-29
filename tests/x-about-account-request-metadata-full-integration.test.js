@@ -26,7 +26,8 @@ function target(handle, timeline = false) {
     presentation.setAttribute('data-testid', 'tweet');
     name.setAttribute('data-testid', 'User-Name');
     const shell = document.createElement('div'); const column = document.createElement('div');
-    const row = document.createElement('div'); row.appendChild(name); column.appendChild(row);
+    const row = document.createElement('div'); const menu = document.createElement('button');
+    menu.setAttribute('data-testid', 'caret'); row.appendChild(name); row.appendChild(menu); column.appendChild(row);
     shell.appendChild(column); presentation.appendChild(shell);
     document.appendChild(presentation);
   } else {

@@ -77,7 +77,9 @@ it('runs real navigation, routing, brokerage, sessions, parsing, and presentatio
   tweetLink.setAttribute('href', '/openai');
   tweetName.appendChild(tweetLink);
   const tweetShell = root.createElement('div'); const tweetColumn = root.createElement('div');
-  const tweetRow = root.createElement('div'); tweetRow.appendChild(tweetName); tweetColumn.appendChild(tweetRow);
+  const tweetRow = root.createElement('div'); const tweetMenu = root.createElement('button');
+  tweetMenu.setAttribute('data-testid', 'caret'); tweetRow.appendChild(tweetName); tweetRow.appendChild(tweetMenu);
+  tweetColumn.appendChild(tweetRow);
   tweetShell.appendChild(tweetColumn); tweet.appendChild(tweetShell);
   root.appendChild(tweet);
   const mutation = createFakeObserverFactory();
@@ -162,7 +164,8 @@ it('transfers one real pending broker request before retiring the old route cons
   link.setAttribute('href', '/openai');
   name.appendChild(link);
   const shell = root.createElement('div'); const column = root.createElement('div');
-  const row = root.createElement('div'); row.appendChild(name); column.appendChild(row);
+  const row = root.createElement('div'); const menu = root.createElement('button');
+  menu.setAttribute('data-testid', 'caret'); row.appendChild(name); row.appendChild(menu); column.appendChild(row);
   shell.appendChild(column); tweet.appendChild(shell);
   root.appendChild(tweet);
   const lookup = deferred();
@@ -253,7 +256,8 @@ it('buffers real synchronous registration navigation until observer startup comm
   link.setAttribute('href', '/openai');
   name.appendChild(link);
   const shell = root.createElement('div'); const column = root.createElement('div');
-  const row = root.createElement('div'); row.appendChild(name); column.appendChild(row);
+  const row = root.createElement('div'); const menu = root.createElement('button');
+  menu.setAttribute('data-testid', 'caret'); row.appendChild(name); row.appendChild(menu); column.appendChild(row);
   shell.appendChild(column); tweet.appendChild(shell);
   root.appendChild(tweet);
   const loadPayload = vi.fn(async () => ({

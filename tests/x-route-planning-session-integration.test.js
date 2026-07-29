@@ -18,7 +18,8 @@ function accountSurface(document, kind, handle) {
   name.appendChild(link);
   if (kind === 'tweet') {
     const shell = document.createElement('div'); const column = document.createElement('div');
-    const row = document.createElement('div'); row.appendChild(name); column.appendChild(row);
+    const row = document.createElement('div'); const menu = document.createElement('button');
+    menu.setAttribute('data-testid', 'caret'); row.appendChild(name); row.appendChild(menu); column.appendChild(row);
     shell.appendChild(column); surface.appendChild(shell);
   }
   document.appendChild(surface);
