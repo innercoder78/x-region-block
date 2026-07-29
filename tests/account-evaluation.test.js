@@ -181,7 +181,7 @@ describe('canonical subject, filter, and display composition', () => {
   it('creates display from canonical location and handles Antarctica', () => {
     const canada = evaluate();
     expect(canada.display.country.code).toBe('CA');
-    expect(canada.display.region.label).toBe('North America');
+    expect(canada.display.region).toBeNull();
     expect(canada.display).not.toHaveProperty('rawLocation');
     expect(canada.display).not.toHaveProperty('source');
 
@@ -190,21 +190,15 @@ describe('canonical subject, filter, and display composition', () => {
     });
     expect(antarctica.action).toBe('show');
     expect(antarctica.display.country.code).toBe('AQ');
-    expect(antarctica.display.region.label).toBe('Unknown region');
+    expect(antarctica.display.region).toBeNull();
   });
 
   it.each([
-    ['ZA', 'South Africa', 'Africa'],
-    ['JP', 'Japan', 'Asia'],
-    ['FR', 'France', 'Europe'],
-    ['AE', 'United Arab Emirates', 'Middle East'],
-    ['CA', 'Canada', 'North America'],
-    ['AU', 'Australia', 'Oceania'],
-    ['BR', 'Brazil', 'South America'],
-    ['JM', 'Jamaica', 'Caribbean'],
-    ['CR', 'Costa Rica', 'Central America'],
-  ])('preserves the configured display region for %s', (code, name, region) => {
-    expect(evaluate({ location: known(code, name) }).display.region.label).toBe(region);
+    ['ZA', 'South Africa'], ['JP', 'Japan'], ['FR', 'France'],
+    ['AE', 'United Arab Emirates'], ['CA', 'Canada'], ['AU', 'Australia'],
+    ['BR', 'Brazil'], ['JM', 'Jamaica'], ['CR', 'Costa Rica'],
+  ])('does not expose the internally configured region for %s', (code, name) => {
+    expect(evaluate({ location: known(code, name) }).display.region).toBeNull();
   });
 
   it('propagates malformed observed values and settings', () => {

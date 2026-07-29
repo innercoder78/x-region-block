@@ -40,3 +40,14 @@ export function getRegion(code) {
 export function getRegionName(code) {
   return getRegion(code)?.name ?? null;
 }
+
+/** Returns a supported canonical region record for an exact English name. */
+export function getRegionByName(name) {
+  if (typeof name !== 'string') return null;
+  const normalized = name.trim().toLocaleLowerCase('en-US');
+  if (normalized === '') return null;
+  return Object.values(REGIONS).find(
+    (region) => region.code !== REGION_CODES.UNKNOWN
+      && region.name.toLocaleLowerCase('en-US') === normalized,
+  ) ?? null;
+}

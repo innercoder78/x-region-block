@@ -509,6 +509,17 @@
     return REGIONS[code.trim().toUpperCase()] ?? null;
   }
 
+  /** Returns a supported canonical region record for an exact English name. */
+  function getRegionByName(name) {
+    if (typeof name !== 'string') return null;
+    const normalized = name.trim().toLocaleLowerCase('en-US');
+    if (normalized === '') return null;
+    return Object.values(REGIONS).find(
+      (region) => region.code !== REGION_CODES.UNKNOWN
+        && region.name.toLocaleLowerCase('en-US') === normalized,
+    ) ?? null;
+  }
+
   const COUNTRY_CODES = Object.freeze(
     'AD,AE,AF,AG,AI,AL,AM,AO,AQ,AR,AS,AT,AU,AW,AX,AZ,BA,BB,BD,BE,BF,BG,BH,BI,BJ,BL,BM,BN,BO,BQ,BR,BS,BT,BV,BW,BY,BZ,CA,CC,CD,CF,CG,CH,CI,CK,CL,CM,CN,CO,CR,CU,CV,CW,CX,CY,CZ,DE,DJ,DK,DM,DO,DZ,EC,EE,EG,EH,ER,ES,ET,FI,FJ,FK,FM,FO,FR,GA,GB,GD,GE,GF,GG,GH,GI,GL,GM,GN,GP,GQ,GR,GS,GT,GU,GW,GY,HK,HM,HN,HR,HT,HU,ID,IE,IL,IM,IN,IO,IQ,IR,IS,IT,JE,JM,JO,JP,KE,KG,KH,KI,KM,KN,KP,KR,KW,KY,KZ,LA,LB,LC,LI,LK,LR,LS,LT,LU,LV,LY,MA,MC,MD,ME,MF,MG,MH,MK,ML,MM,MN,MO,MP,MQ,MR,MS,MT,MU,MV,MW,MX,MY,MZ,NA,NC,NE,NF,NG,NI,NL,NO,NP,NR,NU,NZ,OM,PA,PE,PF,PG,PH,PK,PL,PM,PN,PR,PS,PT,PW,PY,QA,RE,RO,RS,RU,RW,SA,SB,SC,SD,SE,SG,SH,SI,SJ,SK,SL,SM,SN,SO,SR,SS,ST,SV,SX,SY,SZ,TC,TD,TF,TG,TH,TJ,TK,TL,TM,TN,TO,TR,TT,TV,TW,TZ,UA,UG,UM,US,UY,UZ,VA,VC,VE,VG,VI,VN,VU,WF,WS,YE,YT,ZA,ZM,ZW'.split(','),
   );
@@ -610,26 +621,39 @@
     let regionName = null;
 
     if (status === LOCATION_STATUSES.KNOWN) {
-      countryCode = normalizeCountryCode(input.countryCode);
-      if (typeof input.countryName !== 'string' || input.countryName.trim() === '') {
-        throw new TypeError('A known location requires a countryName');
-      }
-      countryName = input.countryName;
-
-      const region = getCountryRegion(countryCode);
-      if (region.code === REGION_CODES.UNKNOWN) {
-        if (input.regionCode != null || input.regionName != null) {
-          throw new TypeError('This country does not support a region assertion');
+      const hasCountry = input.countryCode != null || input.countryName != null;
+      if (!hasCountry) {
+        const region = getRegion(input.regionCode);
+        if (region === null || region.code === REGION_CODES.UNKNOWN) {
+          throw new TypeError('A region-only known location requires a supported regionCode');
         }
-      } else {
-        if (input.regionCode != null && getRegion(input.regionCode)?.code !== region.code) {
-          throw new TypeError('regionCode must match the country region');
-        }
-        if (input.regionName != null && input.regionName !== region.name) {
-          throw new TypeError('regionName must match the country region');
+        if (input.regionName !== region.name) {
+          throw new TypeError('regionName must match regionCode');
         }
         regionCode = region.code;
         regionName = region.name;
+      } else {
+        countryCode = normalizeCountryCode(input.countryCode);
+        if (typeof input.countryName !== 'string' || input.countryName.trim() === '') {
+          throw new TypeError('A known country location requires a countryName');
+        }
+        countryName = input.countryName;
+
+        const region = getCountryRegion(countryCode);
+        if (region.code === REGION_CODES.UNKNOWN) {
+          if (input.regionCode != null || input.regionName != null) {
+            throw new TypeError('This country does not support a region assertion');
+          }
+        } else {
+          if (input.regionCode != null && getRegion(input.regionCode)?.code !== region.code) {
+            throw new TypeError('regionCode must match the country region');
+          }
+          if (input.regionName != null && input.regionName !== region.name) {
+            throw new TypeError('regionName must match the country region');
+          }
+          regionCode = region.code;
+          regionName = region.name;
+        }
       }
     }
 
@@ -825,17 +849,12 @@
       });
     }
 
-    const countryName = location.countryName.trim();
-    const country = Object.freeze({
-      code: location.countryCode,
-      name: countryName,
-      label: countryName,
-      title: countryName,
-      ariaLabel: `Country: ${countryName}`,
+    const countryName = location.countryName?.trim() ?? null;
+    const country = countryName === null ? null : Object.freeze({
+      code: location.countryCode, name: countryName, label: countryName,
+      title: countryName, ariaLabel: `Country: ${countryName}`,
     });
-    const region = location.regionCode === null
-      ? createRegionDescriptor(null, null, 'Unknown region', 'Region: Unknown')
-      : createRegionDescriptor(
+    const region = country !== null ? null : createRegionDescriptor(
         location.regionCode,
         location.regionName,
         location.regionName,
@@ -1015,20 +1034,14 @@
     if (display.country !== null) {
       const country = createCountryElement(container.ownerDocument, display.country, resolveFlagAssetUrl);
 
-      const separator = container.ownerDocument.createElement('span');
-      setCommonChildAttributes(separator, LOCATION_BADGE_CLASSES.separator, null);
-      separator.textContent = ' ';
-
-      root.setAttribute('aria-label', `${display.country.ariaLabel}; ${display.region.ariaLabel}`);
-      root.setAttribute('title', `${display.country.title} · ${display.region.title}`);
+      root.setAttribute('aria-label', display.country.ariaLabel);
+      root.setAttribute('title', display.country.title);
       root.appendChild(country);
-      root.appendChild(separator);
     } else {
       root.setAttribute('aria-label', display.region.ariaLabel);
       root.setAttribute('title', display.region.title);
+      root.appendChild(createRegionElement(container.ownerDocument, display.region));
     }
-
-    root.appendChild(createRegionElement(container.ownerDocument, display.region));
     return root;
   }
 
@@ -1918,6 +1931,9 @@
         const rawLocation = value.trim();
         const countryCode = getCountryCodeByName(rawLocation);
         if (countryCode === null) {
+          const region = getRegionByName(rawLocation);
+          if (region !== null) return createKnownLocation({ regionCode: region.code,
+            regionName: region.name, rawLocation, source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
           return createUnknownLocation({ rawLocation, source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
         }
         return createKnownLocation({ countryCode, countryName: getCountryName(countryCode), rawLocation,
@@ -1946,6 +1962,11 @@
       }
       const countryCode = getCountryCodeByName(rawLocation);
       if (countryCode === null) {
+        const region = getRegionByName(rawLocation);
+        if (region !== null) return createKnownLocation({
+          regionCode: region.code, regionName: region.name, rawLocation,
+          source: X_ABOUT_ACCOUNT_LOCATION_SOURCE,
+        });
         return createUnknownLocation({ rawLocation, source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
       }
       return createKnownLocation({

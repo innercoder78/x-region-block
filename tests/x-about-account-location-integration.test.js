@@ -24,7 +24,7 @@ describe('X About Account location pure-boundary integration', () => {
     const location = parse('Canada');
     const display = createLocationDisplayModel(location);
     expect(display.country).toMatchObject({ code: 'CA', name: 'Canada' });
-    expect(display.region.label).toBe('North America');
+    expect(display.region).toBeNull();
     expect(evaluateFilterSubject({ identity, location }, settings({
       country: { hide: ['CA'] }, region: { highlight: ['NORTH_AMERICA'] },
     })).action).toBe('hide');
@@ -38,7 +38,7 @@ describe('X About Account location pure-boundary integration', () => {
     const display = createLocationDisplayModel(parse('Antarctica'));
     expect(display.status).toBe('known');
     expect(display.country.code).toBe('AQ');
-    expect(display.region.label).toBe('Unknown region');
+    expect(display.region).toBeNull();
   });
 
   it('preserves unknown, missing, and unavailable distinctions', () => {
@@ -55,7 +55,18 @@ describe('X About Account location pure-boundary integration', () => {
     const { container } = createContainer();
     const result = presentXAccountLink(anchor(), container, { location }, settings());
     expect(result.display.country.code).toBe('US');
-    expect(findLocationBadge(container).textContent).toBe('US 🌐 North America');
+    expect(findLocationBadge(container).textContent).toBe('US');
     expect(JSON.stringify(snapshot(container))).not.toMatch(/USA|x-about-account|device-secret|payload-secret/);
+  });
+
+  it('filters and presents a parsed region-only location as known', () => {
+    const location = parse('North America');
+    expect(evaluateFilterSubject({ identity, location }, settings({
+      region: { hide: ['NORTH_AMERICA'] }, country: { hide: ['US'] },
+      other: { hide: ['unknown'] },
+    })).action).toBe('hide');
+    const { container } = createContainer();
+    presentXAccountLink(anchor(), container, { location }, settings());
+    expect(findLocationBadge(container).textContent).toBe('🌐 North America');
   });
 });

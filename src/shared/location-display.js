@@ -39,17 +39,12 @@ export function createLocationDisplayModel(input) {
     });
   }
 
-  const countryName = location.countryName.trim();
-  const country = Object.freeze({
-    code: location.countryCode,
-    name: countryName,
-    label: countryName,
-    title: countryName,
-    ariaLabel: `Country: ${countryName}`,
+  const countryName = location.countryName?.trim() ?? null;
+  const country = countryName === null ? null : Object.freeze({
+    code: location.countryCode, name: countryName, label: countryName,
+    title: countryName, ariaLabel: `Country: ${countryName}`,
   });
-  const region = location.regionCode === null
-    ? createRegionDescriptor(null, null, 'Unknown region', 'Region: Unknown')
-    : createRegionDescriptor(
+  const region = country !== null ? null : createRegionDescriptor(
       location.regionCode,
       location.regionName,
       location.regionName,
