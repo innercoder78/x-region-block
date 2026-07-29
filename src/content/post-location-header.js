@@ -25,19 +25,77 @@ function ownedHeaders(target) {
   return [...new Set([...current, ...registered])];
 }
 
-/** Resolves the local author row and its main-content-column parent without mutating X DOM. */
+function localDescendant(article, selector) {
+  return [...article.querySelectorAll(selector)].find((element) => nearestTweetArticle(element) === article) ?? null;
+}
+
+function lowestCommonAncestor(first, second, article) {
+  const ancestors = new Set();
+  for (let current = first; current && current !== article; current = current.parentElement) ancestors.add(current);
+  for (let current = second; current && current !== article; current = current.parentElement) {
+    if (ancestors.has(current)) return current;
+  }
+  return null;
+}
+
+function childOnPath(ancestor, descendant) {
+  let current = descendant;
+  while (current?.parentElement && current.parentElement !== ancestor) current = current.parentElement;
+  return current?.parentElement === ancestor ? current : null;
+}
+
+function containsElement(container, descendant) {
+  for (let current = descendant; current; current = current.parentElement) {
+    if (current === container) return true;
+  }
+  return false;
+}
+
+function containsAvatar(candidate) {
+  const pending = [...(candidate.children ?? [])];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current.getAttribute?.('data-testid')?.startsWith('UserAvatar-')) return true;
+    pending.push(...(current.children ?? []));
+  }
+  return false;
+}
+
+function validAuthorRow(article, name, candidate, tweetText, actionGroup) {
+  if (!candidate || candidate === article || !candidate.parentElement
+    || nearestTweetArticle(candidate) !== article || nearestTweetArticle(candidate.parentElement) !== article
+    || !containsElement(candidate, name) || (tweetText && containsElement(candidate, tweetText))
+    || (actionGroup && containsElement(candidate, actionGroup)) || containsAvatar(candidate)
+    || typeof candidate.parentElement.insertBefore !== 'function') return false;
+  return true;
+}
+
+/** Resolves the local complete author row using bounded, same-tweet structural landmarks. */
 export function resolvePostLocationHeaderHost(target) {
   if (!isPost(target) || !isTweetArticle(target.accountContainer)) return null;
   const name = target.badgeContainer;
   if (name?.getAttribute?.('data-testid') !== 'User-Name'
     || nearestTweetArticle(name) !== target.accountContainer) return null;
-  const authorRow = name.parentElement;
+  const article = target.accountContainer;
+  const tweetText = localDescendant(article, '[data-testid="tweetText"]');
+  const menu = localDescendant(article, '[data-testid="caret"]');
+  const reply = localDescendant(article, '[data-testid="reply"]');
+  const actionGroup = reply?.parentElement ?? null;
+  const candidates = [];
+  if (menu) candidates.push(lowestCommonAncestor(name, menu, article));
+  if (tweetText) {
+    const common = lowestCommonAncestor(name, tweetText, article);
+    candidates.push(childOnPath(common, name));
+  }
+  if (actionGroup) {
+    const common = lowestCommonAncestor(name, actionGroup, article);
+    candidates.push(childOnPath(common, name));
+  }
+  const authorRow = candidates.find((candidate) => validAuthorRow(
+    article, name, candidate, tweetText, actionGroup,
+  ));
   const contentColumn = authorRow?.parentElement;
-  if (!authorRow || !contentColumn || authorRow === target.accountContainer
-    || contentColumn === target.accountContainer
-    || nearestTweetArticle(authorRow) !== target.accountContainer
-    || nearestTweetArticle(contentColumn) !== target.accountContainer
-    || typeof contentColumn.insertBefore !== 'function') return null;
+  if (!authorRow || !contentColumn) return null;
   return Object.freeze({ name, authorRow, contentColumn });
 }
 

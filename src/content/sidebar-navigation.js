@@ -7,14 +7,15 @@ const ANCHORS = Object.freeze([
 ]);
 
 export function createXSidebarNavigation(root, options) {
-  const { extensionApi, observerFactory, onError = () => {} } = options;
+  const { openOptions, observerFactory, onError = () => {} } = options;
   let active = false;
   let observer = null;
   let item = null;
   const report = () => { try { onError(new Error('Region Blocker options navigation failed.')); } catch { /* contained */ } };
   const open = () => {
     try {
-      const result = extensionApi?.runtime?.openOptionsPage?.();
+      if (typeof openOptions !== 'function') { report(); return; }
+      const result = openOptions();
       if (result && typeof result.catch === 'function') result.catch(report);
     } catch { report(); }
   };
@@ -58,10 +59,10 @@ export function createXSidebarNavigation(root, options) {
     const anchorEntry = boundary?.entry;
     if (!parent || !anchorEntry || typeof parent.insertBefore !== 'function') return item;
     if (!item) {
-      item = root.createElement('div');
+      item = root.createElement('button');
       item.setAttribute(SIDEBAR_NAV_ATTRIBUTE, '1');
       item.setAttribute('data-testid', 'x-region-block-options-navigation');
-      item.setAttribute('role', 'button'); item.setAttribute('tabindex', '0');
+      item.setAttribute('type', 'button');
       item.setAttribute('aria-label', 'Open Region Blocker options');
       item.setAttribute('class', 'x-region-block-sidebar-item');
       const svgNamespace = ['http:', '', 'www.w3.org', '2000', 'svg'].join('/');

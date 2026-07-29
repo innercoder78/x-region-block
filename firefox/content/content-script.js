@@ -955,20 +955,18 @@
     validateContainer(container);
     const direct = ownedChildren(container)[0] ?? null;
     if (direct !== null) return direct;
-    const previous = container.parentElement?.children;
-    const index = previous && typeof previous[Symbol.iterator] === 'function'
-      ? [...previous].indexOf(container) : -1;
-    const header = index > 0 ? previous[index - 1] : null;
-    if (header?.getAttribute?.('data-x-region-block-location-header') === '1') {
-      return ownedChildren(header)[0] ?? null;
+    for (let current = container; current?.parentElement; current = current.parentElement) {
+      const siblings = current.parentElement.children;
+      const index = siblings && typeof siblings[Symbol.iterator] === 'function'
+        ? [...siblings].indexOf(current) : -1;
+      const header = index > 0 ? siblings[index - 1] : null;
+      if (header?.getAttribute?.('data-x-region-block-location-header') === '1') {
+        return ownedChildren(header)[0] ?? null;
+      }
+      if (String(current.parentElement.tagName).toLowerCase() === 'article'
+        && current.parentElement.getAttribute?.('data-testid') === 'tweet') break;
     }
-    const row = container.parentElement;
-    const rowSiblings = row?.parentElement?.children;
-    const rowIndex = rowSiblings && typeof rowSiblings[Symbol.iterator] === 'function'
-      ? [...rowSiblings].indexOf(row) : -1;
-    const rowHeader = rowIndex > 0 ? rowSiblings[rowIndex - 1] : null;
-    return rowHeader?.getAttribute?.('data-x-region-block-location-header') === '1'
-      ? (ownedChildren(rowHeader)[0] ?? null) : null;
+    return null;
   }
 
   function setCommonChildAttributes(element, className, title) {
@@ -1136,19 +1134,77 @@
     return [...new Set([...current, ...registered])];
   }
 
-  /** Resolves the local author row and its main-content-column parent without mutating X DOM. */
+  function localDescendant(article, selector) {
+    return [...article.querySelectorAll(selector)].find((element) => nearestTweetArticle(element) === article) ?? null;
+  }
+
+  function lowestCommonAncestor(first, second, article) {
+    const ancestors = new Set();
+    for (let current = first; current && current !== article; current = current.parentElement) ancestors.add(current);
+    for (let current = second; current && current !== article; current = current.parentElement) {
+      if (ancestors.has(current)) return current;
+    }
+    return null;
+  }
+
+  function childOnPath(ancestor, descendant) {
+    let current = descendant;
+    while (current?.parentElement && current.parentElement !== ancestor) current = current.parentElement;
+    return current?.parentElement === ancestor ? current : null;
+  }
+
+  function containsElement(container, descendant) {
+    for (let current = descendant; current; current = current.parentElement) {
+      if (current === container) return true;
+    }
+    return false;
+  }
+
+  function containsAvatar(candidate) {
+    const pending = [...(candidate.children ?? [])];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current.getAttribute?.('data-testid')?.startsWith('UserAvatar-')) return true;
+      pending.push(...(current.children ?? []));
+    }
+    return false;
+  }
+
+  function validAuthorRow(article, name, candidate, tweetText, actionGroup) {
+    if (!candidate || candidate === article || !candidate.parentElement
+      || nearestTweetArticle(candidate) !== article || nearestTweetArticle(candidate.parentElement) !== article
+      || !containsElement(candidate, name) || (tweetText && containsElement(candidate, tweetText))
+      || (actionGroup && containsElement(candidate, actionGroup)) || containsAvatar(candidate)
+      || typeof candidate.parentElement.insertBefore !== 'function') return false;
+    return true;
+  }
+
+  /** Resolves the local complete author row using bounded, same-tweet structural landmarks. */
   function resolvePostLocationHeaderHost(target) {
     if (!isPost(target) || !isTweetArticle(target.accountContainer)) return null;
     const name = target.badgeContainer;
     if (name?.getAttribute?.('data-testid') !== 'User-Name'
       || nearestTweetArticle(name) !== target.accountContainer) return null;
-    const authorRow = name.parentElement;
+    const article = target.accountContainer;
+    const tweetText = localDescendant(article, '[data-testid="tweetText"]');
+    const menu = localDescendant(article, '[data-testid="caret"]');
+    const reply = localDescendant(article, '[data-testid="reply"]');
+    const actionGroup = reply?.parentElement ?? null;
+    const candidates = [];
+    if (menu) candidates.push(lowestCommonAncestor(name, menu, article));
+    if (tweetText) {
+      const common = lowestCommonAncestor(name, tweetText, article);
+      candidates.push(childOnPath(common, name));
+    }
+    if (actionGroup) {
+      const common = lowestCommonAncestor(name, actionGroup, article);
+      candidates.push(childOnPath(common, name));
+    }
+    const authorRow = candidates.find((candidate) => validAuthorRow(
+      article, name, candidate, tweetText, actionGroup,
+    ));
     const contentColumn = authorRow?.parentElement;
-    if (!authorRow || !contentColumn || authorRow === target.accountContainer
-      || contentColumn === target.accountContainer
-      || nearestTweetArticle(authorRow) !== target.accountContainer
-      || nearestTweetArticle(contentColumn) !== target.accountContainer
-      || typeof contentColumn.insertBefore !== 'function') return null;
+    if (!authorRow || !contentColumn) return null;
     return Object.freeze({ name, authorRow, contentColumn });
   }
 
@@ -4857,14 +4913,15 @@
   ]);
 
   function createXSidebarNavigation(root, options) {
-    const { extensionApi, observerFactory, onError = () => {} } = options;
+    const { openOptions, observerFactory, onError = () => {} } = options;
     let active = false;
     let observer = null;
     let item = null;
     const report = () => { try { onError(new Error('Region Blocker options navigation failed.')); } catch { /* contained */ } };
     const open = () => {
       try {
-        const result = extensionApi?.runtime?.openOptionsPage?.();
+        if (typeof openOptions !== 'function') { report(); return; }
+        const result = openOptions();
         if (result && typeof result.catch === 'function') result.catch(report);
       } catch { report(); }
     };
@@ -4908,10 +4965,10 @@
       const anchorEntry = boundary?.entry;
       if (!parent || !anchorEntry || typeof parent.insertBefore !== 'function') return item;
       if (!item) {
-        item = root.createElement('div');
+        item = root.createElement('button');
         item.setAttribute(SIDEBAR_NAV_ATTRIBUTE, '1');
         item.setAttribute('data-testid', 'x-region-block-options-navigation');
-        item.setAttribute('role', 'button'); item.setAttribute('tabindex', '0');
+        item.setAttribute('type', 'button');
         item.setAttribute('aria-label', 'Open Region Blocker options');
         item.setAttribute('class', 'x-region-block-sidebar-item');
         const svgNamespace = ['http:', '', 'www.w3.org', '2000', 'svg'].join('/');
@@ -4941,6 +4998,14 @@
     const stop = () => { if (!active) return; active = false; try { observer?.disconnect(); } catch { /* contained */ } observer = null; remove(); };
     return Object.freeze({ start, reconcile, stop, isActive: () => active });
   }
+
+  const OPEN_OPTIONS_MESSAGE_VERSION = 1;
+  const OPEN_OPTIONS_MESSAGE_TYPE = 'x-region-block/open-options';
+
+  const OPEN_OPTIONS_MESSAGE = Object.freeze({
+    version: OPEN_OPTIONS_MESSAGE_VERSION,
+    type: OPEN_OPTIONS_MESSAGE_TYPE,
+  });
 
   const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 
@@ -4997,6 +5062,23 @@
     } catch { return null; }
   }
 
+  function optionsMessagingAdapter(globalScope) {
+    const browserRuntime = globalScope?.browser?.runtime;
+    if (typeof browserRuntime?.sendMessage === 'function') return () => Promise.resolve(
+      browserRuntime.sendMessage(OPEN_OPTIONS_MESSAGE),
+    );
+    const chromeRuntime = globalScope?.chrome?.runtime;
+    if (typeof chromeRuntime?.sendMessage === 'function') return () => new Promise((resolve, reject) => {
+      try {
+        chromeRuntime.sendMessage(OPEN_OPTIONS_MESSAGE, (result) => {
+          if (chromeRuntime.lastError) reject(new Error('Options messaging failed'));
+          else resolve(result);
+        });
+      } catch { reject(new Error('Options messaging failed')); }
+    });
+    return null;
+  }
+
   function createXProductionContentRuntime(globalScope) {
     let dependencies;
     try {
@@ -5030,6 +5112,7 @@
         },
         globalAdd, globalRemove, documentAdd, documentRemove,
         extensionApi,
+        openOptions: optionsMessagingAdapter(globalScope),
         resolveFlagAssetUrl: (countryCode) => extensionApi.runtime.getURL(
           `assets/flags/${normalizeCountryCode(countryCode).toLowerCase()}.png`,
         ) };
@@ -5210,7 +5293,7 @@
       try {
         try {
           state.sidebar = createXSidebarNavigation(dependencies.document, {
-            extensionApi: dependencies.extensionApi,
+            openOptions: dependencies.openOptions,
             observerFactory: (callback) => new dependencies.MutationObserver(callback),
             onError: report,
           });

@@ -33,7 +33,8 @@ function appendTimelineTarget(root, handle) {
   const row = document.createElement('div');
   const link = document.createElement('a');
   link.setAttribute('href', `/${handle}`);
-  name.appendChild(link); row.appendChild(name); column.appendChild(row); shell.appendChild(column);
+  const menu = document.createElement('button'); menu.setAttribute('data-testid', 'caret');
+  name.appendChild(link); row.appendChild(name); row.appendChild(menu); column.appendChild(row); shell.appendChild(column);
   article.appendChild(shell);
   root.appendChild(article);
   return { article, name, link };

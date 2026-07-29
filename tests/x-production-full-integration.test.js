@@ -30,7 +30,7 @@ function accountTargets(document) {
   const shell = document.createElement('div'); const column = document.createElement('div');
   const pinned = document.createElement('div'); pinned.textContent = 'Pinned';
   const authorRow = document.createElement('div'); const menu = document.createElement('button');
-  menu.textContent = 'Menu';
+  menu.setAttribute('data-testid', 'caret'); menu.textContent = 'Menu';
   const link = document.createElement('a');
   link.setAttribute('href', '/OpenAI');
   name.appendChild(link); authorRow.appendChild(name); authorRow.appendChild(menu);
@@ -40,7 +40,9 @@ function accountTargets(document) {
   const nestedShell = document.createElement('div'); const nestedColumn = document.createElement('div');
   const nestedRow = document.createElement('div'); const nestedName = document.createElement('div');
   nestedName.setAttribute('data-testid', 'User-Name'); const nestedLink = document.createElement('a');
+  const nestedMenu = document.createElement('button'); nestedMenu.setAttribute('data-testid', 'caret');
   nestedLink.setAttribute('href', '/OpenAI'); nestedName.appendChild(nestedLink); nestedRow.appendChild(nestedName);
+  nestedRow.appendChild(nestedMenu);
   nestedColumn.appendChild(nestedRow); nestedShell.appendChild(nestedColumn); nested.appendChild(nestedShell);
   column.appendChild(nested);
   return { profile, tweet, name, pinned, authorRow, column, nested, nestedName };
@@ -135,7 +137,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
       for (const listener of [...(globalListeners.get(event.type) ?? [])]) listener(event);
     },
     browser: {
-      runtime: { getURL: (path) => `moz-extension://test/${path}`, openOptionsPage: vi.fn() },
+      runtime: { getURL: (path) => `moz-extension://test/${path}`, sendMessage: vi.fn(async () => ({ ok: true })) },
       storage: {
         local: {
           get: async () => ({ 'xRegionBlock.settings': storedSettings }),
@@ -167,7 +169,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(runtime.isReady()).toBe(false);
   const sidebar = document.querySelectorAll('[data-x-region-block-sidebar-item="1"]')[0];
   expect(navigation.children).toEqual([sidebar, more]);
-  sidebar.dispatchEvent({ type: 'click' }); expect(globalScope.browser.runtime.openOptionsPage).toHaveBeenCalledOnce();
+  sidebar.dispatchEvent({ type: 'click' }); expect(globalScope.browser.runtime.sendMessage).toHaveBeenCalledOnce();
   expect(globalScope.fetch).not.toBe(originalFetch);
   expect(globalScope.history.pushState).not.toBe(originalPush);
 
@@ -208,6 +210,8 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   const callsBeforeAnchorReplacement = transportCalls.length;
   const replacementColumn = document.createElement('div'); const replacementRow = document.createElement('div');
   targets.authorRow.removeChild(targets.name); replacementRow.appendChild(targets.name);
+  const replacementMenu = document.createElement('button'); replacementMenu.setAttribute('data-testid', 'caret');
+  replacementRow.appendChild(replacementMenu);
   replacementColumn.appendChild(replacementRow); targets.tweet.children[0].removeChild(targets.column);
   targets.tweet.children[0].appendChild(replacementColumn); observerInstances.forEach((observer) => observer.trigger());
   await settle(); expect(transportCalls).toHaveLength(callsBeforeAnchorReplacement);
@@ -227,7 +231,8 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   dynamicLink.setAttribute('href', '/anthropic');
   const dynamicShell = document.createElement('div'); const dynamicColumn = document.createElement('div');
   const dynamicRow = document.createElement('div'); dynamicName.appendChild(dynamicLink);
-  dynamicRow.appendChild(dynamicName); dynamicColumn.appendChild(dynamicRow);
+  const dynamicMenu = document.createElement('button'); dynamicMenu.setAttribute('data-testid', 'caret');
+  dynamicRow.appendChild(dynamicName); dynamicRow.appendChild(dynamicMenu); dynamicColumn.appendChild(dynamicRow);
   dynamicShell.appendChild(dynamicColumn); dynamicTweet.appendChild(dynamicShell);
   document.appendChild(dynamicTweet);
   const routeObservers = observerInstances.filter((observer) => observer.target === document);
@@ -266,7 +271,8 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     const outcomeLink = document.createElement('a'); outcomeLink.setAttribute('href', `/${handle}`);
     const outcomeShell = document.createElement('div'); const outcomeColumn = document.createElement('div');
     const outcomeRow = document.createElement('div'); outcomeName.appendChild(outcomeLink);
-    outcomeRow.appendChild(outcomeName); outcomeColumn.appendChild(outcomeRow);
+    const outcomeMenu = document.createElement('button'); outcomeMenu.setAttribute('data-testid', 'caret');
+    outcomeRow.appendChild(outcomeName); outcomeRow.appendChild(outcomeMenu); outcomeColumn.appendChild(outcomeRow);
     outcomeShell.appendChild(outcomeColumn); outcomeTweet.appendChild(outcomeShell);
     document.appendChild(outcomeTweet);
     for (const observer of routeObservers) observer.trigger();
@@ -320,7 +326,8 @@ async function recoveryHarness({ failureStatus, settings, responder = null }) {
   const name = document.createElement('div'); name.setAttribute('data-testid', 'User-Name');
   const link = document.createElement('a'); link.setAttribute('href', '/visible');
   const shell = document.createElement('div'); const column = document.createElement('div');
-  const authorRow = document.createElement('div'); name.appendChild(link); authorRow.appendChild(name);
+  const authorRow = document.createElement('div'); const menu = document.createElement('button');
+  menu.setAttribute('data-testid', 'caret'); name.appendChild(link); authorRow.appendChild(name); authorRow.appendChild(menu);
   column.appendChild(authorRow); shell.appendChild(column); tweet.appendChild(shell); document.appendChild(tweet);
   const observers = [];
   class MutationObserver { constructor(callback) { this.callback = callback; observers.push(this); } observe(target) { this.target = target; } disconnect() { this.disconnected = true; } }

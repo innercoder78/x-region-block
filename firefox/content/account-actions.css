@@ -8,7 +8,7 @@
 }
 
 .x-region-block-post-location-header {
-  display: flex;
+  display: block;
   align-items: center;
   min-width: 0;
   margin: 0 0 1px;
@@ -67,6 +67,9 @@
   color: inherit;
   cursor: pointer;
   border-radius: 9999px;
+  border: 0;
+  font: inherit;
+  text-align: left;
 }
 
 .x-region-block-sidebar-icon { width: 26px; height: 26px; flex: 0 0 26px; color: rgb(244, 33, 46); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }

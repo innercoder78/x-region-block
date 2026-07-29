@@ -8,6 +8,7 @@ import { createXNavigationObserver } from './x-navigation-observer.js';
 import { createXPageScriptInjector } from './x-page-script-injector.js';
 import { normalizeCountryCode } from '../shared/country-regions.js';
 import { createXSidebarNavigation } from './sidebar-navigation.js';
+import { OPEN_OPTIONS_MESSAGE } from '../shared/open-options-message.js';
 
 export const X_PRODUCTION_CONTENT_RUNTIME_VERSION = 1;
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
@@ -65,6 +66,23 @@ function usableExtensionApi(namespace) {
   } catch { return null; }
 }
 
+function optionsMessagingAdapter(globalScope) {
+  const browserRuntime = globalScope?.browser?.runtime;
+  if (typeof browserRuntime?.sendMessage === 'function') return () => Promise.resolve(
+    browserRuntime.sendMessage(OPEN_OPTIONS_MESSAGE),
+  );
+  const chromeRuntime = globalScope?.chrome?.runtime;
+  if (typeof chromeRuntime?.sendMessage === 'function') return () => new Promise((resolve, reject) => {
+    try {
+      chromeRuntime.sendMessage(OPEN_OPTIONS_MESSAGE, (result) => {
+        if (chromeRuntime.lastError) reject(new Error('Options messaging failed'));
+        else resolve(result);
+      });
+    } catch { reject(new Error('Options messaging failed')); }
+  });
+  return null;
+}
+
 export function createXProductionContentRuntime(globalScope) {
   let dependencies;
   try {
@@ -98,6 +116,7 @@ export function createXProductionContentRuntime(globalScope) {
       },
       globalAdd, globalRemove, documentAdd, documentRemove,
       extensionApi,
+      openOptions: optionsMessagingAdapter(globalScope),
       resolveFlagAssetUrl: (countryCode) => extensionApi.runtime.getURL(
         `assets/flags/${normalizeCountryCode(countryCode).toLowerCase()}.png`,
       ) };
@@ -278,7 +297,7 @@ export function createXProductionContentRuntime(globalScope) {
     try {
       try {
         state.sidebar = createXSidebarNavigation(dependencies.document, {
-          extensionApi: dependencies.extensionApi,
+          openOptions: dependencies.openOptions,
           observerFactory: (callback) => new dependencies.MutationObserver(callback),
           onError: report,
         });

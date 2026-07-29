@@ -45,20 +45,18 @@ export function findLocationBadge(container) {
   validateContainer(container);
   const direct = ownedChildren(container)[0] ?? null;
   if (direct !== null) return direct;
-  const previous = container.parentElement?.children;
-  const index = previous && typeof previous[Symbol.iterator] === 'function'
-    ? [...previous].indexOf(container) : -1;
-  const header = index > 0 ? previous[index - 1] : null;
-  if (header?.getAttribute?.('data-x-region-block-location-header') === '1') {
-    return ownedChildren(header)[0] ?? null;
+  for (let current = container; current?.parentElement; current = current.parentElement) {
+    const siblings = current.parentElement.children;
+    const index = siblings && typeof siblings[Symbol.iterator] === 'function'
+      ? [...siblings].indexOf(current) : -1;
+    const header = index > 0 ? siblings[index - 1] : null;
+    if (header?.getAttribute?.('data-x-region-block-location-header') === '1') {
+      return ownedChildren(header)[0] ?? null;
+    }
+    if (String(current.parentElement.tagName).toLowerCase() === 'article'
+      && current.parentElement.getAttribute?.('data-testid') === 'tweet') break;
   }
-  const row = container.parentElement;
-  const rowSiblings = row?.parentElement?.children;
-  const rowIndex = rowSiblings && typeof rowSiblings[Symbol.iterator] === 'function'
-    ? [...rowSiblings].indexOf(row) : -1;
-  const rowHeader = rowIndex > 0 ? rowSiblings[rowIndex - 1] : null;
-  return rowHeader?.getAttribute?.('data-x-region-block-location-header') === '1'
-    ? (ownedChildren(rowHeader)[0] ?? null) : null;
+  return null;
 }
 
 function setCommonChildAttributes(element, className, title) {
