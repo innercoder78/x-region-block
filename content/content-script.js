@@ -921,6 +921,9 @@
     separator: 'x-region-block-location-separator',
     region: 'x-region-block-location-region',
   });
+  const SEGMENT_CLASS = 'x-region-block-location-segment';
+  const CONNECTION_CLASS = 'x-region-block-location-connection';
+  const VPN_PROXY_CLASS = 'x-region-block-location-vpn-proxy';
 
   const STATUS_ATTRIBUTE = 'data-x-region-block-status';
   const COUNTRY_CODE_ATTRIBUTE = 'data-x-region-block-country-code';
@@ -1055,10 +1058,12 @@
     root.removeAttribute('tabindex');
     root.removeAttribute('contenteditable');
 
+    let geographicLabel;
     if (display.country !== null) {
       const country = createCountryElement(container.ownerDocument, display.country, resolveFlagAssetUrl, postHeader);
 
-      root.setAttribute('aria-label', display.country.ariaLabel);
+      geographicLabel = display.country.ariaLabel;
+      root.setAttribute('aria-label', geographicLabel);
       root.setAttribute('title', display.country.title);
       root.appendChild(country);
     } else {
@@ -1066,12 +1071,40 @@
         unavailable: 'Location: Unavailable', unknown: 'Location: Unknown' };
       const semanticLabel = postHeader && statusLabels[display.status]
         ? statusLabels[display.status] : display.region.ariaLabel;
+      geographicLabel = semanticLabel;
       root.setAttribute('aria-label', semanticLabel);
       root.setAttribute('title', postHeader ? semanticLabel : display.region.title);
       const region = postHeader && display.region.code === null
         ? { ...display.region, label: semanticLabel, title: semanticLabel }
         : display.region;
       root.appendChild(createRegionElement(container.ownerDocument, region, postHeader));
+    }
+    if (postHeader && options?.details) {
+      const details = options.details;
+      const segments = [];
+      if (details.locationAccuracy === 'vpn-proxy-detected') {
+        segments.push({ className: VPN_PROXY_CLASS, text: 'VPN/proxy detected' });
+      }
+      segments.push({ className: CONNECTION_CLASS, text: details.connection.label });
+      for (const segment of segments) {
+        const group = container.ownerDocument.createElement('span');
+        group.setAttribute('class', `${SEGMENT_CLASS} ${segment.className}`);
+        group.setAttribute('aria-hidden', 'true');
+        const separator = container.ownerDocument.createElement('span');
+        separator.setAttribute('class', LOCATION_BADGE_CLASSES.separator);
+        separator.setAttribute('aria-hidden', 'true');
+        separator.textContent = ' | ';
+        const text = container.ownerDocument.createElement('span');
+        text.textContent = segment.text;
+        group.appendChild(separator); group.appendChild(text); root.appendChild(group);
+      }
+      const semantic = [geographicLabel];
+      if (details.locationAccuracy === 'vpn-proxy-detected') semantic.push('VPN or proxy detected');
+      semantic.push(details.connection.label);
+      root.setAttribute('aria-label', `${semantic.join('. ')}.`);
+      if (details.connection.rawSource !== null) {
+        root.setAttribute('title', `Reported account source: ${details.connection.rawSource}`);
+      }
     }
     return root;
   }
@@ -1099,11 +1132,11 @@
     return evaluation;
   }
 
-  function presentXAccountLinkInPost(link, header, observation, settings, resolveFlagAssetUrl) {
+  function presentXAccountLinkInPost(link, header, observation, settings, resolveFlagAssetUrl, details) {
     findLocationBadge(header);
     const evaluation = evaluateXAccountLink(link, observation, settings);
     if (evaluation === null) { removeLocationBadge(header); return null; }
-    renderLocationBadge(header, evaluation.subject.location, resolveFlagAssetUrl, { postHeader: true });
+    renderLocationBadge(header, evaluation.subject.location, resolveFlagAssetUrl, { postHeader: true, details });
     return evaluation;
   }
 
@@ -1771,6 +1804,25 @@
     return normalizeSettings(input);
   }
 
+  const X_ABOUT_ACCOUNT_SOURCE_LIMIT = 256;
+
+  const labels = Object.freeze({
+    web: 'Connection: Web', ios: 'Connection: iOS app', android: 'Connection: Android app',
+    unknown: 'Unknown connection method',
+  });
+
+  /** Classifies only explicit account source labels; it never infers geography. */
+  function classifyXAboutAccountConnectionSource(value) {
+    const rawSource = typeof value === 'string' ? value.trim() : null;
+    const retained = rawSource && rawSource.length <= X_ABOUT_ACCOUNT_SOURCE_LIMIT ? rawSource : null;
+    const normalized = retained?.toLowerCase() ?? '';
+    let method = 'unknown';
+    if (/^(?:web|web app|twitter web app|x web)$/.test(normalized)) method = 'web';
+    else if (/(?:^|\s)(?:app store|ios|iphone|ipad)(?:\s|$)/.test(normalized)) method = 'ios';
+    else if (/(?:^|\s)(?:google play|play store|android)(?:\s|$)/.test(normalized)) method = 'android';
+    return Object.freeze({ method, label: labels[method], rawSource: retained });
+  }
+
   /** Static English display names, ordered exactly like the supported country registry. */
   const COUNTRY_NAMES_BY_CODE = Object.freeze({
     AD: "Andorra",
@@ -2190,6 +2242,85 @@
     }
   }
 
+  const X_ABOUT_ACCOUNT_LOCATION_ACCURACY_STATES = Object.freeze([
+    'accurate', 'vpn-proxy-detected', 'unknown',
+  ]);
+  const own$1 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const plain$3 = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+  const data = (value, key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !own$1(descriptor, 'value')) throw new TypeError('Accessors are not supported');
+    return descriptor.value;
+  };
+  const exact$1 = (value, keys) => plain$3(value) && Reflect.ownKeys(value).length === keys.length
+    && Reflect.ownKeys(value).every((key) => typeof key === 'string')
+    && keys.every((key) => own$1(value, key)
+      && own$1(Object.getOwnPropertyDescriptor(value, key) ?? {}, 'value'));
+
+  const canonicalLocation = (location) => {
+    const keys = ['status', 'countryCode', 'countryName', 'regionCode', 'regionName', 'rawLocation', 'source'];
+    if (!exact$1(location, keys) || !Object.isFrozen(location)) throw new TypeError('Invalid canonical location');
+    const input = Object.fromEntries(keys.map((key) => [key, data(location, key)]));
+    const canonical = createLocationResult(input);
+    if (keys.some((key) => canonical[key] !== input[key])) throw new TypeError('Invalid canonical location');
+    return location;
+  };
+
+  const accuracy = (value) => value === false ? 'vpn-proxy-detected' : value === true ? 'accurate' : 'unknown';
+  function createXAboutAccountDetails({ location, connection, locationAccuracy }) {
+    if (!exact$1(connection, ['method', 'label', 'rawSource'])
+      || !X_ABOUT_ACCOUNT_LOCATION_ACCURACY_STATES.includes(locationAccuracy)) throw new TypeError('Invalid About Account details');
+    const method = data(connection, 'method');
+    const label = data(connection, 'label');
+    const suppliedRawSource = data(connection, 'rawSource');
+    if (suppliedRawSource !== null && typeof suppliedRawSource !== 'string') throw new TypeError('Invalid raw source');
+    const rawSource = suppliedRawSource === '' ? null : suppliedRawSource;
+    if (rawSource !== null && (rawSource.length > X_ABOUT_ACCOUNT_SOURCE_LIMIT
+      || rawSource.trim() !== rawSource)) throw new TypeError('Invalid raw source');
+    const canonicalConnection = classifyXAboutAccountConnectionSource(rawSource);
+    if (method !== canonicalConnection.method || label !== canonicalConnection.label) {
+      throw new TypeError('Invalid canonical connection');
+    }
+    return Object.freeze({ location: canonicalLocation(location), connection: canonicalConnection, locationAccuracy });
+  }
+  function createUnavailableXAboutAccountDetails() {
+    return createXAboutAccountDetails({
+      location: createUnavailableLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE }),
+      connection: classifyXAboutAccountConnectionSource(null), locationAccuracy: 'unknown',
+    });
+  }
+  function parseXAboutAccountDetailsPayload(payload) {
+    if (!plain$3(payload)) throw new TypeError('X About Account payload must be a plain object');
+    const versionDescriptor = Object.getOwnPropertyDescriptor(payload, 'version');
+    if (versionDescriptor && !own$1(versionDescriptor, 'value')) throw new TypeError('Accessors are not supported');
+    const version = versionDescriptor?.value;
+    if (version === 1) {
+      if (!exact$1(payload, ['version', 'accountBasedIn'])) throw new TypeError('Invalid version 1 payload');
+      return createXAboutAccountDetails({ location: parseXAboutAccountLocationPayload(payload),
+        connection: classifyXAboutAccountConnectionSource(null), locationAccuracy: 'unknown' });
+    }
+    // Retain the established direct GraphQL parser path used by non-MAIN-world consumers.
+    if (!own$1(payload, 'version')) return createXAboutAccountDetails({
+      location: parseXAboutAccountLocationPayload(payload),
+      connection: classifyXAboutAccountConnectionSource(null), locationAccuracy: 'unknown',
+    });
+    if (version !== 2 || !exact$1(payload,
+      ['version', 'accountBasedIn', 'source', 'locationAccurate'])) throw new TypeError('Invalid version 2 payload');
+    const accountBasedIn = data(payload, 'accountBasedIn');
+    const source = data(payload, 'source');
+    const locationAccurate = data(payload, 'locationAccurate');
+    if ((accountBasedIn !== null && typeof accountBasedIn !== 'string')
+      || (source !== null && typeof source !== 'string')
+      || (locationAccurate !== null && typeof locationAccurate !== 'boolean')) {
+      throw new TypeError('Invalid version 2 field type');
+    }
+    return createXAboutAccountDetails({
+      location: parseXAboutAccountLocationPayload({ version: 1, accountBasedIn }),
+      connection: classifyXAboutAccountConnectionSource(source), locationAccuracy: accuracy(locationAccurate),
+    });
+  }
+
   const X_ABOUT_ACCOUNT_RECOVERY_CODES = Object.freeze({
     AUTHENTICATION: 'AUTHENTICATION_STALE',
     QUERY: 'QUERY_ID_STALE',
@@ -2373,7 +2504,7 @@
     };
     const removeAction = (target) => removeAccountAction(target.accountContainer);
 
-    const present = (target, location) => {
+    const present = (target, details) => {
       let identity;
       try { identity = readXAccountIdentityFromLink(target.link, readerOptions()); } catch {
         identity = null;
@@ -2385,15 +2516,16 @@
         return;
       }
       const observation = normalized.hasBaseUrl
-        ? { source: normalized.source, location, baseUrl: normalized.baseUrl }
-        : { source: normalized.source, location };
+        ? { source: normalized.source, location: details.location, baseUrl: normalized.baseUrl }
+        : { source: normalized.source, location: details.location };
       try {
         const isPost = target.source === 'timeline' || target.source === 'reply';
         const host = isPost ? reconcilePostLocationHeader(target) : target.badgeContainer;
         const evaluation = isPost && host === null
           ? evaluateXAccountLink(target.link, observation, settings)
           : isPost && host !== target.badgeContainer
-          ? presentXAccountLinkInPost(target.link, host, observation, settings, normalized.resolveFlagAssetUrl)
+          ? presentXAccountLinkInPost(target.link, host, observation, settings,
+            normalized.resolveFlagAssetUrl, details)
           : presentXAccountLink(target.link, host, observation, settings, normalized.resolveFlagAssetUrl);
         if (evaluation === null) removeAction(target);
         else applyAccountAction(target.accountContainer, evaluation.action);
@@ -2404,7 +2536,7 @@
     };
     const presentEntry = (entry) => {
       for (const target of targets) {
-        if (entry.targets.has(target) && entry.location !== null) present(target, entry.location);
+        if (entry.targets.has(target) && entry.details !== null) present(target, entry.details);
       }
     };
     const isCurrent = (entry) => active && entry.live && entry.generation === generation
@@ -2414,7 +2546,7 @@
       entry.pending = null;
       entry.controller = null;
       if (error?.name === 'AbortError' || error?.code === 'ABORTED') return;
-      entry.location = createUnavailableLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+      entry.details = createUnavailableXAboutAccountDetails();
       entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
         || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
       report(sanitizedDiagnosticError(error, message));
@@ -2450,15 +2582,15 @@
       }
       promise.then((payload) => {
         if (!isCurrent(entry) || entry.pending !== promise) return;
-        let location;
-        try { location = parseXAboutAccountLocationPayload(payload); } catch {
+        let details;
+        try { details = parseXAboutAccountDetailsPayload(payload); } catch {
           resolveFailure(entry, 'Unable to parse account location');
           return;
         }
         if (!isCurrent(entry) || entry.pending !== promise) return;
         entry.pending = null;
         entry.controller = null;
-        entry.location = location;
+        entry.details = details;
         presentEntry(entry);
       }, (error) => resolveFailure(entry, 'Unable to load account location', error));
     };
@@ -2470,7 +2602,7 @@
         const controller = entry.controller;
         entry.pending = null;
         entry.controller = null;
-        entry.location = null;
+        entry.details = null;
         if (controller !== null) {
           try { controller.abort(); } catch { /* Cancellation failure is intentionally silent. */ }
         }
@@ -2493,7 +2625,7 @@
         const controller = entry.controller;
         entry.pending = null;
         entry.controller = null;
-        entry.location = null;
+        entry.details = null;
         entry.targets.clear();
         if (controller !== null) {
           try { controller.abort(); } catch { failed = true; }
@@ -2542,7 +2674,7 @@
             targets: new Set(),
             pending: null,
             controller: null,
-            location: null,
+            details: null,
             generation,
             live: true,
             recoverable: false,
@@ -2551,11 +2683,11 @@
           entriesToStart.push(entry);
         }
         entry.targets.add(target);
-        if (entry.location !== null) present(target, entry.location);
+        if (entry.details !== null) present(target, entry.details);
       }
       retireEmptyEntries();
       for (const entry of entriesToStart) {
-        if (isCurrent(entry) && entry.pending === null && entry.location === null) startLookup(entry);
+        if (isCurrent(entry) && entry.pending === null && entry.details === null) startLookup(entry);
       }
       if (cleanupFailed) report(new Error('Unable to remove account location badge'));
       if (actionCleanupFailed) report(new Error('Unable to remove account filter action'));
@@ -2567,7 +2699,7 @@
       if (active) {
         for (const target of targets) {
           const entry = accounts.get(target.identity.allowlistKey);
-          if (entry?.location !== null && entry?.location !== undefined) present(target, entry.location);
+          if (entry?.details !== null && entry?.details !== undefined) present(target, entry.details);
         }
       }
       return settings;
@@ -2579,7 +2711,7 @@
       for (const entry of accounts.values()) {
         if (!entry.recoverable || !isCurrent(entry) || entry.pending !== null) continue;
         entry.recoverable = false;
-        entry.location = null;
+        entry.details = null;
         startLookup(entry);
         count += 1;
       }

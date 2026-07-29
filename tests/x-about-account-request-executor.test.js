@@ -8,11 +8,28 @@ import { X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE
 import { metadataFacades, MetadataEvent, observedHeaders } from './helpers/x-request-metadata-facade.js';
 const cyclicPayload = {}; cyclicPayload.self = cyclicPayload;
 
+async function executeSuccessfulPayload(payload, id = 'opaque_compact_0001') {
+  const fetch = vi.fn().mockReturnValueOnce('ordinary').mockResolvedValueOnce({
+    ok: true, status: 200, json: () => Promise.resolve(payload),
+  });
+  const { page, document } = metadataFacades(fetch); page.AbortController = AbortController;
+  const capture = installXAboutAccountRequestCapture(page);
+  page.fetch('/i/api/graphql/live_query/AboutAccountQuery?variables=%7B%7D', { headers: observedHeaders });
+  const executor = installXAboutAccountRequestExecutor(page, capture); const responses = [];
+  document.addEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, (event) => responses.push(event.detail));
+  document.dispatchEvent(new MetadataEvent(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
+    { detail: serializeAboutAccountRequest(id, 'OpenAI', 1) }));
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  executor.stop(); capture.stop();
+  return parseAboutAccountResponseDetail(responses[0]);
+}
+
 describe('MAIN-world About Account executor', () => {
   it('accepts a distinct-realm serialized command and uses the captured original fetch', async () => {
     const fetch = vi.fn(() => Promise.resolve({ ok: true, status: 200,
       json: () => Promise.resolve({ data: { user_result_by_screen_name: { result: {
-        about_profile: { account_based_in: 'United States' },
+        about_profile: { account_based_in: 'United States', source: 'United States App Store',
+          location_accurate: false, connected_via: 'Google Play', app_store: 'North America App Store' },
       } } } }) }));
     const { page, document } = metadataFacades(fetch);
     page.AbortController = AbortController;
@@ -40,9 +57,59 @@ describe('MAIN-world About Account executor', () => {
     expect(options.headers['x-twitter-client-language']).toBe('fr');
     expect(typeof responses[0]).toBe('string');
     expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({
-      ok: true, payload: { version: 1, accountBasedIn: 'United States' },
+      ok: true, payload: { version: 2, accountBasedIn: 'United States',
+        source: 'United States App Store', locationAccurate: false },
     });
+    expect(Object.keys(parseAboutAccountResponseDetail(responses[0]).payload))
+      .toEqual(['version', 'accountBasedIn', 'source', 'locationAccurate']);
+    expect(responses[0]).not.toMatch(/connected_via|app_store|Google Play|North America App Store/);
     executor.stop(); capture.stop();
+  });
+
+  it.each([
+    ['Web', true], ['Google Play', false],
+  ])('preserves the explicit %s source and boolean accuracy', async (source, locationAccurate) => {
+    const response = await executeSuccessfulPayload({ data: { user_result_by_screen_name: { result: {
+      about_profile: { account_based_in: 'Canada', source, location_accurate: locationAccurate },
+    } } } }, `opaque_source_${source.replace(/\s/g, '_')}`);
+    expect(response.payload).toEqual({ version: 2, accountBasedIn: 'Canada', source, locationAccurate });
+  });
+
+  it('maps missing fields to null and excludes all unrelated metadata', async () => {
+    const response = await executeSuccessfulPayload({ token: 'secret', headers: { authorization: 'secret' },
+      url: 'https://private.invalid', data: { user_result_by_screen_name: { result: {
+        handle: 'private-handle', account_creation_date: 'private-date', metadata: { id: 1 },
+        about_profile: { account_based_in: 'Canada', connected_via: 'Web', app_store: 'Canada App Store' },
+      } } } }, 'opaque_missing_fields');
+    expect(response.payload).toEqual({ version: 2, accountBasedIn: 'Canada', source: null,
+      locationAccurate: null });
+    expect(JSON.stringify(response.payload)).not.toMatch(/secret|header|url|handle|creation|metadata|connected|store/i);
+  });
+
+  it('rejects accessors without invoking their getters', async () => {
+    const getter = vi.fn(() => 'Web');
+    const profile = { account_based_in: 'Canada', location_accurate: null };
+    Object.defineProperty(profile, 'source', { enumerable: true, get: getter });
+    const response = await executeSuccessfulPayload({ data: { user_result_by_screen_name: { result: {
+      about_profile: profile,
+    } } } }, 'opaque_accessor_field');
+    expect(response).toMatchObject({ ok: false, code: 'INVALID_PAYLOAD' });
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['account_based_in', {}], ['account_based_in', []], ['account_based_in', 0],
+    ['account_based_in', () => {}], ['account_based_in', Symbol('location')],
+    ['source', {}], ['source', []], ['source', 0], ['source', () => {}], ['source', Symbol('source')],
+    ['location_accurate', {}], ['location_accurate', []], ['location_accurate', 0],
+    ['location_accurate', () => {}], ['location_accurate', Symbol('accuracy')],
+  ])('rejects malformed compact field %s value %#', async (field, value) => {
+    const profile = { account_based_in: 'Canada', source: 'Web', location_accurate: false };
+    profile[field] = value;
+    const response = await executeSuccessfulPayload({ data: { user_result_by_screen_name: { result: {
+      about_profile: profile,
+    } } } }, `opaque_bad_${field}_${typeof value}`);
+    expect(response).toMatchObject({ ok: false, code: 'INVALID_PAYLOAD' });
   });
 
   it('contains hostile non-string and malformed events without invoking fetch', () => {
