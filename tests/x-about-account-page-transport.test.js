@@ -30,15 +30,15 @@ describe('global About Account page scheduler', () => {
     const controllers = Array.from({ length: 6 }, () => new AbortController());
     const promises = controllers.map((controller, index) => transport.loadPayload(identity(`user${index}`), context(controller.signal)));
     promises.forEach((promise) => { void promise.catch(() => {}); });
-    await vi.advanceTimersByTimeAsync(800);
+    await vi.advanceTimersByTimeAsync(750);
     const starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
-    expect(starts.map(({ event }) => parseAboutAccountRequestDetail(event.detail).handle)).toEqual(['user0', 'user1', 'user2', 'user3']);
+    expect(starts.map(({ event }) => parseAboutAccountRequestDetail(event.detail).handle)).toEqual(['user0', 'user1']);
     expect(starts.every(({ event }) => typeof event.detail === 'string')).toBe(true);
-    expect(starts.map(({ time }) => time)).toEqual([0, 200, 400, 600]);
+    expect(starts.map(({ time }) => time)).toEqual([0, 750]);
     const first = parseAboutAccountRequestDetail(starts[0].event.detail);
     document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({ id: first.id, ok: true, payload: { ok: true } }) }));
-    await vi.advanceTimersByTimeAsync(200);
-    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(5);
+    await vi.advanceTimersByTimeAsync(750);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(3);
     await vi.advanceTimersByTimeAsync(30_000);
     await expect(promises[1]).rejects.toMatchObject({ code: 'BRIDGE_TIMEOUT' });
     expect(document.events.some(({ event }) => event.type === X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE && typeof event.detail === 'string')).toBe(true);
@@ -64,7 +64,7 @@ describe('global About Account page scheduler', () => {
     await vi.runAllTimersAsync();
     expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(1);
     transport.updateRecoveryState(recovery(3, 'query_one', 'auth_two'));
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(750);
     expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(2);
     controller.abort(); await expect(promise).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
   });
@@ -91,7 +91,7 @@ describe('global About Account page scheduler', () => {
     }) }));
     expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(1);
     expect(vi.getTimerCount()).toBeGreaterThan(0);
-    await vi.advanceTimersByTimeAsync(199);
+    await vi.advanceTimersByTimeAsync(749);
     expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
@@ -249,7 +249,7 @@ describe('global About Account page scheduler', () => {
     } else if (path === 'consumer') {
       expect(() => firstController.abort()).not.toThrow();
       await expect(first).rejects.toMatchObject({ name: 'AbortError' });
-      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(750);
       expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).length)
         .toBeGreaterThan(1);
     } else {
@@ -270,30 +270,31 @@ describe('global About Account page scheduler', () => {
     const promises = ['one', 'two', 'three'].map((handle, index) =>
       transport.loadPayload(identity(handle), context(controllers[index].signal)));
     promises.forEach((promise) => { void promise.catch(() => {}); });
-    await vi.advanceTimersByTimeAsync(400);
+    await vi.advanceTimersByTimeAsync(750);
     const initial = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
-    expect(initial.map(({ time }) => time)).toEqual([0, 200, 400]);
-    for (const [index, retryAfterMs] of [60_000, 90_000, 75_000].entries()) {
+    expect(initial.map(({ time }) => time)).toEqual([0, 750]);
+    for (const [index, retryAfterMs] of [60_000, 90_000].entries()) {
       const request = parseAboutAccountRequestDetail(initial[index].event.detail);
       document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
         id: request.id, ok: false, code: 'HTTP_429', status: 429, retryAfterMs,
       }) }));
     }
     await vi.advanceTimersByTimeAsync(89_999);
-    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(3);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(1);
-    await vi.advanceTimersByTimeAsync(400);
+    await vi.advanceTimersByTimeAsync(1_500);
     const retried = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
-    expect(retried.slice(3).map(({ time }) => time)).toEqual([90_400, 90_600, 90_800]);
-    for (const event of retried.slice(3)) {
+    expect(retried.slice(2).map(({ time }) => time)).toEqual([90_750, 91_500]);
+    for (const event of retried.slice(2)) {
       const request = parseAboutAccountRequestDetail(event.event.detail);
       document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
         id: request.id, ok: false, code: 'HTTP_429', status: 429, retryAfterMs: 1,
       }) }));
     }
+    controllers.forEach((controller) => controller.abort());
     await Promise.allSettled(promises);
     await vi.runAllTimersAsync();
-    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(6);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(4);
     transport.stop();
   });
 
@@ -315,7 +316,7 @@ describe('global About Account page scheduler', () => {
       document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
         id: request.id, ok: false, code, status, retryAfterMs: null, metadataRevision: 1,
       }) }));
-      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(750);
       let starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
       expect(starts).toHaveLength(2);
       expect(rejected).toHaveBeenNthCalledWith(1, kind, 1, kind === 'auth' ? 'auth_one' : 'query_one');
@@ -330,7 +331,7 @@ describe('global About Account page scheduler', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(2);
       transport.updateRecoveryState(revisionThree);
-      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(750);
       starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
       expect(parseAboutAccountRequestDetail(starts[2].event.detail).handle).toBe('queued');
       queuedController.abort(); await expect(queued).rejects.toMatchObject({ name: 'AbortError' });
@@ -345,7 +346,7 @@ describe('global About Account page scheduler', () => {
     const promises = ['authfail', 'queryfail', 'queued'].map((handle, index) =>
       transport.loadPayload(identity(handle), context(controllers[index].signal)));
     promises.forEach((promise) => { void promise.catch(() => {}); });
-    await vi.advanceTimersByTimeAsync(200);
+    await vi.advanceTimersByTimeAsync(750);
     const starts = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE);
     for (const [index, code, status] of [[0, 'HTTP_401', 401], [1, 'HTTP_404', 404]]) {
       const request = parseAboutAccountRequestDetail(starts[index].event.detail);
@@ -373,7 +374,7 @@ describe('global About Account page scheduler', () => {
     document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
       id: request.id, ok: false, code: 'HTTP_429', status: 429, retryAfterMs: 1_000,
     }) }));
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     request = parseAboutAccountRequestDetail(document.events.filter(({ event }) =>
       event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).at(-1).event.detail);
     document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
@@ -382,9 +383,8 @@ describe('global About Account page scheduler', () => {
     await expect(first).rejects.toMatchObject({ code: 'HTTP_429' });
     const queuedController = new AbortController();
     const queued = transport.loadPayload(identity('queued'), context(queuedController.signal)); void queued.catch(() => {});
-    await vi.advanceTimersByTimeAsync(4_999);
-    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE)).toHaveLength(3);
     expect(parseAboutAccountRequestDetail(document.events.filter(({ event }) =>
       event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).at(-1).event.detail).handle).toBe('queued');
     queuedController.abort(); await expect(queued).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();

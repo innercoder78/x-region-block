@@ -9,6 +9,8 @@ import { createXPageScriptInjector } from './x-page-script-injector.js';
 import { normalizeCountryCode } from '../shared/country-regions.js';
 import { createXSidebarNavigation } from './sidebar-navigation.js';
 import { OPEN_OPTIONS_MESSAGE } from '../shared/open-options-message.js';
+import { createBrowserStorageAdapter } from '../shared/browser-storage-adapter.js';
+import { createXAboutAccountCacheRepository } from './x-about-account-cache.js';
 
 export const X_PRODUCTION_CONTENT_RUNTIME_VERSION = 1;
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
@@ -167,6 +169,7 @@ export function createXProductionContentRuntime(globalScope) {
     stopComponent(state, 'routeCandidate');
     stopComponent(state, 'routeController', 'routeCandidateStopped');
     stopComponent(state, 'transport');
+    stopComponent(state, 'cache');
     stopComponent(state, 'bridge');
     stopComponent(state, 'settingsCandidate');
     stopComponent(state, 'settingsRuntime');
@@ -211,13 +214,16 @@ export function createXProductionContentRuntime(globalScope) {
         recoveryState,
         onMetadataRejected: (kind, revision, rejectedValue) =>
           state.bridge.invalidateRecovery?.(kind, revision, rejectedValue),
+        onCooldownComplete: () => {
+          if (owned(state) && state.routeController === candidate) candidate.retryRecoverable();
+        },
       });
       if (!owned(state)) throw new Error();
       state.transport = transport;
       candidate = createXAccountTargetRouteSessionController(dependencies.document, {
         settingsRuntime: state.settingsRuntime,
         observerFactory: (callback) => new dependencies.MutationObserver(callback),
-        loadPayload: transport.loadPayload,
+        loadPayload: (identity, context) => state.cache.loadPayload(identity, context, transport.loadPayload),
         brokerAbortControllerFactory: () => new dependencies.AbortController(),
         consumerAbortControllerFactory: () => new dependencies.AbortController(),
         navigationObserverFactory: (options) => {
@@ -264,7 +270,7 @@ export function createXProductionContentRuntime(globalScope) {
     const state = {
       generation: generation + 1, claimed: false, cleaned: false, promiseSettled: false,
       resolve: null, reject: null, promise: null, bridge: null, injector: null,
-      settingsCandidate: null, settingsRuntime: null, transport: null,
+      settingsCandidate: null, settingsRuntime: null, transport: null, cache: null,
       sidebar: null,
       routeCandidate: null, routeController: null,
       bridgeStopped: false, injectorStopped: false, settingsCandidateStopped: false,
@@ -330,6 +336,11 @@ export function createXProductionContentRuntime(globalScope) {
           ['pagehide', pagehideListener]); } catch { /* contained */ }
       }
       checkpoint();
+      state.cache = createXAboutAccountCacheRepository({
+        storage: createBrowserStorageAdapter(globalScope),
+        setTimeout: dependencies.setTimeout, clearTimeout: dependencies.clearTimeout, onError: report,
+      });
+      void state.cache.initialize();
       const injector = createXPageScriptInjector(globalScope);
       state.injector = injector;
       if (!owned(state)) stopComponent(state, 'injector');

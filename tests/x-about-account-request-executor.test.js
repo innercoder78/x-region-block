@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { installXAboutAccountRequestCapture,
   readPrivateXAboutAccountSnapshot } from '../src/page/x-about-account-request-capture.js';
 import { installXAboutAccountRequestExecutor } from '../src/page/x-about-account-request-executor.js';
+import { parseRateLimitDelay } from '../src/page/x-about-account-request-executor.js';
 import { X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE, X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE,
   parseAboutAccountResponseDetail, serializeAboutAccountRequest } from '../src/shared/x-about-account-request-event.js';
 import { metadataFacades, MetadataEvent, observedHeaders } from './helpers/x-request-metadata-facade.js';
@@ -25,6 +26,14 @@ async function executeSuccessfulPayload(payload, id = 'opaque_compact_0001') {
 }
 
 describe('MAIN-world About Account executor', () => {
+  it('honors numeric, HTTP-date, reset, and long rate-limit cooldowns', () => {
+    const now = Date.parse('2026-01-01T00:00:00Z');
+    const headers = new Headers({ 'retry-after': new Date(now + 10 * 60_000).toUTCString(),
+      'x-rate-limit-reset': String((now + 7 * 60_000) / 1000) });
+    expect(parseRateLimitDelay(headers, now)).toBe(10 * 60_000);
+    expect(parseRateLimitDelay(new Headers({ 'retry-after': '3600' }), now)).toBe(3_600_000);
+    expect(parseRateLimitDelay(new Headers({ 'retry-after': 'bad' }), now)).toBeNull();
+  });
   it('accepts a distinct-realm serialized command and uses the captured original fetch', async () => {
     const fetch = vi.fn(() => Promise.resolve({ ok: true, status: 200,
       json: () => Promise.resolve({ data: { user_result_by_screen_name: { result: {

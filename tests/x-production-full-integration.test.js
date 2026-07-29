@@ -11,7 +11,7 @@ vi.useFakeTimers();
 
 const settle = async () => {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();
-  await vi.advanceTimersByTimeAsync(210);
+  await vi.advanceTimersByTimeAsync(760);
   for (let index = 0; index < 4; index += 1) await Promise.resolve();
 };
 
@@ -326,15 +326,14 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(transportCalls).toHaveLength(beforeNavigation);
   globalScope.history.pushState({}, '', '/openai/with_replies');
   const afterPush = transportCalls.length;
-  expect(afterPush).toBe(beforeNavigation + 1);
+  expect(afterPush).toBe(beforeNavigation);
   await settle();
   globalScope.history.replaceState({}, '', '/openai/status/1');
   expect(transportCalls.length).toBe(afterPush);
   globalScope.location.href = 'https://x.com/home';
   globalScope.dispatchEvent(new MetadataEvent('popstate'));
   const afterHome = transportCalls.length;
-  expect(afterHome).toBe(afterPush + 1);
-  expect(decodeURIComponent(transportCalls.at(-1).url)).toContain('"screenName":"openai"');
+  expect(afterHome).toBe(afterPush);
   expect(observerInstances.some((observer) => observer.target === document)).toBe(true);
 
   runtime.stop();
@@ -473,10 +472,10 @@ it.each([
     context.capture('/i/api/graphql/generic/HomeTimeline?fresh=1', {
       ...observedHeaders, 'x-csrf-token': 'fresh-csrf',
     });
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(750);
   } else if (code === 'HTTP_404') {
     context.capture(observedUrl('fresh_diagnostic_query'), observedHeaders);
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(750);
   }
   await Promise.resolve(); await Promise.resolve();
   const diagnostics = context.console.warn.mock.calls.flat().join('\n');
