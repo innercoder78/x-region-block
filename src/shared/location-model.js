@@ -40,26 +40,39 @@ export function createLocationResult(input = {}) {
   let regionName = null;
 
   if (status === LOCATION_STATUSES.KNOWN) {
-    countryCode = normalizeCountryCode(input.countryCode);
-    if (typeof input.countryName !== 'string' || input.countryName.trim() === '') {
-      throw new TypeError('A known location requires a countryName');
-    }
-    countryName = input.countryName;
-
-    const region = getCountryRegion(countryCode);
-    if (region.code === REGION_CODES.UNKNOWN) {
-      if (input.regionCode != null || input.regionName != null) {
-        throw new TypeError('This country does not support a region assertion');
+    const hasCountry = input.countryCode != null || input.countryName != null;
+    if (!hasCountry) {
+      const region = getRegion(input.regionCode);
+      if (region === null || region.code === REGION_CODES.UNKNOWN) {
+        throw new TypeError('A region-only known location requires a supported regionCode');
       }
-    } else {
-      if (input.regionCode != null && getRegion(input.regionCode)?.code !== region.code) {
-        throw new TypeError('regionCode must match the country region');
-      }
-      if (input.regionName != null && input.regionName !== region.name) {
-        throw new TypeError('regionName must match the country region');
+      if (input.regionName !== region.name) {
+        throw new TypeError('regionName must match regionCode');
       }
       regionCode = region.code;
       regionName = region.name;
+    } else {
+      countryCode = normalizeCountryCode(input.countryCode);
+      if (typeof input.countryName !== 'string' || input.countryName.trim() === '') {
+        throw new TypeError('A known country location requires a countryName');
+      }
+      countryName = input.countryName;
+
+      const region = getCountryRegion(countryCode);
+      if (region.code === REGION_CODES.UNKNOWN) {
+        if (input.regionCode != null || input.regionName != null) {
+          throw new TypeError('This country does not support a region assertion');
+        }
+      } else {
+        if (input.regionCode != null && getRegion(input.regionCode)?.code !== region.code) {
+          throw new TypeError('regionCode must match the country region');
+        }
+        if (input.regionName != null && input.regionName !== region.name) {
+          throw new TypeError('regionName must match the country region');
+        }
+        regionCode = region.code;
+        regionName = region.name;
+      }
     }
   }
 

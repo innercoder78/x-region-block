@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import {
   LOCATION_DISPLAY_MODEL_VERSION,
-  LOCATION_GLOBE_SYMBOL,
   LOCATION_STATUS_LABELS,
   createLocationDisplayModel,
 } from '../src/shared/location-display.js';
@@ -22,20 +21,26 @@ describe('known location display model', () => {
     ['BR', 'Brazil', 'SOUTH_AMERICA', 'South America'],
     ['JM', 'Jamaica', 'CARIBBEAN', 'Caribbean'],
     ['CR', 'Costa Rica', 'CENTRAL_AMERICA', 'Central America'],
-  ])('creates exact presentation data for %s', (code, name, regionCode, regionName) => {
+  ])('creates exact country-only presentation data for %s', (code, name) => {
     const model = createLocationDisplayModel({ status: 'known', countryCode: code, countryName: name });
     expect(Object.keys(model)).toEqual(topLevelKeys);
     expect(Object.keys(model.country)).toEqual(countryKeys);
-    expect(Object.keys(model.region)).toEqual(regionKeys);
+    expect(model.region).toBeNull();
     expect(model).toEqual({
       version: LOCATION_DISPLAY_MODEL_VERSION,
       status: 'known',
       country: { code, name, label: name, title: name, ariaLabel: `Country: ${name}` },
-      region: {
-        code: regionCode, name: regionName, symbol: LOCATION_GLOBE_SYMBOL,
-        label: regionName, title: regionName, ariaLabel: `Region: ${regionName}`,
-      },
+      region: null,
     });
+  });
+
+  it('creates exact presentation data for a region-only known location', () => {
+    const model = createLocationDisplayModel({ status: 'known', countryCode: null,
+      countryName: null, regionCode: 'NORTH_AMERICA', regionName: 'North America' });
+    expect(model.country).toBeNull();
+    expect(Object.keys(model.region)).toEqual(regionKeys);
+    expect(model.region).toEqual({ code: 'NORTH_AMERICA', name: 'North America', symbol: '🌐',
+      label: 'North America', title: 'North America', ariaLabel: 'Region: North America' });
   });
 
   it('normalizes code, trims names, and preserves internal punctuation and case', () => {
@@ -49,7 +54,7 @@ describe('known location display model', () => {
     expect(createLocationDisplayModel({
       status: 'known', countryCode: 'CA', countryName: 'Canada',
       regionCode: ' north_america ', regionName: 'North America',
-    }).region.code).toBe('NORTH_AMERICA');
+    }).region).toBeNull();
     expect(() => createLocationDisplayModel({
       status: 'known', countryCode: 'CA', countryName: 'Canada', regionCode: 'EUROPE',
     })).toThrow('regionCode must match the country region');
@@ -61,7 +66,7 @@ describe('known location display model', () => {
     expect(antarctica).toEqual({
       version: 1, status: 'known',
       country: { code: 'AQ', name: 'Antarctica', label: 'Antarctica', title: 'Antarctica', ariaLabel: 'Country: Antarctica' },
-      region: { code: null, name: null, symbol: '🌐', label: 'Unknown region', title: 'Unknown region', ariaLabel: 'Region: Unknown' },
+      region: null,
     });
     expect(antarctica).not.toEqual(unknown);
   });
@@ -110,8 +115,7 @@ describe('location display safety and immutability', () => {
     expect(first).toEqual(second);
     expect(first).not.toBe(second);
     expect(first.country).not.toBe(second.country);
-    expect(first.region).not.toBe(second.region);
-    expect([first, first.country, first.region].every(Object.isFrozen)).toBe(true);
+    expect([first, first.country].every(Object.isFrozen)).toBe(true);
   });
 
   it('returns markup-like names unchanged as plain string data', () => {

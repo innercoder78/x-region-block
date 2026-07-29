@@ -55,6 +55,24 @@ describe('location model', () => {
     });
   });
 
+  it('creates a minimal frozen region-only known location', () => {
+    const result = createKnownLocation({ regionCode: 'north_america', regionName: 'North America',
+      rawLocation: 'North America', source: 'x-about-account', connectedVia: 'Web' });
+    expect(result).toEqual({ status: 'known', countryCode: null, countryName: null,
+      regionCode: 'NORTH_AMERICA', regionName: 'North America', rawLocation: 'North America',
+      source: 'x-about-account' });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(result).not.toHaveProperty('connectedVia');
+  });
+
+  it('rejects malformed region-only locations and partial countries', () => {
+    expect(() => createKnownLocation({ regionCode: 'UNKNOWN', regionName: 'Unknown' })).toThrow();
+    expect(() => createKnownLocation({ regionCode: 'ATLANTIS', regionName: 'Atlantis' })).toThrow();
+    expect(() => createKnownLocation({ regionCode: 'EUROPE', regionName: 'Asia' })).toThrow();
+    expect(() => createKnownLocation({ countryName: 'Canada', regionCode: 'NORTH_AMERICA',
+      regionName: 'North America' })).toThrow();
+  });
+
   it('accepts matching assertions and rejects conflicting assertions', () => {
     expect(createKnownLocation({
       countryCode: 'CA', countryName: 'Canada', regionCode: ' north_america ',

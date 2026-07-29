@@ -57,6 +57,17 @@ describe('payload validation', () => {
 });
 
 describe('status mapping', () => {
+  it.each([
+    ['Africa', 'AFRICA'], ['Asia', 'ASIA'], ['Europe', 'EUROPE'],
+    ['Middle East', 'MIDDLE_EAST'], ['North America', 'NORTH_AMERICA'],
+    ['Oceania', 'OCEANIA'], ['South America', 'SOUTH_AMERICA'],
+    ['Caribbean', 'CARIBBEAN'], ['Central America', 'CENTRAL_AMERICA'],
+  ])('canonicalizes supported region %s', (name, code) => {
+    expect(parse(`  ${name.toUpperCase()}  `)).toEqual({ status: 'known', countryCode: null,
+      countryName: null, regionCode: code, regionName: name, rawLocation: name.toUpperCase(),
+      source: 'x-about-account' });
+  });
+
   it.each(known)('canonicalizes known %s', (raw, code, name, regionCode) => {
     const result = parse(`  ${raw}  `);
     expect(result).toEqual({ status: 'known', countryCode: code, countryName: name, regionCode,
@@ -93,7 +104,7 @@ describe('status mapping', () => {
     expect(parseXAboutAccountLocationPayload(input).status).toBe('missing');
   });
 
-  it.each(['Unknown', 'Worldwide', 'Earth', 'Europe', 'Congo', 'US', 'Saint Martin', 'St. Martin',
+  it.each(['Unknown', 'Worldwide', 'Earth', 'Congo', 'US', 'Saint Martin', 'St. Martin',
     'United States App Store', '<Example>', '"><img src=x onerror=alert(1)>',
     'United States extra', 'United', 'Deutschland',
   ])('preserves unknown value %s literally', (value) => {
@@ -135,6 +146,12 @@ describe('malformed response isolation', () => {
 });
 
 describe('accuracy independence and minimization', () => {
+  it('uses account_based_in despite misleading connected-via fields', () => {
+    expect(parse('North America', { connected_via: 'United States App Store', device: 'Web' }))
+      .toMatchObject({ status: 'known', countryCode: null, regionCode: 'NORTH_AMERICA' });
+    expect(parse('United States', { connected_via: 'Web' }))
+      .toMatchObject({ status: 'known', countryCode: 'US' });
+  });
   it.each([true, false, null, undefined, { malformed: true }])('ignores location_accurate %s', (value) => {
     const result = parse('Canada', { location_accurate: value });
     expect(result.status).toBe('known');

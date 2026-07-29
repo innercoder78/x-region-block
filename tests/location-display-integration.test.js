@@ -16,7 +16,7 @@ describe('location display integration', () => {
     const subject = createFilterSubject(subjectInput(canonical));
     const before = structuredClone(subject);
     expect(createLocationDisplayModel(canonical).country.code).toBe('CA');
-    expect(createLocationDisplayModel(subject.location).region.code).toBe('NORTH_AMERICA');
+    expect(createLocationDisplayModel(subject.location).region).toBeNull();
     expect(subject).toEqual(before);
   });
 
@@ -31,7 +31,7 @@ describe('location display integration', () => {
     expect(decideFilterAction(subject, settings)).toBe(before);
     expect(before).toBe(expected);
     expect(display.country.code).toBe('CA');
-    expect(display.region.code).toBe('NORTH_AMERICA');
+    expect(display.region).toBeNull();
     expect(Object.keys(subject)).not.toContain('display');
   });
 
@@ -40,7 +40,7 @@ describe('location display integration', () => {
     const subject = createFilterSubject(subjectInput(location));
     const display = createLocationDisplayModel(subject.location);
     expect(display.status).toBe('known');
-    expect(display.region.code).toBeNull();
+    expect(display.region).toBeNull();
     expect(decideFilterAction(subject, { region: { hide: ['UNKNOWN'] } })).toBe('show');
     expect(decideFilterAction(subject, { other: { hide: ['unknown'] } })).toBe('show');
   });

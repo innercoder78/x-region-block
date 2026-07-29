@@ -41,7 +41,7 @@ describe('account presentation boundary', () => {
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result.subject.identity)).toBe(true);
     expect(Object.isFrozen(result.subject.location)).toBe(true);
-    expect(Object.isFrozen(result.display.region)).toBe(true);
+    expect(result.display.region).toBeNull();
     expect(Object.values(result)).not.toContain(container);
   });
 
@@ -63,25 +63,17 @@ describe('account presentation boundary', () => {
 
 describe('rendering and action independence', () => {
   it.each([
-    ['CA', 'Canada', 'NORTH_AMERICA', 'CA', '🌐 North America'],
-    ['ZA', 'South Africa', 'AFRICA', 'ZA', '🌐 Africa'],
-    ['JP', 'Japan', 'ASIA', 'JP', '🌐 Asia'],
-    ['FR', 'France', 'EUROPE', 'FR', '🌐 Europe'],
-    ['AE', 'United Arab Emirates', 'MIDDLE_EAST', 'AE', '🌐 Middle East'],
-    ['AU', 'Australia', 'OCEANIA', 'AU', '🌐 Oceania'],
-    ['BR', 'Brazil', 'SOUTH_AMERICA', 'BR', '🌐 South America'],
-    ['JM', 'Jamaica', 'CARIBBEAN', 'JM', '🌐 Caribbean'],
-    ['CR', 'Costa Rica', 'CENTRAL_AMERICA', 'CR', '🌐 Central America'],
-  ])('renders canonical region-enriched %s presentation', (code, name, region, flag, label) => {
+    ['CA', 'Canada'], ['ZA', 'South Africa'], ['JP', 'Japan'], ['FR', 'France'],
+    ['AE', 'United Arab Emirates'], ['AU', 'Australia'], ['BR', 'Brazil'],
+    ['JM', 'Jamaica'], ['CR', 'Costa Rica'],
+  ])('renders country-only %s presentation', (code, name) => {
     const { container } = createContainer();
     const result = present(container, { location: known(code, name) });
     const root = findLocationBadge(container);
-    expect(root.children.map((child) => child.textContent)).toEqual([flag, ' ', label]);
-    expect(root.children[2].getAttribute('data-x-region-block-region-code')).toBe(region);
-    expect(root.getAttribute('aria-label'))
-      .toBe(`${result.display.country.ariaLabel}; ${result.display.region.ariaLabel}`);
-    expect(root.getAttribute('title'))
-      .toBe(`${result.display.country.title} · ${result.display.region.title}`);
+    expect(root.children.map((child) => child.textContent)).toEqual([code]);
+    expect(result.display.region).toBeNull();
+    expect(root.getAttribute('aria-label')).toBe(result.display.country.ariaLabel);
+    expect(root.getAttribute('title')).toBe(result.display.country.title);
   });
 
   it.each([
@@ -103,8 +95,7 @@ describe('rendering and action independence', () => {
     const { container } = createContainer();
     present(container, { location: known('AQ', 'Antarctica') });
     const root = findLocationBadge(container);
-    expect(root.children.map((child) => child.textContent)).toEqual(['AQ', ' ', '🌐 Unknown region']);
-    expect(root.children[2].hasAttribute('data-x-region-block-region-code')).toBe(false);
+    expect(root.children.map((child) => child.textContent)).toEqual(['AQ']);
   });
 
   it.each([
@@ -193,15 +184,15 @@ describe('cleanup, atomicity, and updates', () => {
     expect(findLocationBadge(container)).toBe(root);
     expect(container.children).toHaveLength(1);
     present(container, { location: known('JP', 'Japan') });
-    expect(root.textContent).toBe('JP 🌐 Asia');
+    expect(root.textContent).toBe('JP');
     present(container, { location: { status: 'hidden' } });
     expect(root.children).toHaveLength(1);
     present(container);
-    expect(root.textContent).toBe('CA 🌐 North America');
+    expect(root.textContent).toBe('CA');
     present(container, { location: known('AQ', 'Antarctica') });
-    expect(root.children[2].hasAttribute('data-x-region-block-region-code')).toBe(false);
+    expect(root.children).toHaveLength(1);
     present(container);
-    expect(root.children[2].getAttribute('data-x-region-block-region-code')).toBe('NORTH_AMERICA');
+    expect(root.children).toHaveLength(1);
   });
 });
 

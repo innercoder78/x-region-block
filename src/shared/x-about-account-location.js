@@ -5,6 +5,7 @@ import {
   createUnavailableLocation,
   createUnknownLocation,
 } from './location-model.js';
+import { getRegionByName } from './regions.js';
 
 export const X_ABOUT_ACCOUNT_LOCATION_PARSER_VERSION = 1;
 export const X_ABOUT_ACCOUNT_LOCATION_SOURCE = 'x-about-account';
@@ -46,6 +47,9 @@ export function parseXAboutAccountLocationPayload(payload) {
       const rawLocation = value.trim();
       const countryCode = getCountryCodeByName(rawLocation);
       if (countryCode === null) {
+        const region = getRegionByName(rawLocation);
+        if (region !== null) return createKnownLocation({ regionCode: region.code,
+          regionName: region.name, rawLocation, source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
         return createUnknownLocation({ rawLocation, source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
       }
       return createKnownLocation({ countryCode, countryName: getCountryName(countryCode), rawLocation,
@@ -74,6 +78,11 @@ export function parseXAboutAccountLocationPayload(payload) {
     }
     const countryCode = getCountryCodeByName(rawLocation);
     if (countryCode === null) {
+      const region = getRegionByName(rawLocation);
+      if (region !== null) return createKnownLocation({
+        regionCode: region.code, regionName: region.name, rawLocation,
+        source: X_ABOUT_ACCOUNT_LOCATION_SOURCE,
+      });
       return createUnknownLocation({ rawLocation, source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
     }
     return createKnownLocation({

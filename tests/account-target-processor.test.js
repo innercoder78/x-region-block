@@ -336,7 +336,7 @@ describe('lookup, reconciliation, and races', () => {
     expect(processor.retryRecoverable()).toBe(1);
     await settle();
     expect(current.badgeContainer.textContent).toContain('CA');
-    expect(current.badgeContainer.textContent).toContain('North America');
+    expect(current.badgeContainer.textContent).not.toContain('North America');
     expect(getAccountAction(current.accountContainer)).toBe('highlight');
     expect(processor.retryRecoverable()).toBe(0);
     expect(loader).toHaveBeenCalledTimes(2);
@@ -479,7 +479,7 @@ describe('additional asynchronous boundary coverage', () => {
     expect(second.badgeContainer.children).toHaveLength(0);
     fresh.resolve(payload('Japan'));
     await settle();
-    expect(second.badgeContainer.textContent).toContain('Asia');
+    expect(second.badgeContainer.textContent).toContain('JP');
   });
 
   it.each([
@@ -569,11 +569,11 @@ describe('additional asynchronous boundary coverage', () => {
   });
 
   it.each([
-    ['known', payload('Japan'), 'Asia'],
+    ['known', payload('Japan'), 'JP'],
     ['missing', payload(null), 'Location not provided'],
     ['unknown', payload('Atlantis'), 'Location unknown'],
     ['unavailable', {}, 'Location unavailable'],
-    ['Antarctica', payload('Antarctica'), 'Unknown region'],
+    ['Antarctica', payload('Antarctica'), 'AQ'],
   ])('presents %s locations', async (_name, input, label) => {
     const current = target();
     const { processor } = setup({ loadAboutAccountPayload: vi.fn(() => input) });
@@ -605,7 +605,7 @@ describe('account action integration', () => {
     processor.processChange(change([current]));
     await settle();
 
-    expect(current.badgeContainer.textContent).toContain('Asia');
+    expect(current.badgeContainer.textContent).toContain('JP');
     expect(current.accountContainer.getAttribute('data-x-region-block-account-action'))
       .toBe('highlight');
     processor.setSettings({ country: { hide: ['jp'] } });

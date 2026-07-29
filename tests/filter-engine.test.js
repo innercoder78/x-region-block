@@ -13,6 +13,7 @@ const canada = createKnownLocation({
   countryName: 'Canada',
 });
 const subject = { allowlistKey: 'account-a', location: canada };
+const northAmerica = createKnownLocation({ regionCode: 'NORTH_AMERICA', regionName: 'North America' });
 
 describe('filter engine', () => {
   it('shows by default with empty or missing categories', () => {
@@ -41,6 +42,15 @@ describe('filter engine', () => {
   it('applies country and region hides case-safely', () => {
     expect(decideFilterAction(subject, { country: { hide: ['ca'] } })).toBe('hide');
     expect(decideFilterAction(subject, { region: { hide: ['north_america'] } })).toBe('hide');
+  });
+
+  it('applies only region rules to region-only known locations', () => {
+    const regionSubject = { location: northAmerica };
+    expect(decideFilterAction(regionSubject, { region: { hide: ['NORTH_AMERICA'] } })).toBe('hide');
+    expect(decideFilterAction(regionSubject, { region: { highlight: ['NORTH_AMERICA'] } }))
+      .toBe('highlight');
+    expect(decideFilterAction(regionSubject, { country: { hide: ['US'] },
+      other: { hide: ['unknown'] } })).toBe('show');
   });
 
   it('gives a country hide precedence over a region highlight', () => {

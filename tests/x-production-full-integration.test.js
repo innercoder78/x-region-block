@@ -72,12 +72,17 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     const handle = JSON.parse(new URL(url).searchParams.get('variables')).screenName;
     const english = options.headers['accept-language'] === 'en-US,en;q=0.9';
     let payload = { data: { user_result_by_screen_name: { result: {
-      about_profile: { account_based_in: english ? 'United States' : 'États-Unis' },
+      about_profile: { account_based_in: english ? 'United States' : 'États-Unis',
+        connected_via: 'Web', app_store: 'North America App Store' },
     } } } };
     if (handle === 'missing') {
       payload = { data: { user_result_by_screen_name: { result: { about_profile: {} } } } };
     } else if (handle === 'unavailable') {
       payload = { data: { user_result_by_screen_name: { result: { about_profile: null } } } };
+    } else if (handle === 'region') {
+      payload = { data: { user_result_by_screen_name: { result: { about_profile: {
+        account_based_in: 'North America', connected_via: 'United States App Store',
+      } } } } };
     } else if (handle === 'malformed') payload = {};
     return Promise.resolve({
       ok: true, status: 200,
@@ -170,6 +175,9 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(findLocationBadge(targets.name)).not.toBeNull();
   expect(findLocationBadge(targets.name).children[0].children[0].getAttribute('src'))
     .toContain('assets/flags/us.png');
+  expect(findLocationBadge(targets.name).textContent).not.toContain('🌐');
+  expect(findLocationBadge(targets.name).textContent).not.toContain('North America');
+  expect(findLocationBadge(targets.name).children).toHaveLength(1);
   expect(findLocationBadge(targets.name).textContent).not.toContain('Location unavailable');
   expect(console.warn.mock.calls.flat().join('\n'))
     .not.toContain('About Account request queue failed.');
@@ -217,7 +225,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   for (const [handle, label] of [
     ['missing', 'Location not provided'],
     ['unavailable', 'Location unavailable'],
-    ['malformed', 'Location unavailable'],
+    ['malformed', 'Location unavailable'], ['region', 'North America'],
   ]) {
     const outcomeTweet = document.createElement('article');
     outcomeTweet.setAttribute('data-testid', 'tweet');
@@ -229,6 +237,10 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     for (const observer of routeObservers) observer.trigger();
     await settle();
     expect(findLocationBadge(outcomeName).textContent).toContain(label);
+    if (handle === 'region') {
+      expect(findLocationBadge(outcomeName).textContent).toBe('🌐 North America');
+      expect(findLocationBadge(outcomeName).textContent).not.toContain('Location unknown');
+    }
     expect(getAccountAction(outcomeTweet)).toBe('show');
     document.children.splice(document.children.indexOf(outcomeTweet), 1);
     outcomeTweet.parentNode = null;
@@ -328,7 +340,7 @@ it('recovers the same visible production target after genuinely fresh authentica
   expect(context.transportCalls).toHaveLength(2);
   expect(findLocationBadge(context.name).children[0].children[0].getAttribute('src'))
     .toContain('assets/flags/ca.png');
-  expect(findLocationBadge(context.name).textContent).toContain('North America');
+  expect(findLocationBadge(context.name).textContent).not.toContain('North America');
   expect(getAccountAction(context.tweet)).toBe('highlight');
   context.capture('/i/api/graphql/generic/HomeTimeline?replay=1', {
     ...observedHeaders, 'x-csrf-token': 'fresh-csrf',

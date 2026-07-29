@@ -124,20 +124,14 @@ export function renderLocationBadge(container, location, resolveFlagAssetUrl) {
   if (display.country !== null) {
     const country = createCountryElement(container.ownerDocument, display.country, resolveFlagAssetUrl);
 
-    const separator = container.ownerDocument.createElement('span');
-    setCommonChildAttributes(separator, LOCATION_BADGE_CLASSES.separator, null);
-    separator.textContent = ' ';
-
-    root.setAttribute('aria-label', `${display.country.ariaLabel}; ${display.region.ariaLabel}`);
-    root.setAttribute('title', `${display.country.title} · ${display.region.title}`);
+    root.setAttribute('aria-label', display.country.ariaLabel);
+    root.setAttribute('title', display.country.title);
     root.appendChild(country);
-    root.appendChild(separator);
   } else {
     root.setAttribute('aria-label', display.region.ariaLabel);
     root.setAttribute('title', display.region.title);
+    root.appendChild(createRegionElement(container.ownerDocument, display.region));
   }
-
-  root.appendChild(createRegionElement(container.ownerDocument, display.region));
   return root;
 }
 
