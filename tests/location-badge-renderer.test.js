@@ -25,6 +25,8 @@ describe('location badge renderer boundary', () => {
       root: 'x-region-block-location-badge', country: 'x-region-block-location-country',
       countryFlag: 'x-region-block-location-country-flag',
       separator: 'x-region-block-location-separator', region: 'x-region-block-location-region',
+      segmentText: 'x-region-block-location-segment-text',
+      vpnProxyText: 'x-region-block-location-vpn-proxy-text',
     });
     expect(Object.isFrozen(LOCATION_BADGE_CLASSES)).toBe(true);
   });
@@ -157,16 +159,16 @@ describe('post About Account details rendering', () => {
 
   it.each([
     ['United States', 'App Store', false,
-      'Country: | VPN/proxy detected | Connection: iOS app',
+      'Country:|VPN/proxy detected|Connection: iOS app',
       'Country: United States. VPN or proxy detected. Connection: iOS app.'],
-    ['United States', 'Web', true, 'Country: | Connection: Web',
+    ['United States', 'Web', true, 'Country:|Connection: Web',
       'Country: United States. Connection: Web.'],
-    ['North America', 'Google Play', true, 'Region: 🌐 North America | Connection: Android app',
+    ['North America', 'Google Play', true, 'Region: 🌐 North America|Connection: Android app',
       'Region: North America. Connection: Android app.'],
     ['North America', 'Android', false,
-      'Region: 🌐 North America | VPN/proxy detected | Connection: Android app',
+      'Region: 🌐 North America|VPN/proxy detected|Connection: Android app',
       'Region: North America. VPN or proxy detected. Connection: Android app.'],
-    ['Atlantis', null, null, 'Location: Unknown | Unknown connection method',
+    ['Atlantis', null, null, 'Location: Unknown|Unknown connection method',
       'Location: Unknown. Unknown connection method.'],
   ])('renders independent post segments for %s / %s / %s',
     (location, source, accurate, visible, accessible) => {
@@ -175,9 +177,11 @@ describe('post About Account details rendering', () => {
       expect(root.textContent).toBe(visible);
       expect(root.getAttribute('aria-label')).toBe(accessible);
       const separators = root.children.slice(1).map((segment) => segment.children[0]);
-      expect(separators.every((separator) => separator.textContent === ' | '
+      expect(separators.every((separator) => separator.textContent === '|'
         && separator.getAttribute('aria-hidden') === 'true')).toBe(true);
       expect(root.textContent).not.toMatch(/^\||\|$|\|\||\|\s*\|/);
+      expect(root.children.every((child, index) => index === 0 || child.children.length === 2))
+        .toBe(true);
     });
 
   it('falls back to Country: US and safely retains a bounded source title', async () => {
@@ -185,9 +189,33 @@ describe('post About Account details rendering', () => {
     const value = details('United States', 'United States App Store', false);
     const root = render(container, value);
     root.children[0].children[0].dispatchEvent({ type: 'error' });
-    expect(root.textContent).toBe('Country: US | VPN/proxy detected | Connection: iOS app');
+    expect(root.textContent).toBe('Country: US|VPN/proxy detected|Connection: iOS app');
     expect(root.getAttribute('title')).toBe('Reported account source: United States App Store');
     expect(await readFile('src/content/location-badge-renderer.js', 'utf8')).not.toContain('innerHTML');
+  });
+
+  it('applies the VPN text class only to VPN text and recreates it across transitions', () => {
+    const { container } = createContainer();
+    const root = render(container, details('United States', 'App Store', false));
+    const vpnGroup = root.children[1];
+    const vpnSeparator = vpnGroup.children[0];
+    const vpnText = vpnGroup.children[1];
+    const connectionText = root.children[2].children[1];
+    expect(vpnText.getAttribute('class')).toBe(
+      'x-region-block-location-segment-text x-region-block-location-vpn-proxy-text',
+    );
+    expect(vpnSeparator.getAttribute('class')).toBe('x-region-block-location-separator');
+    expect(connectionText.getAttribute('class')).toBe('x-region-block-location-segment-text');
+    expect(root.children[0].getAttribute('class')).not.toContain('vpn-proxy-text');
+
+    render(container, details('United States', 'Web', true));
+    expect(root.textContent).not.toContain('VPN/proxy detected');
+    expect(root.children).toHaveLength(2);
+    render(container, details('Atlantis', null, null));
+    expect(root.textContent).not.toContain('VPN/proxy detected');
+    render(container, details('North America', 'Google Play', false));
+    expect(root.children.filter((child) => child.children[1]?.getAttribute('class')
+      ?.includes('x-region-block-location-vpn-proxy-text'))).toHaveLength(1);
   });
 
   it('removes stale VPN, source, country, region, and flag children across transitions', () => {
@@ -197,7 +225,7 @@ describe('post About Account details rendering', () => {
       details('United States', 'Web', true), details('North America', 'Google Play', null),
       details('Canada', null, null), details('Canada', 'Android', false),
     ]) render(container, value);
-    expect(root.textContent).toBe('Country: | VPN/proxy detected | Connection: Android app');
+    expect(root.textContent).toBe('Country:|VPN/proxy detected|Connection: Android app');
     expect(root.textContent).not.toMatch(/iOS|Web|North America|Unknown connection/);
     expect(root.querySelectorAll('[data-x-region-block-country-code="US"]')).toHaveLength(0);
   });

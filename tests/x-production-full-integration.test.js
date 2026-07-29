@@ -213,7 +213,14 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(findLocationBadge(targets.name).textContent).not.toContain('North America');
   expect(findLocationBadge(targets.name).children).toHaveLength(3);
   expect(findLocationBadge(targets.name).textContent)
-    .toBe('Country: | VPN/proxy detected | Connection: iOS app');
+    .toBe('Country:|VPN/proxy detected|Connection: iOS app');
+  const vpnSegment = findLocationBadge(targets.name).children[1];
+  expect(vpnSegment.children[0].textContent).toBe('|');
+  expect(vpnSegment.children[0].getAttribute('class')).toBe('x-region-block-location-separator');
+  expect(vpnSegment.children[1].getAttribute('class'))
+    .toContain('x-region-block-location-vpn-proxy-text');
+  expect(findLocationBadge(targets.name).children[2].children[1].getAttribute('class'))
+    .toBe('x-region-block-location-segment-text');
   expect(findLocationBadge(targets.name).getAttribute('aria-label'))
     .toBe('Country: United States. VPN or proxy detected. Connection: iOS app.');
   expect(findLocationBadge(targets.name).textContent).not.toMatch(/Google Play|North America App Store|token/);
@@ -296,15 +303,15 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     expect(findLocationBadge(outcomeName).textContent).toContain(label);
     if (handle === 'region') {
       expect(findLocationBadge(outcomeName).textContent)
-        .toBe('Region: 🌐 North America | Connection: Android app');
+        .toBe('Region: 🌐 North America|Connection: Android app');
       expect(findLocationBadge(outcomeName).textContent).not.toContain('Location unknown');
     }
     if (handle === 'missing') expect(findLocationBadge(outcomeName).textContent)
-      .toBe('Location: Not provided | Unknown connection method');
+      .toBe('Location: Not provided|Unknown connection method');
     if (handle === 'web') expect(findLocationBadge(outcomeName).textContent)
-      .toBe('Country: | Connection: Web');
+      .toBe('Country:|Connection: Web');
     if (handle === 'noaccuracy') {
-      expect(findLocationBadge(outcomeName).textContent).toBe('Country: | Connection: iOS app');
+      expect(findLocationBadge(outcomeName).textContent).toBe('Country:|Connection: iOS app');
       expect(findLocationBadge(outcomeName).textContent).not.toContain('VPN/proxy detected');
     }
     expect(getAccountAction(outcomeTweet)).toBe(['web', 'noaccuracy'].includes(handle) ? 'hide' : 'show');

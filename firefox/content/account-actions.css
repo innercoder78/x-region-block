@@ -42,6 +42,12 @@
   white-space: nowrap;
   min-width: 0;
 }
+.x-region-block-post-location-header .x-region-block-location-separator {
+  margin-inline: 4px;
+}
+.x-region-block-post-location-header .x-region-block-location-vpn-proxy-text {
+  color: #FF0000;
+}
 .x-region-block-post-location-header .x-region-block-location-country-label { order: -1; }
 .x-region-block-post-location-header .x-region-block-location-country {
   width: auto;
