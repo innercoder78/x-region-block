@@ -29,10 +29,12 @@ function appendTimelineTarget(root, handle) {
   article.setAttribute('data-testid', 'tweet');
   const name = document.createElement('div');
   name.setAttribute('data-testid', 'User-Name');
+  const shell = document.createElement('div'); const column = document.createElement('div');
+  const row = document.createElement('div');
   const link = document.createElement('a');
   link.setAttribute('href', `/${handle}`);
-  name.appendChild(link);
-  article.appendChild(name);
+  name.appendChild(link); row.appendChild(name); column.appendChild(row); shell.appendChild(column);
+  article.appendChild(shell);
   root.appendChild(article);
   return { article, name, link };
 }

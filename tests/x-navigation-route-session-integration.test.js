@@ -76,7 +76,9 @@ it('runs real navigation, routing, brokerage, sessions, parsing, and presentatio
   const tweetLink = root.createElement('a');
   tweetLink.setAttribute('href', '/openai');
   tweetName.appendChild(tweetLink);
-  tweet.appendChild(tweetName);
+  const tweetShell = root.createElement('div'); const tweetColumn = root.createElement('div');
+  const tweetRow = root.createElement('div'); tweetRow.appendChild(tweetName); tweetColumn.appendChild(tweetRow);
+  tweetShell.appendChild(tweetColumn); tweet.appendChild(tweetShell);
   root.appendChild(tweet);
   const mutation = createFakeObserverFactory();
   const loadPayload = vi.fn(async () => ({
@@ -159,7 +161,9 @@ it('transfers one real pending broker request before retiring the old route cons
   const link = root.createElement('a');
   link.setAttribute('href', '/openai');
   name.appendChild(link);
-  tweet.appendChild(name);
+  const shell = root.createElement('div'); const column = root.createElement('div');
+  const row = root.createElement('div'); row.appendChild(name); column.appendChild(row);
+  shell.appendChild(column); tweet.appendChild(shell);
   root.appendChild(tweet);
   const lookup = deferred();
   const sharedControllers = [];
@@ -248,7 +252,9 @@ it('buffers real synchronous registration navigation until observer startup comm
   const link = root.createElement('a');
   link.setAttribute('href', '/openai');
   name.appendChild(link);
-  tweet.appendChild(name);
+  const shell = root.createElement('div'); const column = root.createElement('div');
+  const row = root.createElement('div'); row.appendChild(name); column.appendChild(row);
+  shell.appendChild(column); tweet.appendChild(shell);
   root.appendChild(tweet);
   const loadPayload = vi.fn(async () => ({
     data: { user_result_by_screen_name: { result: { about_profile: { account_based_in: 'Japan' } } } },

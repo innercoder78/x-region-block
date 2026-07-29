@@ -959,8 +959,16 @@
     const index = previous && typeof previous[Symbol.iterator] === 'function'
       ? [...previous].indexOf(container) : -1;
     const header = index > 0 ? previous[index - 1] : null;
-    return header?.getAttribute?.('data-x-region-block-location-header') === '1'
-      ? (ownedChildren(header)[0] ?? null) : null;
+    if (header?.getAttribute?.('data-x-region-block-location-header') === '1') {
+      return ownedChildren(header)[0] ?? null;
+    }
+    const row = container.parentElement;
+    const rowSiblings = row?.parentElement?.children;
+    const rowIndex = rowSiblings && typeof rowSiblings[Symbol.iterator] === 'function'
+      ? [...rowSiblings].indexOf(row) : -1;
+    const rowHeader = rowIndex > 0 ? rowSiblings[rowIndex - 1] : null;
+    return rowHeader?.getAttribute?.('data-x-region-block-location-header') === '1'
+      ? (ownedChildren(rowHeader)[0] ?? null) : null;
   }
 
   function setCommonChildAttributes(element, className, title) {
@@ -1105,40 +1113,79 @@
   const POST_LOCATION_HEADER_VALUE = '1';
 
   const isPost = (target) => target?.source === 'timeline' || target?.source === 'reply';
+  const isTweetArticle = (element) => String(element?.tagName).toLowerCase() === 'article'
+    && element?.getAttribute?.('data-testid') === 'tweet';
+  const registeredHeaders = new WeakMap();
 
-  function ownedHeaders(article) {
-    if (typeof article?.querySelectorAll !== 'function') return [];
-    return [...article.querySelectorAll(`[${POST_LOCATION_HEADER_ATTRIBUTE}="${POST_LOCATION_HEADER_VALUE}"]`)];
+  function nearestTweetArticle(element) {
+    let current = element;
+    while (current) {
+      if (isTweetArticle(current)) return current;
+      current = current.parentElement;
+    }
+    return null;
   }
 
-  /** Resolve the current local name-line host and create exactly one owned row before it. */
+  function ownedHeaders(target) {
+    if (typeof target?.accountContainer?.querySelectorAll !== 'function') return [];
+    const current = [...target.accountContainer.querySelectorAll(
+      `[${POST_LOCATION_HEADER_ATTRIBUTE}="${POST_LOCATION_HEADER_VALUE}"]`,
+    )].filter((header) => nearestTweetArticle(header) === target.accountContainer);
+    const registered = [...(registeredHeaders.get(target.accountContainer) ?? [])]
+      .filter((header) => header.getAttribute?.(POST_LOCATION_HEADER_ATTRIBUTE) === POST_LOCATION_HEADER_VALUE);
+    return [...new Set([...current, ...registered])];
+  }
+
+  /** Resolves the local author row and its main-content-column parent without mutating X DOM. */
+  function resolvePostLocationHeaderHost(target) {
+    if (!isPost(target) || !isTweetArticle(target.accountContainer)) return null;
+    const name = target.badgeContainer;
+    if (name?.getAttribute?.('data-testid') !== 'User-Name'
+      || nearestTweetArticle(name) !== target.accountContainer) return null;
+    const authorRow = name.parentElement;
+    const contentColumn = authorRow?.parentElement;
+    if (!authorRow || !contentColumn || authorRow === target.accountContainer
+      || contentColumn === target.accountContainer
+      || nearestTweetArticle(authorRow) !== target.accountContainer
+      || nearestTweetArticle(contentColumn) !== target.accountContainer
+      || typeof contentColumn.insertBefore !== 'function') return null;
+    return Object.freeze({ name, authorRow, contentColumn });
+  }
+
+  /** Creates exactly one owned block immediately before the complete local author row. */
   function reconcilePostLocationHeader(target) {
     if (!isPost(target)) return target.badgeContainer;
-    const name = target.badgeContainer;
-    const parent = name?.parentElement;
-    if (!parent || typeof parent.insertBefore !== 'function') return name;
-    const headers = ownedHeaders(target.accountContainer);
-    let header = headers.find((candidate) => candidate.parentElement === parent
-      && candidate.nextElementSibling === name) ?? null;
+    // Processor boundary tests and non-DOM consumers may supply abstract containers. Only real
+    // tweet articles participate in post-header placement; their author line never receives fallback.
+    if (!isTweetArticle(target.accountContainer)) return target.badgeContainer;
+    const host = resolvePostLocationHeaderHost(target);
+    const headers = ownedHeaders(target);
+    if (host === null) {
+      for (const header of headers) if (header.parentNode) header.parentNode.removeChild(header);
+      return null;
+    }
+    let header = headers.find((candidate) => candidate.parentElement === host.contentColumn
+      && candidate.nextElementSibling === host.authorRow) ?? null;
     for (const candidate of headers) {
       if (candidate !== header && candidate.parentNode) candidate.parentNode.removeChild(candidate);
     }
     if (header === null) {
-      header = name.ownerDocument.createElement('div');
+      header = host.name.ownerDocument.createElement('div');
       header.setAttribute(POST_LOCATION_HEADER_ATTRIBUTE, POST_LOCATION_HEADER_VALUE);
       header.setAttribute('class', 'x-region-block-post-location-header');
-      parent.insertBefore(header, name);
+      const registered = registeredHeaders.get(target.accountContainer) ?? new Set();
+      registered.add(header); registeredHeaders.set(target.accountContainer, registered);
+      host.contentColumn.insertBefore(header, host.authorRow);
     }
     return header;
   }
 
   function removePostLocationHeader(target) {
     if (!isPost(target)) return 0;
-    let removed = 0;
-    for (const header of ownedHeaders(target.accountContainer)) {
-      if (header.parentNode) { header.parentNode.removeChild(header); removed += 1; }
-    }
-    return removed;
+    const headers = ownedHeaders(target);
+    for (const header of headers) if (header.parentNode) header.parentNode.removeChild(header);
+    registeredHeaders.delete(target.accountContainer);
+    return headers.length;
   }
 
   const ACCOUNT_TARGET_DISCOVERY_VERSION = 1;
@@ -1346,16 +1393,24 @@
   }
 
   function hasPostHeader(target) {
-    const siblings = target.badgeContainer?.parentElement?.children;
+    const host = resolvePostLocationHeaderHost(target);
+    const siblings = host?.contentColumn?.children;
     const siblingList = siblings && typeof siblings[Symbol.iterator] === 'function' ? [...siblings] : [];
-    const index = siblingList.indexOf(target.badgeContainer);
+    const index = siblingList.indexOf(host?.authorRow);
     return index > 0 && siblingList[index - 1]
       ?.getAttribute?.('data-x-region-block-location-header') === '1';
   }
 
-  function equivalent(previous, current, previousParent, previousHadHeader) {
-    if (previousHadHeader && (previousParent !== current.badgeContainer?.parentElement
-      || !hasPostHeader(current))) return false;
+  function anchorChanged(previousAnchor, current) {
+    if (current.source !== 'timeline' && current.source !== 'reply') return false;
+    const host = resolvePostLocationHeaderHost(current);
+    return (previousAnchor === null) !== (host === null)
+      || (previousAnchor !== null && (previousAnchor.authorRow !== host.authorRow
+        || previousAnchor.contentColumn !== host.contentColumn));
+  }
+
+  function equivalent(previous, current, previousAnchor, previousHadHeader) {
+    if (anchorChanged(previousAnchor, current) || (previousHadHeader && !hasPostHeader(current))) return false;
     return previous.version === current.version && previous.source === current.source
       && previous.link === current.link && previous.badgeContainer === current.badgeContainer
       && previous.identity.handle === current.identity.handle
@@ -1379,7 +1434,7 @@
     let targets = EMPTY$3;
     let generation = 0;
     let scheduled = false;
-    let parentSnapshots = new WeakMap();
+    let anchorSnapshots = new WeakMap();
     let headerSnapshots = new WeakMap();
 
     const report = (error) => {
@@ -1407,7 +1462,7 @@
           added.push(discoveredTarget);
         } else {
           previousByContainer.delete(discoveredTarget.accountContainer);
-          if (equivalent(previous, discoveredTarget, parentSnapshots.get(previous),
+          if (equivalent(previous, discoveredTarget, anchorSnapshots.get(previous) ?? null,
             headerSnapshots.get(previous) === true)) current.push(previous);
           else {
             current.push(discoveredTarget);
@@ -1421,18 +1476,18 @@
       if (!initial && added.length === 0 && updated.length === 0 && removed.length === 0
         && !orderChanged) {
         for (const target of targets) {
-          parentSnapshots.set(target, target.badgeContainer?.parentElement ?? null);
+          anchorSnapshots.set(target, resolvePostLocationHeaderHost(target));
           headerSnapshots.set(target, hasPostHeader(target));
         }
         return targets;
       }
       targets = Object.freeze(current);
-      const nextParents = new WeakMap(); const nextHeaders = new WeakMap();
+      const nextAnchors = new WeakMap(); const nextHeaders = new WeakMap();
       for (const target of targets) {
-        nextParents.set(target, target.badgeContainer?.parentElement ?? null);
+        nextAnchors.set(target, resolvePostLocationHeaderHost(target));
         nextHeaders.set(target, hasPostHeader(target));
       }
-      parentSnapshots = nextParents; headerSnapshots = nextHeaders;
+      anchorSnapshots = nextAnchors; headerSnapshots = nextHeaders;
       deliver(Object.freeze({
         version: ACCOUNT_TARGET_OBSERVER_VERSION,
         reason,
@@ -1498,7 +1553,7 @@
       generation += 1;
       scheduled = false;
       targets = EMPTY$3;
-      parentSnapshots = new WeakMap(); headerSnapshots = new WeakMap();
+      anchorSnapshots = new WeakMap(); headerSnapshots = new WeakMap();
       activeRoot = null;
       observer = null;
       currentObserver.disconnect();
@@ -2279,7 +2334,9 @@
       try {
         const isPost = target.source === 'timeline' || target.source === 'reply';
         const host = isPost ? reconcilePostLocationHeader(target) : target.badgeContainer;
-        const evaluation = isPost && host !== target.badgeContainer
+        const evaluation = isPost && host === null
+          ? evaluateXAccountLink(target.link, observation, settings)
+          : isPost && host !== target.badgeContainer
           ? presentXAccountLinkInPost(target.link, host, observation, settings, normalized.resolveFlagAssetUrl)
           : presentXAccountLink(target.link, host, observation, settings, normalized.resolveFlagAssetUrl);
         if (evaluation === null) removeAction(target);
@@ -4823,6 +4880,16 @@
       }
       item = null;
     };
+    const resolveEntryBoundary = (control) => {
+      let entry = control;
+      let parent = control?.parentElement;
+      while (parent && String(parent.tagName).toLowerCase() !== 'nav') {
+        entry = parent;
+        parent = parent.parentElement;
+      }
+      if (parent && String(parent.tagName).toLowerCase() === 'nav') return { entry, container: parent };
+      return control?.parentElement ? { entry: control, container: control.parentElement } : null;
+    };
     const reconcile = () => {
       if (!active) return null;
       const existing = typeof root.querySelectorAll === 'function'
@@ -4836,8 +4903,10 @@
         anchor = root.querySelectorAll(selector)?.[0] ?? null;
         if (anchor) { placement = mode; break; }
       }
-      const parent = anchor?.parentElement;
-      if (!parent || typeof parent.insertBefore !== 'function') return item;
+      const boundary = resolveEntryBoundary(anchor);
+      const parent = boundary?.container;
+      const anchorEntry = boundary?.entry;
+      if (!parent || !anchorEntry || typeof parent.insertBefore !== 'function') return item;
       if (!item) {
         item = root.createElement('div');
         item.setAttribute(SIDEBAR_NAV_ATTRIBUTE, '1');
@@ -4858,7 +4927,7 @@
         label.textContent = 'Region Blocker'; item.appendChild(icon); item.appendChild(label);
         item.addEventListener('click', activate); item.addEventListener('keydown', activate);
       }
-      const reference = placement === 'before' ? anchor : anchor.nextSibling;
+      const reference = placement === 'before' ? anchorEntry : anchorEntry.nextSibling;
       if (item.parentNode !== parent || item.nextSibling !== reference) parent.insertBefore(item, reference);
       return item;
     };

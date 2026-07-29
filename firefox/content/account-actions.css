@@ -29,6 +29,13 @@
   min-width: 0;
 }
 .x-region-block-post-location-header .x-region-block-location-country-label { order: -1; }
+.x-region-block-post-location-header .x-region-block-location-country {
+  width: auto;
+  height: auto;
+  flex: 0 1 auto;
+  justify-content: flex-start;
+  overflow: visible;
+}
 
 .x-region-block-location-country {
   display: inline-flex;
@@ -57,11 +64,11 @@
   gap: 20px;
   min-height: 50px;
   padding: 0 12px;
-  color: rgb(244, 33, 46);
+  color: inherit;
   cursor: pointer;
   border-radius: 9999px;
 }
 
-.x-region-block-sidebar-icon { width: 26px; height: 26px; flex: 0 0 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.x-region-block-sidebar-icon { width: 26px; height: 26px; flex: 0 0 26px; color: rgb(244, 33, 46); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .x-region-block-sidebar-label { color: inherit; font-size: 20px; white-space: nowrap; }
 @media (max-width: 1299px) { .x-region-block-sidebar-label { display: none; } }

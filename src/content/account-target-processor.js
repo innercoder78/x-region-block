@@ -2,6 +2,7 @@ import { readXAccountIdentityFromLink } from './account-link-reader.js';
 import { applyAccountAction, removeAccountAction } from './account-action-renderer.js';
 import { presentXAccountLink, presentXAccountLinkInPost } from './account-presentation.js';
 import { reconcilePostLocationHeader, removePostLocationHeader } from './post-location-header.js';
+import { evaluateXAccountLink } from './account-evaluation.js';
 import { ACCOUNT_TARGET_DISCOVERY_VERSION } from './account-target-discovery.js';
 import { ACCOUNT_TARGET_OBSERVER_VERSION } from './account-target-observer.js';
 import { findLocationBadge, removeLocationBadge } from './location-badge-renderer.js';
@@ -209,7 +210,9 @@ export function createXAccountTargetProcessor(options) {
     try {
       const isPost = target.source === 'timeline' || target.source === 'reply';
       const host = isPost ? reconcilePostLocationHeader(target) : target.badgeContainer;
-      const evaluation = isPost && host !== target.badgeContainer
+      const evaluation = isPost && host === null
+        ? evaluateXAccountLink(target.link, observation, settings)
+        : isPost && host !== target.badgeContainer
         ? presentXAccountLinkInPost(target.link, host, observation, settings, normalized.resolveFlagAssetUrl)
         : presentXAccountLink(target.link, host, observation, settings, normalized.resolveFlagAssetUrl);
       if (evaluation === null) removeAction(target);

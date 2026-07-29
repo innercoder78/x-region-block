@@ -49,8 +49,16 @@ export function findLocationBadge(container) {
   const index = previous && typeof previous[Symbol.iterator] === 'function'
     ? [...previous].indexOf(container) : -1;
   const header = index > 0 ? previous[index - 1] : null;
-  return header?.getAttribute?.('data-x-region-block-location-header') === '1'
-    ? (ownedChildren(header)[0] ?? null) : null;
+  if (header?.getAttribute?.('data-x-region-block-location-header') === '1') {
+    return ownedChildren(header)[0] ?? null;
+  }
+  const row = container.parentElement;
+  const rowSiblings = row?.parentElement?.children;
+  const rowIndex = rowSiblings && typeof rowSiblings[Symbol.iterator] === 'function'
+    ? [...rowSiblings].indexOf(row) : -1;
+  const rowHeader = rowIndex > 0 ? rowSiblings[rowIndex - 1] : null;
+  return rowHeader?.getAttribute?.('data-x-region-block-location-header') === '1'
+    ? (ownedChildren(rowHeader)[0] ?? null) : null;
 }
 
 function setCommonChildAttributes(element, className, title) {

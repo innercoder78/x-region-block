@@ -30,6 +30,16 @@ export function createXSidebarNavigation(root, options) {
     }
     item = null;
   };
+  const resolveEntryBoundary = (control) => {
+    let entry = control;
+    let parent = control?.parentElement;
+    while (parent && String(parent.tagName).toLowerCase() !== 'nav') {
+      entry = parent;
+      parent = parent.parentElement;
+    }
+    if (parent && String(parent.tagName).toLowerCase() === 'nav') return { entry, container: parent };
+    return control?.parentElement ? { entry: control, container: control.parentElement } : null;
+  };
   const reconcile = () => {
     if (!active) return null;
     const existing = typeof root.querySelectorAll === 'function'
@@ -43,8 +53,10 @@ export function createXSidebarNavigation(root, options) {
       anchor = root.querySelectorAll(selector)?.[0] ?? null;
       if (anchor) { placement = mode; break; }
     }
-    const parent = anchor?.parentElement;
-    if (!parent || typeof parent.insertBefore !== 'function') return item;
+    const boundary = resolveEntryBoundary(anchor);
+    const parent = boundary?.container;
+    const anchorEntry = boundary?.entry;
+    if (!parent || !anchorEntry || typeof parent.insertBefore !== 'function') return item;
     if (!item) {
       item = root.createElement('div');
       item.setAttribute(SIDEBAR_NAV_ATTRIBUTE, '1');
@@ -65,7 +77,7 @@ export function createXSidebarNavigation(root, options) {
       label.textContent = 'Region Blocker'; item.appendChild(icon); item.appendChild(label);
       item.addEventListener('click', activate); item.addEventListener('keydown', activate);
     }
-    const reference = placement === 'before' ? anchor : anchor.nextSibling;
+    const reference = placement === 'before' ? anchorEntry : anchorEntry.nextSibling;
     if (item.parentNode !== parent || item.nextSibling !== reference) parent.insertBefore(item, reference);
     return item;
   };
