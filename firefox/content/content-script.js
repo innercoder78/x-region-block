@@ -920,6 +920,8 @@
     countryFlag: 'x-region-block-location-country-flag',
     separator: 'x-region-block-location-separator',
     region: 'x-region-block-location-region',
+    segmentText: 'x-region-block-location-segment-text',
+    vpnProxyText: 'x-region-block-location-vpn-proxy-text',
   });
   const SEGMENT_CLASS = 'x-region-block-location-segment';
   const CONNECTION_CLASS = 'x-region-block-location-connection';
@@ -1093,8 +1095,11 @@
         const separator = container.ownerDocument.createElement('span');
         separator.setAttribute('class', LOCATION_BADGE_CLASSES.separator);
         separator.setAttribute('aria-hidden', 'true');
-        separator.textContent = ' | ';
+        separator.textContent = '|';
         const text = container.ownerDocument.createElement('span');
+        text.setAttribute('class', segment.className === VPN_PROXY_CLASS
+          ? `${LOCATION_BADGE_CLASSES.segmentText} ${LOCATION_BADGE_CLASSES.vpnProxyText}`
+          : LOCATION_BADGE_CLASSES.segmentText);
         text.textContent = segment.text;
         group.appendChild(separator); group.appendChild(text); root.appendChild(group);
       }
