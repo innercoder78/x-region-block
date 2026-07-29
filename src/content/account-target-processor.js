@@ -1,6 +1,7 @@
 import { readXAccountIdentityFromLink } from './account-link-reader.js';
 import { applyAccountAction, removeAccountAction } from './account-action-renderer.js';
-import { presentXAccountLink } from './account-presentation.js';
+import { presentXAccountLink, presentXAccountLinkInPost } from './account-presentation.js';
+import { reconcilePostLocationHeader, removePostLocationHeader } from './post-location-header.js';
 import { ACCOUNT_TARGET_DISCOVERY_VERSION } from './account-target-discovery.js';
 import { ACCOUNT_TARGET_OBSERVER_VERSION } from './account-target-observer.js';
 import { findLocationBadge, removeLocationBadge } from './location-badge-renderer.js';
@@ -185,7 +186,10 @@ export function createXAccountTargetProcessor(options) {
   const readerOptions = () => (normalized.hasBaseUrl
     ? { source: normalized.source, baseUrl: normalized.baseUrl }
     : { source: normalized.source });
-  const removeBadge = (target) => removeLocationBadge(target.badgeContainer);
+  const removeBadge = (target) => {
+    const removed = removePostLocationHeader(target);
+    return removed + removeLocationBadge(target.badgeContainer);
+  };
   const removeAction = (target) => removeAccountAction(target.accountContainer);
 
   const present = (target, location) => {
@@ -203,8 +207,11 @@ export function createXAccountTargetProcessor(options) {
       ? { source: normalized.source, location, baseUrl: normalized.baseUrl }
       : { source: normalized.source, location };
     try {
-      const evaluation = presentXAccountLink(target.link, target.badgeContainer, observation, settings,
-        normalized.resolveFlagAssetUrl);
+      const isPost = target.source === 'timeline' || target.source === 'reply';
+      const host = isPost ? reconcilePostLocationHeader(target) : target.badgeContainer;
+      const evaluation = isPost && host !== target.badgeContainer
+        ? presentXAccountLinkInPost(target.link, host, observation, settings, normalized.resolveFlagAssetUrl)
+        : presentXAccountLink(target.link, host, observation, settings, normalized.resolveFlagAssetUrl);
       if (evaluation === null) removeAction(target);
       else applyAccountAction(target.accountContainer, evaluation.action);
     } catch {

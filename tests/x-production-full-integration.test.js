@@ -223,9 +223,9 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(getAccountAction(dynamicTweet)).toBe('show');
 
   for (const [handle, label] of [
-    ['missing', 'Location not provided'],
-    ['unavailable', 'Location unavailable'],
-    ['malformed', 'Location unavailable'], ['region', 'North America'],
+    ['missing', 'Location: Not provided'],
+    ['unavailable', 'Location: Unavailable'],
+    ['malformed', 'Location: Unavailable'], ['region', 'North America'],
   ]) {
     const outcomeTweet = document.createElement('article');
     outcomeTweet.setAttribute('data-testid', 'tweet');
@@ -238,7 +238,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     await settle();
     expect(findLocationBadge(outcomeName).textContent).toContain(label);
     if (handle === 'region') {
-      expect(findLocationBadge(outcomeName).textContent).toBe('🌐 North America');
+      expect(findLocationBadge(outcomeName).textContent).toBe('Region: 🌐 North America');
       expect(findLocationBadge(outcomeName).textContent).not.toContain('Location unknown');
     }
     expect(getAccountAction(outcomeTweet)).toBe('show');

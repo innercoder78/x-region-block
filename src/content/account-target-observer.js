@@ -41,7 +41,17 @@ function normalizeOptions(options) {
   };
 }
 
-function equivalent(previous, current) {
+function hasPostHeader(target) {
+  const siblings = target.badgeContainer?.parentElement?.children;
+  const siblingList = siblings && typeof siblings[Symbol.iterator] === 'function' ? [...siblings] : [];
+  const index = siblingList.indexOf(target.badgeContainer);
+  return index > 0 && siblingList[index - 1]
+    ?.getAttribute?.('data-x-region-block-location-header') === '1';
+}
+
+function equivalent(previous, current, previousParent, previousHadHeader) {
+  if (previousHadHeader && (previousParent !== current.badgeContainer?.parentElement
+    || !hasPostHeader(current))) return false;
   return previous.version === current.version && previous.source === current.source
     && previous.link === current.link && previous.badgeContainer === current.badgeContainer
     && previous.identity.handle === current.identity.handle
@@ -65,6 +75,8 @@ export function createXAccountTargetObserver(root, options) {
   let targets = EMPTY;
   let generation = 0;
   let scheduled = false;
+  let parentSnapshots = new WeakMap();
+  let headerSnapshots = new WeakMap();
 
   const report = (error) => {
     try { normalized.onError(error); } catch { /* The error boundary is intentionally silent. */ }
@@ -91,7 +103,8 @@ export function createXAccountTargetObserver(root, options) {
         added.push(discoveredTarget);
       } else {
         previousByContainer.delete(discoveredTarget.accountContainer);
-        if (equivalent(previous, discoveredTarget)) current.push(previous);
+        if (equivalent(previous, discoveredTarget, parentSnapshots.get(previous),
+          headerSnapshots.get(previous) === true)) current.push(previous);
         else {
           current.push(discoveredTarget);
           updated.push(Object.freeze({ previous, current: discoveredTarget }));
@@ -102,8 +115,20 @@ export function createXAccountTargetObserver(root, options) {
     const orderChanged = current.length !== targets.length
       || current.some((target, index) => target !== targets[index]);
     if (!initial && added.length === 0 && updated.length === 0 && removed.length === 0
-      && !orderChanged) return targets;
+      && !orderChanged) {
+      for (const target of targets) {
+        parentSnapshots.set(target, target.badgeContainer?.parentElement ?? null);
+        headerSnapshots.set(target, hasPostHeader(target));
+      }
+      return targets;
+    }
     targets = Object.freeze(current);
+    const nextParents = new WeakMap(); const nextHeaders = new WeakMap();
+    for (const target of targets) {
+      nextParents.set(target, target.badgeContainer?.parentElement ?? null);
+      nextHeaders.set(target, hasPostHeader(target));
+    }
+    parentSnapshots = nextParents; headerSnapshots = nextHeaders;
     deliver(Object.freeze({
       version: ACCOUNT_TARGET_OBSERVER_VERSION,
       reason,
@@ -169,6 +194,7 @@ export function createXAccountTargetObserver(root, options) {
     generation += 1;
     scheduled = false;
     targets = EMPTY;
+    parentSnapshots = new WeakMap(); headerSnapshots = new WeakMap();
     activeRoot = null;
     observer = null;
     currentObserver.disconnect();

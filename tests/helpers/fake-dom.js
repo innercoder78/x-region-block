@@ -21,9 +21,10 @@ export class FakeElement {
         return element.tagName === 'A' && element.hasAttribute('href');
       }
       const match = /^(article)?\[data-testid="([^"]+)"\]$/.exec(fixedSelector);
-      return match !== null
-        && (!match[1] || element.tagName === match[1].toUpperCase())
+      if (match !== null) return (!match[1] || element.tagName === match[1].toUpperCase())
         && element.getAttribute('data-testid') === match[2];
+      const attribute = /^\[([^=]+)="([^"]+)"\]$/.exec(fixedSelector);
+      return attribute !== null && element.getAttribute(attribute[1]) === attribute[2];
     };
     const visit = (element) => {
       for (const child of element.children) {
@@ -55,6 +56,17 @@ export class FakeElement {
     return child;
   }
 
+  insertBefore(child, reference) {
+    if (child.parentNode !== null) child.parentNode.removeChild(child);
+    const index = reference === null || reference === undefined
+      ? this.children.length : this.children.indexOf(reference);
+    if (index < 0) throw new Error('Not a child');
+    this.children.splice(index, 0, child); child.parentNode = this; return child;
+  }
+
+  get nextSibling() { const siblings = this.parentNode?.children; const index = siblings?.indexOf(this) ?? -1; return index < 0 ? null : (siblings[index + 1] ?? null); }
+  get nextElementSibling() { return this.nextSibling; }
+
   removeChild(child) {
     const index = this.children.indexOf(child);
     if (index < 0) throw new Error('Not a child');
@@ -83,6 +95,8 @@ export class FakeElement {
     this.listeners.set(type, { listener, once: options?.once === true });
   }
 
+  removeEventListener(type, listener) { if (this.listeners.get(type)?.listener === listener) this.listeners.delete(type); }
+
   dispatchEvent(event) {
     const record = this.listeners.get(event.type);
     if (record === undefined) return true;
@@ -104,6 +118,8 @@ export class FakeDocument {
     this.created.push(element);
     return element;
   }
+
+  createElementNS(namespace, tagName) { return this.createElement(tagName); }
 
   appendChild(child) {
     this.children.push(child);

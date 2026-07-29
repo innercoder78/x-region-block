@@ -43,7 +43,14 @@ function ownedChildren(container) {
 
 export function findLocationBadge(container) {
   validateContainer(container);
-  return ownedChildren(container)[0] ?? null;
+  const direct = ownedChildren(container)[0] ?? null;
+  if (direct !== null) return direct;
+  const previous = container.parentElement?.children;
+  const index = previous && typeof previous[Symbol.iterator] === 'function'
+    ? [...previous].indexOf(container) : -1;
+  const header = index > 0 ? previous[index - 1] : null;
+  return header?.getAttribute?.('data-x-region-block-location-header') === '1'
+    ? (ownedChildren(header)[0] ?? null) : null;
 }
 
 function setCommonChildAttributes(element, className, title) {
@@ -52,15 +59,17 @@ function setCommonChildAttributes(element, className, title) {
   if (title !== null) element.setAttribute('title', title);
 }
 
-function createRegionElement(ownerDocument, region) {
+function createRegionElement(ownerDocument, region, postHeader) {
   const element = ownerDocument.createElement('span');
   setCommonChildAttributes(element, LOCATION_BADGE_CLASSES.region, region.title);
   if (region.code !== null) element.setAttribute(REGION_CODE_ATTRIBUTE, region.code);
-  element.textContent = `${region.symbol} ${region.label}`;
+  element.textContent = postHeader
+    ? (region.code === null ? region.label : `Region: ${region.symbol} ${region.label}`)
+    : `${region.symbol} ${region.label}`;
   return element;
 }
 
-function createCountryElement(ownerDocument, country, resolveFlagAssetUrl) {
+function createCountryElement(ownerDocument, country, resolveFlagAssetUrl, postHeader) {
   const wrapper = ownerDocument.createElement('span');
   setCommonChildAttributes(wrapper, LOCATION_BADGE_CLASSES.country, country.title);
   wrapper.setAttribute(COUNTRY_CODE_ATTRIBUTE, country.code);
@@ -68,7 +77,7 @@ function createCountryElement(ownerDocument, country, resolveFlagAssetUrl) {
   const fallback = () => {
     if (failed) return;
     failed = true;
-    wrapper.textContent = country.code;
+    wrapper.textContent = postHeader ? `Country: ${country.code}` : country.code;
   };
   try {
     if (typeof resolveFlagAssetUrl !== 'function') throw new TypeError();
@@ -86,14 +95,23 @@ function createCountryElement(ownerDocument, country, resolveFlagAssetUrl) {
     image.setAttribute('tabindex', '-1');
     image.setAttribute('contenteditable', 'false');
     image.addEventListener('error', fallback, { once: true });
-    wrapper.appendChild(image);
+    if (postHeader) {
+      const label = ownerDocument.createElement('span');
+      label.setAttribute('class', 'x-region-block-location-country-label');
+      label.textContent = 'Country:';
+      wrapper.appendChild(image);
+      wrapper.appendChild(label);
+    } else {
+      wrapper.appendChild(image);
+    }
   } catch { fallback(); }
   return wrapper;
 }
 
-export function renderLocationBadge(container, location, resolveFlagAssetUrl) {
+export function renderLocationBadge(container, location, resolveFlagAssetUrl, options = undefined) {
   validateContainer(container);
   const display = createLocationDisplayModel(location);
+  const postHeader = options?.postHeader === true;
   const existing = ownedChildren(container);
   let root = existing[0] ?? null;
 
@@ -122,15 +140,22 @@ export function renderLocationBadge(container, location, resolveFlagAssetUrl) {
   root.removeAttribute('contenteditable');
 
   if (display.country !== null) {
-    const country = createCountryElement(container.ownerDocument, display.country, resolveFlagAssetUrl);
+    const country = createCountryElement(container.ownerDocument, display.country, resolveFlagAssetUrl, postHeader);
 
     root.setAttribute('aria-label', display.country.ariaLabel);
     root.setAttribute('title', display.country.title);
     root.appendChild(country);
   } else {
-    root.setAttribute('aria-label', display.region.ariaLabel);
-    root.setAttribute('title', display.region.title);
-    root.appendChild(createRegionElement(container.ownerDocument, display.region));
+    const statusLabels = { hidden: 'Location: Hidden', missing: 'Location: Not provided',
+      unavailable: 'Location: Unavailable', unknown: 'Location: Unknown' };
+    const semanticLabel = postHeader && statusLabels[display.status]
+      ? statusLabels[display.status] : display.region.ariaLabel;
+    root.setAttribute('aria-label', semanticLabel);
+    root.setAttribute('title', postHeader ? semanticLabel : display.region.title);
+    const region = postHeader && display.region.code === null
+      ? { ...display.region, label: semanticLabel, title: semanticLabel }
+      : display.region;
+    root.appendChild(createRegionElement(container.ownerDocument, region, postHeader));
   }
   return root;
 }
