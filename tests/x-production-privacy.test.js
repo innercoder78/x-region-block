@@ -29,9 +29,11 @@ describe('production source privacy boundaries', () => {
       } else expect(source, term).not.toContain(term);
     }
     const runtime = sources.find(([file]) => file === 'src/content/x-production-runtime.js')[1];
-    expect(runtime.match(/\bsetTimeout/g)).toHaveLength(9);
+    expect(runtime.match(/\bsetTimeout/g)).toHaveLength(12);
     expect(runtime).toContain('dependencies.setTimeout(() =>');
     expect(runtime).toContain('metadataScheduleTimer');
+    expect(runtime).toContain('recoverableRetryTimer');
+    expect(runtime).toContain('transientRecoveryTimer');
     expect(runtime).toContain('clearTimeout');
   });
 

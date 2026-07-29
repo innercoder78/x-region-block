@@ -389,4 +389,64 @@ describe('global About Account page scheduler', () => {
       event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).at(-1).event.detail).handle).toBe('queued');
     queuedController.abort(); await expect(queued).rejects.toMatchObject({ name: 'AbortError' }); transport.stop();
   });
+
+  it('rearms an early cooldown timer and completes an extended cooldown exactly once', async () => {
+    let time = 0; const timers = [];
+    const setTimeout = (callback, delay) => {
+      const timer = { callback, delay, cleared: false }; timers.push(timer); return timer;
+    };
+    const clearTimeout = (timer) => { timer.cleared = true; };
+    const document = new Document(); const completed = vi.fn();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event }, {
+      recoveryState: recovery(), now: () => time, setTimeout, clearTimeout,
+      onCooldownComplete: completed,
+    });
+    const controller = new AbortController();
+    const promise = transport.loadPayload(identity('early'), context(controller.signal)); void promise.catch(() => {});
+    const request = parseAboutAccountRequestDetail(document.events[0].event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: request.id, ok: false, code: 'HTTP_429', status: 429, retryAfterMs: 120_000,
+    }) }));
+    let cooldown = timers.findLast((timer) => !timer.cleared && timer.delay === 120_000);
+    time = 30_000; cooldown.callback();
+    expect(completed).not.toHaveBeenCalled();
+    cooldown = timers.findLast((timer) => !timer.cleared && timer.delay === 90_000);
+    expect(cooldown).toBeDefined();
+    time = 120_000; cooldown.callback();
+    expect(completed).toHaveBeenCalledOnce();
+    controller.abort(); await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    transport.stop();
+    for (const timer of timers.filter((candidate) => !candidate.cleared)) timer.callback();
+    expect(completed).toHaveBeenCalledOnce();
+  });
+
+  it('reports only terminal transport exhaustion and real X successes', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    const document = new Document(); const terminal = vi.fn(); const successful = vi.fn();
+    const transport = createXAboutAccountPageTransport({ document, CustomEvent: Event }, {
+      recoveryState: recovery(), onTerminalFailure: terminal, onSuccessfulResponse: successful,
+    });
+    const controller = new AbortController();
+    const promise = transport.loadPayload(identity('network'), context(controller.signal)); void promise.catch(() => {});
+    for (const delay of [1_000, 2_000, 0]) {
+      const start = document.events.filter(({ event }) => event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).at(-1);
+      const request = parseAboutAccountRequestDetail(start.event.detail);
+      document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+        id: request.id, ok: false, code: 'NETWORK', status: null, retryAfterMs: null,
+      }) }));
+      if (delay) await vi.advanceTimersByTimeAsync(delay);
+    }
+    await expect(promise).rejects.toMatchObject({ code: 'NETWORK' });
+    expect(terminal).toHaveBeenCalledOnce(); expect(successful).not.toHaveBeenCalled();
+    const successController = new AbortController();
+    const success = transport.loadPayload(identity('success'), context(successController.signal));
+    await vi.advanceTimersByTimeAsync(750);
+    const request = parseAboutAccountRequestDetail(document.events.filter(({ event }) =>
+      event.type === X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE).at(-1).event.detail);
+    document.dispatchEvent(new Event(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, { detail: serializeAboutAccountResponse({
+      id: request.id, ok: true, payload: { ok: true },
+    }) }));
+    await expect(success).resolves.toEqual({ ok: true }); expect(successful).toHaveBeenCalledOnce();
+    transport.stop();
+  });
 });

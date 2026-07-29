@@ -102,8 +102,8 @@ export function createXAboutAccountCacheRepository(options) {
     if (compact === null) throw new TypeError('Invalid About Account cache payload');
     await initialize(); if (!active) return compact;
     const timestamp = now();
-    const known = typeof compact.accountBasedIn === 'string'
-      && compact.accountBasedIn.trim() !== '' && compact.accountBasedIn.trim().toLowerCase() !== 'unknown';
+    const details = parseXAboutAccountDetailsPayload(compact);
+    const known = details.location.status === 'known';
     entries.delete(key); entries.set(key, { payload: compact, createdAt: timestamp,
       expiresAt: timestamp + (known ? KNOWN_TTL : UNKNOWN_TTL), lastAccessAt: timestamp });
     while (entries.size > maximum) entries.delete(entries.keys().next().value);

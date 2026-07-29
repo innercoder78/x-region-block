@@ -180,6 +180,12 @@ export function createXProductionContentRuntime(globalScope) {
     if (state.metadataScheduleTimer !== null) {
       dependencies.clearTimeout(state.metadataScheduleTimer); state.metadataScheduleTimer = null;
     }
+    if (state.recoverableRetryTimer !== null) {
+      dependencies.clearTimeout(state.recoverableRetryTimer); state.recoverableRetryTimer = null;
+    }
+    if (state.transientRecoveryTimer !== null) {
+      dependencies.clearTimeout(state.transientRecoveryTimer); state.transientRecoveryTimer = null;
+    }
     state.prerequisitesReady = false;
   };
   const rejectStartup = (state) => {
@@ -208,6 +214,15 @@ export function createXProductionContentRuntime(globalScope) {
     try {
       const recoveryState = typeof state.bridge.getRecoveryState === 'function'
         ? state.bridge.getRecoveryState() : undefined;
+      state.acceptedRecoveryGeneration = recoveryState?.generation ?? 0;
+      state.acceptedRecoveryRevision = recoveryState?.revision ?? 0;
+      const retryRecoverableSoon = () => {
+        if (!owned(state) || state.recoverableRetryTimer !== null) return;
+        state.recoverableRetryTimer = dependencies.setTimeout(() => {
+          state.recoverableRetryTimer = null;
+          if (owned(state) && state.routeController === candidate) candidate.retryRecoverable();
+        }, 0);
+      };
       const transport = createXAboutAccountPageTransport({
         document: dependencies.document, CustomEvent: dependencies.CustomEvent,
       }, {
@@ -216,6 +231,22 @@ export function createXProductionContentRuntime(globalScope) {
           state.bridge.invalidateRecovery?.(kind, revision, rejectedValue),
         onCooldownComplete: () => {
           if (owned(state) && state.routeController === candidate) candidate.retryRecoverable();
+        },
+        onTerminalFailure: () => {
+          if (!owned(state) || state.nonRateRecoveryUsed || state.transientRecoveryTimer !== null) return;
+          state.nonRateRecoveryUsed = true;
+          state.transientRecoveryTimer = dependencies.setTimeout(() => {
+            state.transientRecoveryTimer = null;
+            if (owned(state) && state.routeController === candidate) candidate.retryRecoverable();
+          }, 60_000);
+        },
+        onSuccessfulResponse: () => {
+          if (!owned(state)) return;
+          state.nonRateRecoveryUsed = false;
+          if (state.transientRecoveryTimer !== null) {
+            dependencies.clearTimeout(state.transientRecoveryTimer); state.transientRecoveryTimer = null;
+          }
+          retryRecoverableSoon();
         },
       });
       if (!owned(state)) throw new Error();
@@ -278,6 +309,8 @@ export function createXProductionContentRuntime(globalScope) {
       metadataListener: null, metadataMayBeAdded: false,
       metadataCheckPending: false, pagehideListener: null, pagehideMayBeAdded: false,
       metadataScheduleTimer: null,
+      recoverableRetryTimer: null, transientRecoveryTimer: null, nonRateRecoveryUsed: false,
+      acceptedRecoveryGeneration: 0, acceptedRecoveryRevision: 0,
       prerequisitesReady: false, routeStarting: false,
     };
     state.promise = new dependencies.Promise((resolve, reject) => {
@@ -293,7 +326,26 @@ export function createXProductionContentRuntime(globalScope) {
       if (!owned(state)) return;
       const recoveryState = state.bridge && typeof state.bridge.getRecoveryState === 'function'
         ? state.bridge.getRecoveryState() : null;
-      if (recoveryState !== null) state.transport?.updateRecoveryState(recoveryState);
+      if (recoveryState !== null && state.transport !== null) {
+        const newer = recoveryState.generation > state.acceptedRecoveryGeneration
+          || (recoveryState.generation === state.acceptedRecoveryGeneration
+            && recoveryState.revision > state.acceptedRecoveryRevision);
+        const accepted = state.transport.updateRecoveryState(recoveryState);
+        if (accepted && newer) {
+          state.acceptedRecoveryGeneration = recoveryState.generation;
+          state.acceptedRecoveryRevision = recoveryState.revision;
+          state.nonRateRecoveryUsed = false;
+          if (state.transientRecoveryTimer !== null) {
+            dependencies.clearTimeout(state.transientRecoveryTimer); state.transientRecoveryTimer = null;
+          }
+          if (ready && state.recoverableRetryTimer === null) {
+            state.recoverableRetryTimer = dependencies.setTimeout(() => {
+              state.recoverableRetryTimer = null;
+              if (owned(state)) state.routeController?.retryRecoverable();
+            }, 0);
+          }
+        }
+      }
       if (state.metadataScheduleTimer === null) state.metadataScheduleTimer = dependencies.setTimeout(() => {
         state.metadataScheduleTimer = null;
         if (owned(state) && !ready) startRoute(state);

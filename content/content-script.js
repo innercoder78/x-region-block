@@ -4491,6 +4491,8 @@
     const clearTimer = options.clearTimeout ?? ((timer) => clearTimeout(timer));
     const onMetadataRejected = options.onMetadataRejected ?? (() => {});
     const onCooldownComplete = options.onCooldownComplete ?? (() => {});
+    const onSuccessfulResponse = options.onSuccessfulResponse ?? (() => {});
+    const onTerminalFailure = options.onTerminalFailure ?? (() => {});
     let sequence = 0; let active = true; let inFlight = 0; let lastStart = -Infinity;
     let cooldownUntil = 0; let scheduleTimer = null; let resumeTimer = null; let cooldownTimer = null;
     let consecutiveRateLimits = 0;
@@ -4503,6 +4505,21 @@
     const dispatchCancellation = (id) => {
       try { dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(id)); }
       catch { /* Cancellation cleanup never depends on page event delivery. */ }
+    };
+    const reportTerminalFailure = (code) => {
+      if (!['NETWORK', 'HTTP_5XX', 'BRIDGE_TIMEOUT', 'PAGE_BRIDGE_UNAVAILABLE'].includes(code)) return;
+      try { onTerminalFailure(code); } catch { /* lifecycle owner reports failures */ }
+    };
+    const armCooldownTimer = () => {
+      if (!active) return;
+      if (cooldownTimer !== null) clearTimer(cooldownTimer);
+      cooldownTimer = setTimer(() => {
+        cooldownTimer = null;
+        if (!active) return;
+        if (now() < cooldownUntil) { armCooldownTimer(); schedule(); return; }
+        try { onCooldownComplete(); } catch { /* lifecycle owner reports failures */ }
+        schedule();
+      }, Math.max(0, cooldownUntil - now()));
     };
     const schedule = () => {
       if (!active || scheduleTimer !== null || blockedMetadata.auth.size > 0
@@ -4520,19 +4537,22 @@
       entry.attemptQuery = recoveryState?.queryId ?? null;
       if (entry.attemptRevision === null) {
         entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
+        reportTerminalFailure('PAGE_BRIDGE_UNAVAILABLE');
         entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
       }
       try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
         serializeAboutAccountRequest(entry.id, entry.handle, entry.attemptRevision)); }
       catch {
         entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
+        reportTerminalFailure('PAGE_BRIDGE_UNAVAILABLE');
         entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
       }
       entry.attemptTimer = setTimer(() => {
         if (!active || !entry.started || pending.get(entry.id) !== entry) return;
         entry.attemptTimer = null; entry.started = false; inFlight = Math.max(0, inFlight - 1);
         dispatchCancellation(entry.id);
-        pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('BRIDGE_TIMEOUT'));
+        pending.delete(entry.id); entry.cleanup(); reportTerminalFailure('BRIDGE_TIMEOUT');
+        entry.reject(codedError('BRIDGE_TIMEOUT'));
         schedule();
       }, BRIDGE_TIMEOUT);
       schedule();
@@ -4561,7 +4581,11 @@
       if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
       entry.started = false; inFlight = Math.max(0, inFlight - 1);
       if (entry.cancelled) { schedule(); return; }
-      if (result.ok) { consecutiveRateLimits = 0; pending.delete(entry.id); entry.cleanup(); entry.resolve(result.payload); schedule(); return; }
+      if (result.ok) {
+        consecutiveRateLimits = 0; pending.delete(entry.id); entry.cleanup();
+        try { onSuccessfulResponse(); } catch { /* lifecycle owner reports failures */ }
+        entry.resolve(result.payload); schedule(); return;
+      }
       const rejectionCode = ['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(result.code);
       const code = rejectionCode && result.metadataRevision !== entry.attemptRevision
         ? 'METADATA_SYNC' : result.code;
@@ -4585,13 +4609,7 @@
         const supplied = Number.isFinite(result.retryAfterMs) && result.retryAfterMs > 0
           ? Math.min(MAX_COOLDOWN, result.retryAfterMs) : 0;
         cooldownUntil = Math.max(cooldownUntil, now() + Math.max(60_000, supplied || fallback));
-        if (cooldownTimer !== null) clearTimer(cooldownTimer);
-        cooldownTimer = setTimer(() => {
-          cooldownTimer = null;
-          if (!active || now() < cooldownUntil) { schedule(); return; }
-          try { onCooldownComplete(); } catch { /* lifecycle owner reports failures */ }
-          schedule();
-        }, Math.max(0, cooldownUntil - now()));
+        armCooldownTimer();
         if (entry.rateRetries++ < 1) retryDelay = 0;
       } else if ((code === 'NETWORK' || code === 'HTTP_5XX') && entry.transientRetries < 2) {
         retryDelay = 1000 * (2 ** entry.transientRetries); entry.transientRetries += 1;
@@ -4621,6 +4639,7 @@
         }, retryDelay);
       } else {
         pending.delete(entry.id); entry.cleanup();
+        reportTerminalFailure(code);
         entry.reject(code === 'ABORTED' ? abortError() : codedError(code, result.status));
       }
       schedule();
@@ -5263,8 +5282,8 @@
       if (compact === null) throw new TypeError('Invalid About Account cache payload');
       await initialize(); if (!active) return compact;
       const timestamp = now();
-      const known = typeof compact.accountBasedIn === 'string'
-        && compact.accountBasedIn.trim() !== '' && compact.accountBasedIn.trim().toLowerCase() !== 'unknown';
+      const details = parseXAboutAccountDetailsPayload(compact);
+      const known = details.location.status === 'known';
       entries.delete(key); entries.set(key, { payload: compact, createdAt: timestamp,
         expiresAt: timestamp + (known ? KNOWN_TTL : UNKNOWN_TTL), lastAccessAt: timestamp });
       while (entries.size > maximum) entries.delete(entries.keys().next().value);
@@ -5447,6 +5466,12 @@
       if (state.metadataScheduleTimer !== null) {
         dependencies.clearTimeout(state.metadataScheduleTimer); state.metadataScheduleTimer = null;
       }
+      if (state.recoverableRetryTimer !== null) {
+        dependencies.clearTimeout(state.recoverableRetryTimer); state.recoverableRetryTimer = null;
+      }
+      if (state.transientRecoveryTimer !== null) {
+        dependencies.clearTimeout(state.transientRecoveryTimer); state.transientRecoveryTimer = null;
+      }
       state.prerequisitesReady = false;
     };
     const rejectStartup = (state) => {
@@ -5475,6 +5500,15 @@
       try {
         const recoveryState = typeof state.bridge.getRecoveryState === 'function'
           ? state.bridge.getRecoveryState() : undefined;
+        state.acceptedRecoveryGeneration = recoveryState?.generation ?? 0;
+        state.acceptedRecoveryRevision = recoveryState?.revision ?? 0;
+        const retryRecoverableSoon = () => {
+          if (!owned(state) || state.recoverableRetryTimer !== null) return;
+          state.recoverableRetryTimer = dependencies.setTimeout(() => {
+            state.recoverableRetryTimer = null;
+            if (owned(state) && state.routeController === candidate) candidate.retryRecoverable();
+          }, 0);
+        };
         const transport = createXAboutAccountPageTransport({
           document: dependencies.document, CustomEvent: dependencies.CustomEvent,
         }, {
@@ -5483,6 +5517,22 @@
             state.bridge.invalidateRecovery?.(kind, revision, rejectedValue),
           onCooldownComplete: () => {
             if (owned(state) && state.routeController === candidate) candidate.retryRecoverable();
+          },
+          onTerminalFailure: () => {
+            if (!owned(state) || state.nonRateRecoveryUsed || state.transientRecoveryTimer !== null) return;
+            state.nonRateRecoveryUsed = true;
+            state.transientRecoveryTimer = dependencies.setTimeout(() => {
+              state.transientRecoveryTimer = null;
+              if (owned(state) && state.routeController === candidate) candidate.retryRecoverable();
+            }, 60_000);
+          },
+          onSuccessfulResponse: () => {
+            if (!owned(state)) return;
+            state.nonRateRecoveryUsed = false;
+            if (state.transientRecoveryTimer !== null) {
+              dependencies.clearTimeout(state.transientRecoveryTimer); state.transientRecoveryTimer = null;
+            }
+            retryRecoverableSoon();
           },
         });
         if (!owned(state)) throw new Error();
@@ -5545,6 +5595,8 @@
         metadataListener: null, metadataMayBeAdded: false,
         metadataCheckPending: false, pagehideListener: null, pagehideMayBeAdded: false,
         metadataScheduleTimer: null,
+        recoverableRetryTimer: null, transientRecoveryTimer: null, nonRateRecoveryUsed: false,
+        acceptedRecoveryGeneration: 0, acceptedRecoveryRevision: 0,
         prerequisitesReady: false, routeStarting: false,
       };
       state.promise = new dependencies.Promise((resolve, reject) => {
@@ -5560,7 +5612,26 @@
         if (!owned(state)) return;
         const recoveryState = state.bridge && typeof state.bridge.getRecoveryState === 'function'
           ? state.bridge.getRecoveryState() : null;
-        if (recoveryState !== null) state.transport?.updateRecoveryState(recoveryState);
+        if (recoveryState !== null && state.transport !== null) {
+          const newer = recoveryState.generation > state.acceptedRecoveryGeneration
+            || (recoveryState.generation === state.acceptedRecoveryGeneration
+              && recoveryState.revision > state.acceptedRecoveryRevision);
+          const accepted = state.transport.updateRecoveryState(recoveryState);
+          if (accepted && newer) {
+            state.acceptedRecoveryGeneration = recoveryState.generation;
+            state.acceptedRecoveryRevision = recoveryState.revision;
+            state.nonRateRecoveryUsed = false;
+            if (state.transientRecoveryTimer !== null) {
+              dependencies.clearTimeout(state.transientRecoveryTimer); state.transientRecoveryTimer = null;
+            }
+            if (ready && state.recoverableRetryTimer === null) {
+              state.recoverableRetryTimer = dependencies.setTimeout(() => {
+                state.recoverableRetryTimer = null;
+                if (owned(state)) state.routeController?.retryRecoverable();
+              }, 0);
+            }
+          }
+        }
         if (state.metadataScheduleTimer === null) state.metadataScheduleTimer = dependencies.setTimeout(() => {
           state.metadataScheduleTimer = null;
           if (owned(state) && !ready) startRoute(state);

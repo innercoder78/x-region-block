@@ -23,6 +23,9 @@ describe('persistent About Account cache', () => {
   });
 
   it.each([[known, 24 * 60 * 60 * 1000],
+    [{ ...known, accountBasedIn: 'North America' }, 24 * 60 * 60 * 1000],
+    [{ ...known, accountBasedIn: 'Atlantis' }, 60 * 60 * 1000],
+    [{ ...known, accountBasedIn: 'Somewhere' }, 60 * 60 * 1000],
     [{ ...known, accountBasedIn: null }, 60 * 60 * 1000],
     [{ ...known, accountBasedIn: '' }, 60 * 60 * 1000],
     [{ ...known, accountBasedIn: '  ' }, 60 * 60 * 1000],
