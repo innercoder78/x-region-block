@@ -25,7 +25,9 @@ function target(handle, timeline = false) {
   if (timeline) {
     presentation.setAttribute('data-testid', 'tweet');
     name.setAttribute('data-testid', 'User-Name');
-    presentation.appendChild(name);
+    const shell = document.createElement('div'); const column = document.createElement('div');
+    const row = document.createElement('div'); row.appendChild(name); column.appendChild(row);
+    shell.appendChild(column); presentation.appendChild(shell);
     document.appendChild(presentation);
   } else {
     root.setAttribute('data-testid', 'UserName');

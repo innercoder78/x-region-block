@@ -27,14 +27,29 @@ function accountTargets(document) {
   tweet.setAttribute('data-testid', 'tweet');
   const name = document.createElement('div');
   name.setAttribute('data-testid', 'User-Name');
+  const shell = document.createElement('div'); const column = document.createElement('div');
+  const pinned = document.createElement('div'); pinned.textContent = 'Pinned';
+  const authorRow = document.createElement('div'); const menu = document.createElement('button');
+  menu.textContent = 'Menu';
   const link = document.createElement('a');
   link.setAttribute('href', '/OpenAI');
-  name.appendChild(link); tweet.appendChild(name); document.appendChild(tweet);
-  return { profile, tweet, name };
+  name.appendChild(link); authorRow.appendChild(name); authorRow.appendChild(menu);
+  column.appendChild(pinned); column.appendChild(authorRow); shell.appendChild(column);
+  tweet.appendChild(shell); document.appendChild(tweet);
+  const nested = document.createElement('article'); nested.setAttribute('data-testid', 'tweet');
+  const nestedShell = document.createElement('div'); const nestedColumn = document.createElement('div');
+  const nestedRow = document.createElement('div'); const nestedName = document.createElement('div');
+  nestedName.setAttribute('data-testid', 'User-Name'); const nestedLink = document.createElement('a');
+  nestedLink.setAttribute('href', '/OpenAI'); nestedName.appendChild(nestedLink); nestedRow.appendChild(nestedName);
+  nestedColumn.appendChild(nestedRow); nestedShell.appendChild(nestedColumn); nested.appendChild(nestedShell);
+  column.appendChild(nested);
+  return { profile, tweet, name, pinned, authorRow, column, nested, nestedName };
 }
 
 it('runs the real production page, metadata, transport, broker, route, and presentation path', async () => {
   const document = new FakeDocument();
+  const navigation = document.createElement('nav'); const more = document.createElement('a');
+  more.setAttribute('data-testid', 'AppTabBar_More_Menu'); navigation.appendChild(more); document.appendChild(navigation);
   const listeners = new Map();
   document.addEventListener = (type, listener) => {
     const values = listeners.get(`document:${type}`) ?? [];
@@ -120,7 +135,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
       for (const listener of [...(globalListeners.get(event.type) ?? [])]) listener(event);
     },
     browser: {
-      runtime: { getURL: (path) => `moz-extension://test/${path}` },
+      runtime: { getURL: (path) => `moz-extension://test/${path}`, openOptionsPage: vi.fn() },
       storage: {
         local: {
           get: async () => ({ 'xRegionBlock.settings': storedSettings }),
@@ -150,6 +165,9 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   await runtime.start();
   expect(runtime.isActive()).toBe(true);
   expect(runtime.isReady()).toBe(false);
+  const sidebar = document.querySelectorAll('[data-x-region-block-sidebar-item="1"]')[0];
+  expect(navigation.children).toEqual([sidebar, more]);
+  sidebar.dispatchEvent({ type: 'click' }); expect(globalScope.browser.runtime.openOptionsPage).toHaveBeenCalledOnce();
   expect(globalScope.fetch).not.toBe(originalFetch);
   expect(globalScope.history.pushState).not.toBe(originalPush);
 
@@ -173,6 +191,10 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   await settle();
   expect(findLocationBadge(targets.profile)).not.toBeNull();
   expect(findLocationBadge(targets.name)).not.toBeNull();
+  expect(findLocationBadge(targets.nestedName)).not.toBeNull();
+  const outerHeader = targets.column.children[1];
+  expect(targets.column.children.slice(0, 3)).toEqual([targets.pinned, outerHeader, targets.authorRow]);
+  expect(targets.authorRow.children).not.toContain(outerHeader);
   expect(findLocationBadge(targets.name).children[0].children[0].getAttribute('src'))
     .toContain('assets/flags/us.png');
   expect(findLocationBadge(targets.name).textContent).not.toContain('🌐');
@@ -183,6 +205,13 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     .not.toContain('About Account request queue failed.');
   expect(getAccountAction(targets.profile)).toBe('hide');
   expect(getAccountAction(targets.tweet)).toBe('hide');
+  const callsBeforeAnchorReplacement = transportCalls.length;
+  const replacementColumn = document.createElement('div'); const replacementRow = document.createElement('div');
+  targets.authorRow.removeChild(targets.name); replacementRow.appendChild(targets.name);
+  replacementColumn.appendChild(replacementRow); targets.tweet.children[0].removeChild(targets.column);
+  targets.tweet.children[0].appendChild(replacementColumn); observerInstances.forEach((observer) => observer.trigger());
+  await settle(); expect(transportCalls).toHaveLength(callsBeforeAnchorReplacement);
+  expect(replacementColumn.children[0].getAttribute('data-x-region-block-location-header')).toBe('1');
 
   const latestHeaders = { ...observedHeaders, authorization: 'Bearer latest-test-only' };
   observingPageRequest = true;
@@ -196,7 +225,10 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   dynamicName.setAttribute('data-testid', 'User-Name');
   const dynamicLink = document.createElement('a');
   dynamicLink.setAttribute('href', '/anthropic');
-  dynamicName.appendChild(dynamicLink); dynamicTweet.appendChild(dynamicName);
+  const dynamicShell = document.createElement('div'); const dynamicColumn = document.createElement('div');
+  const dynamicRow = document.createElement('div'); dynamicName.appendChild(dynamicLink);
+  dynamicRow.appendChild(dynamicName); dynamicColumn.appendChild(dynamicRow);
+  dynamicShell.appendChild(dynamicColumn); dynamicTweet.appendChild(dynamicShell);
   document.appendChild(dynamicTweet);
   const routeObservers = observerInstances.filter((observer) => observer.target === document);
   for (const observer of routeObservers) observer.trigger();
@@ -223,22 +255,25 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(getAccountAction(dynamicTweet)).toBe('show');
 
   for (const [handle, label] of [
-    ['missing', 'Location not provided'],
-    ['unavailable', 'Location unavailable'],
-    ['malformed', 'Location unavailable'], ['region', 'North America'],
+    ['missing', 'Location: Not provided'],
+    ['unavailable', 'Location: Unavailable'],
+    ['malformed', 'Location: Unavailable'], ['region', 'North America'],
   ]) {
     const outcomeTweet = document.createElement('article');
     outcomeTweet.setAttribute('data-testid', 'tweet');
     const outcomeName = document.createElement('div');
     outcomeName.setAttribute('data-testid', 'User-Name');
     const outcomeLink = document.createElement('a'); outcomeLink.setAttribute('href', `/${handle}`);
-    outcomeName.appendChild(outcomeLink); outcomeTweet.appendChild(outcomeName);
+    const outcomeShell = document.createElement('div'); const outcomeColumn = document.createElement('div');
+    const outcomeRow = document.createElement('div'); outcomeName.appendChild(outcomeLink);
+    outcomeRow.appendChild(outcomeName); outcomeColumn.appendChild(outcomeRow);
+    outcomeShell.appendChild(outcomeColumn); outcomeTweet.appendChild(outcomeShell);
     document.appendChild(outcomeTweet);
     for (const observer of routeObservers) observer.trigger();
     await settle();
     expect(findLocationBadge(outcomeName).textContent).toContain(label);
     if (handle === 'region') {
-      expect(findLocationBadge(outcomeName).textContent).toBe('🌐 North America');
+      expect(findLocationBadge(outcomeName).textContent).toBe('Region: 🌐 North America');
       expect(findLocationBadge(outcomeName).textContent).not.toContain('Location unknown');
     }
     expect(getAccountAction(outcomeTweet)).toBe('show');
@@ -284,7 +319,9 @@ async function recoveryHarness({ failureStatus, settings, responder = null }) {
   const tweet = document.createElement('article'); tweet.setAttribute('data-testid', 'tweet');
   const name = document.createElement('div'); name.setAttribute('data-testid', 'User-Name');
   const link = document.createElement('a'); link.setAttribute('href', '/visible');
-  name.appendChild(link); tweet.appendChild(name); document.appendChild(tweet);
+  const shell = document.createElement('div'); const column = document.createElement('div');
+  const authorRow = document.createElement('div'); name.appendChild(link); authorRow.appendChild(name);
+  column.appendChild(authorRow); shell.appendChild(column); tweet.appendChild(shell); document.appendChild(tweet);
   const observers = [];
   class MutationObserver { constructor(callback) { this.callback = callback; observers.push(this); } observe(target) { this.target = target; } disconnect() { this.disconnected = true; } }
   class AbortController { constructor() { const value = createFakeAbortController(); this.signal = value.signal; this.abort = value.abort.bind(value); } }

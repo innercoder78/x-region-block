@@ -16,7 +16,11 @@ function accountSurface(document, kind, handle) {
   const link = document.createElement('a');
   link.setAttribute('href', `/${handle}`);
   name.appendChild(link);
-  if (kind === 'tweet') surface.appendChild(name);
+  if (kind === 'tweet') {
+    const shell = document.createElement('div'); const column = document.createElement('div');
+    const row = document.createElement('div'); row.appendChild(name); column.appendChild(row);
+    shell.appendChild(column); surface.appendChild(shell);
+  }
   document.appendChild(surface);
   return { surface, name };
 }

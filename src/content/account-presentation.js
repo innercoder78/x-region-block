@@ -22,3 +22,11 @@ export function presentXAccountLink(link, badgeContainer, observation, settings,
   renderLocationBadge(badgeContainer, evaluation.subject.location, resolveFlagAssetUrl);
   return evaluation;
 }
+
+export function presentXAccountLinkInPost(link, header, observation, settings, resolveFlagAssetUrl) {
+  findLocationBadge(header);
+  const evaluation = evaluateXAccountLink(link, observation, settings);
+  if (evaluation === null) { removeLocationBadge(header); return null; }
+  renderLocationBadge(header, evaluation.subject.location, resolveFlagAssetUrl, { postHeader: true });
+  return evaluation;
+}

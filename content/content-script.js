@@ -953,7 +953,22 @@
 
   function findLocationBadge(container) {
     validateContainer(container);
-    return ownedChildren(container)[0] ?? null;
+    const direct = ownedChildren(container)[0] ?? null;
+    if (direct !== null) return direct;
+    const previous = container.parentElement?.children;
+    const index = previous && typeof previous[Symbol.iterator] === 'function'
+      ? [...previous].indexOf(container) : -1;
+    const header = index > 0 ? previous[index - 1] : null;
+    if (header?.getAttribute?.('data-x-region-block-location-header') === '1') {
+      return ownedChildren(header)[0] ?? null;
+    }
+    const row = container.parentElement;
+    const rowSiblings = row?.parentElement?.children;
+    const rowIndex = rowSiblings && typeof rowSiblings[Symbol.iterator] === 'function'
+      ? [...rowSiblings].indexOf(row) : -1;
+    const rowHeader = rowIndex > 0 ? rowSiblings[rowIndex - 1] : null;
+    return rowHeader?.getAttribute?.('data-x-region-block-location-header') === '1'
+      ? (ownedChildren(rowHeader)[0] ?? null) : null;
   }
 
   function setCommonChildAttributes(element, className, title) {
@@ -962,15 +977,17 @@
     if (title !== null) element.setAttribute('title', title);
   }
 
-  function createRegionElement(ownerDocument, region) {
+  function createRegionElement(ownerDocument, region, postHeader) {
     const element = ownerDocument.createElement('span');
     setCommonChildAttributes(element, LOCATION_BADGE_CLASSES.region, region.title);
     if (region.code !== null) element.setAttribute(REGION_CODE_ATTRIBUTE, region.code);
-    element.textContent = `${region.symbol} ${region.label}`;
+    element.textContent = postHeader
+      ? (region.code === null ? region.label : `Region: ${region.symbol} ${region.label}`)
+      : `${region.symbol} ${region.label}`;
     return element;
   }
 
-  function createCountryElement(ownerDocument, country, resolveFlagAssetUrl) {
+  function createCountryElement(ownerDocument, country, resolveFlagAssetUrl, postHeader) {
     const wrapper = ownerDocument.createElement('span');
     setCommonChildAttributes(wrapper, LOCATION_BADGE_CLASSES.country, country.title);
     wrapper.setAttribute(COUNTRY_CODE_ATTRIBUTE, country.code);
@@ -978,7 +995,7 @@
     const fallback = () => {
       if (failed) return;
       failed = true;
-      wrapper.textContent = country.code;
+      wrapper.textContent = postHeader ? `Country: ${country.code}` : country.code;
     };
     try {
       if (typeof resolveFlagAssetUrl !== 'function') throw new TypeError();
@@ -996,14 +1013,23 @@
       image.setAttribute('tabindex', '-1');
       image.setAttribute('contenteditable', 'false');
       image.addEventListener('error', fallback, { once: true });
-      wrapper.appendChild(image);
+      if (postHeader) {
+        const label = ownerDocument.createElement('span');
+        label.setAttribute('class', 'x-region-block-location-country-label');
+        label.textContent = 'Country:';
+        wrapper.appendChild(image);
+        wrapper.appendChild(label);
+      } else {
+        wrapper.appendChild(image);
+      }
     } catch { fallback(); }
     return wrapper;
   }
 
-  function renderLocationBadge(container, location, resolveFlagAssetUrl) {
+  function renderLocationBadge(container, location, resolveFlagAssetUrl, options = undefined) {
     validateContainer(container);
     const display = createLocationDisplayModel(location);
+    const postHeader = options?.postHeader === true;
     const existing = ownedChildren(container);
     let root = existing[0] ?? null;
 
@@ -1032,15 +1058,22 @@
     root.removeAttribute('contenteditable');
 
     if (display.country !== null) {
-      const country = createCountryElement(container.ownerDocument, display.country, resolveFlagAssetUrl);
+      const country = createCountryElement(container.ownerDocument, display.country, resolveFlagAssetUrl, postHeader);
 
       root.setAttribute('aria-label', display.country.ariaLabel);
       root.setAttribute('title', display.country.title);
       root.appendChild(country);
     } else {
-      root.setAttribute('aria-label', display.region.ariaLabel);
-      root.setAttribute('title', display.region.title);
-      root.appendChild(createRegionElement(container.ownerDocument, display.region));
+      const statusLabels = { hidden: 'Location: Hidden', missing: 'Location: Not provided',
+        unavailable: 'Location: Unavailable', unknown: 'Location: Unknown' };
+      const semanticLabel = postHeader && statusLabels[display.status]
+        ? statusLabels[display.status] : display.region.ariaLabel;
+      root.setAttribute('aria-label', semanticLabel);
+      root.setAttribute('title', postHeader ? semanticLabel : display.region.title);
+      const region = postHeader && display.region.code === null
+        ? { ...display.region, label: semanticLabel, title: semanticLabel }
+        : display.region;
+      root.appendChild(createRegionElement(container.ownerDocument, region, postHeader));
     }
     return root;
   }
@@ -1066,6 +1099,93 @@
 
     renderLocationBadge(badgeContainer, evaluation.subject.location, resolveFlagAssetUrl);
     return evaluation;
+  }
+
+  function presentXAccountLinkInPost(link, header, observation, settings, resolveFlagAssetUrl) {
+    findLocationBadge(header);
+    const evaluation = evaluateXAccountLink(link, observation, settings);
+    if (evaluation === null) { removeLocationBadge(header); return null; }
+    renderLocationBadge(header, evaluation.subject.location, resolveFlagAssetUrl, { postHeader: true });
+    return evaluation;
+  }
+
+  const POST_LOCATION_HEADER_ATTRIBUTE = 'data-x-region-block-location-header';
+  const POST_LOCATION_HEADER_VALUE = '1';
+
+  const isPost = (target) => target?.source === 'timeline' || target?.source === 'reply';
+  const isTweetArticle = (element) => String(element?.tagName).toLowerCase() === 'article'
+    && element?.getAttribute?.('data-testid') === 'tweet';
+  const registeredHeaders = new WeakMap();
+
+  function nearestTweetArticle(element) {
+    let current = element;
+    while (current) {
+      if (isTweetArticle(current)) return current;
+      current = current.parentElement;
+    }
+    return null;
+  }
+
+  function ownedHeaders(target) {
+    if (typeof target?.accountContainer?.querySelectorAll !== 'function') return [];
+    const current = [...target.accountContainer.querySelectorAll(
+      `[${POST_LOCATION_HEADER_ATTRIBUTE}="${POST_LOCATION_HEADER_VALUE}"]`,
+    )].filter((header) => nearestTweetArticle(header) === target.accountContainer);
+    const registered = [...(registeredHeaders.get(target.accountContainer) ?? [])]
+      .filter((header) => header.getAttribute?.(POST_LOCATION_HEADER_ATTRIBUTE) === POST_LOCATION_HEADER_VALUE);
+    return [...new Set([...current, ...registered])];
+  }
+
+  /** Resolves the local author row and its main-content-column parent without mutating X DOM. */
+  function resolvePostLocationHeaderHost(target) {
+    if (!isPost(target) || !isTweetArticle(target.accountContainer)) return null;
+    const name = target.badgeContainer;
+    if (name?.getAttribute?.('data-testid') !== 'User-Name'
+      || nearestTweetArticle(name) !== target.accountContainer) return null;
+    const authorRow = name.parentElement;
+    const contentColumn = authorRow?.parentElement;
+    if (!authorRow || !contentColumn || authorRow === target.accountContainer
+      || contentColumn === target.accountContainer
+      || nearestTweetArticle(authorRow) !== target.accountContainer
+      || nearestTweetArticle(contentColumn) !== target.accountContainer
+      || typeof contentColumn.insertBefore !== 'function') return null;
+    return Object.freeze({ name, authorRow, contentColumn });
+  }
+
+  /** Creates exactly one owned block immediately before the complete local author row. */
+  function reconcilePostLocationHeader(target) {
+    if (!isPost(target)) return target.badgeContainer;
+    // Processor boundary tests and non-DOM consumers may supply abstract containers. Only real
+    // tweet articles participate in post-header placement; their author line never receives fallback.
+    if (!isTweetArticle(target.accountContainer)) return target.badgeContainer;
+    const host = resolvePostLocationHeaderHost(target);
+    const headers = ownedHeaders(target);
+    if (host === null) {
+      for (const header of headers) if (header.parentNode) header.parentNode.removeChild(header);
+      return null;
+    }
+    let header = headers.find((candidate) => candidate.parentElement === host.contentColumn
+      && candidate.nextElementSibling === host.authorRow) ?? null;
+    for (const candidate of headers) {
+      if (candidate !== header && candidate.parentNode) candidate.parentNode.removeChild(candidate);
+    }
+    if (header === null) {
+      header = host.name.ownerDocument.createElement('div');
+      header.setAttribute(POST_LOCATION_HEADER_ATTRIBUTE, POST_LOCATION_HEADER_VALUE);
+      header.setAttribute('class', 'x-region-block-post-location-header');
+      const registered = registeredHeaders.get(target.accountContainer) ?? new Set();
+      registered.add(header); registeredHeaders.set(target.accountContainer, registered);
+      host.contentColumn.insertBefore(header, host.authorRow);
+    }
+    return header;
+  }
+
+  function removePostLocationHeader(target) {
+    if (!isPost(target)) return 0;
+    const headers = ownedHeaders(target);
+    for (const header of headers) if (header.parentNode) header.parentNode.removeChild(header);
+    registeredHeaders.delete(target.accountContainer);
+    return headers.length;
   }
 
   const ACCOUNT_TARGET_DISCOVERY_VERSION = 1;
@@ -1272,7 +1392,25 @@
     };
   }
 
-  function equivalent(previous, current) {
+  function hasPostHeader(target) {
+    const host = resolvePostLocationHeaderHost(target);
+    const siblings = host?.contentColumn?.children;
+    const siblingList = siblings && typeof siblings[Symbol.iterator] === 'function' ? [...siblings] : [];
+    const index = siblingList.indexOf(host?.authorRow);
+    return index > 0 && siblingList[index - 1]
+      ?.getAttribute?.('data-x-region-block-location-header') === '1';
+  }
+
+  function anchorChanged(previousAnchor, current) {
+    if (current.source !== 'timeline' && current.source !== 'reply') return false;
+    const host = resolvePostLocationHeaderHost(current);
+    return (previousAnchor === null) !== (host === null)
+      || (previousAnchor !== null && (previousAnchor.authorRow !== host.authorRow
+        || previousAnchor.contentColumn !== host.contentColumn));
+  }
+
+  function equivalent(previous, current, previousAnchor, previousHadHeader) {
+    if (anchorChanged(previousAnchor, current) || (previousHadHeader && !hasPostHeader(current))) return false;
     return previous.version === current.version && previous.source === current.source
       && previous.link === current.link && previous.badgeContainer === current.badgeContainer
       && previous.identity.handle === current.identity.handle
@@ -1296,6 +1434,8 @@
     let targets = EMPTY$3;
     let generation = 0;
     let scheduled = false;
+    let anchorSnapshots = new WeakMap();
+    let headerSnapshots = new WeakMap();
 
     const report = (error) => {
       try { normalized.onError(error); } catch { /* The error boundary is intentionally silent. */ }
@@ -1322,7 +1462,8 @@
           added.push(discoveredTarget);
         } else {
           previousByContainer.delete(discoveredTarget.accountContainer);
-          if (equivalent(previous, discoveredTarget)) current.push(previous);
+          if (equivalent(previous, discoveredTarget, anchorSnapshots.get(previous) ?? null,
+            headerSnapshots.get(previous) === true)) current.push(previous);
           else {
             current.push(discoveredTarget);
             updated.push(Object.freeze({ previous, current: discoveredTarget }));
@@ -1333,8 +1474,20 @@
       const orderChanged = current.length !== targets.length
         || current.some((target, index) => target !== targets[index]);
       if (!initial && added.length === 0 && updated.length === 0 && removed.length === 0
-        && !orderChanged) return targets;
+        && !orderChanged) {
+        for (const target of targets) {
+          anchorSnapshots.set(target, resolvePostLocationHeaderHost(target));
+          headerSnapshots.set(target, hasPostHeader(target));
+        }
+        return targets;
+      }
       targets = Object.freeze(current);
+      const nextAnchors = new WeakMap(); const nextHeaders = new WeakMap();
+      for (const target of targets) {
+        nextAnchors.set(target, resolvePostLocationHeaderHost(target));
+        nextHeaders.set(target, hasPostHeader(target));
+      }
+      anchorSnapshots = nextAnchors; headerSnapshots = nextHeaders;
       deliver(Object.freeze({
         version: ACCOUNT_TARGET_OBSERVER_VERSION,
         reason,
@@ -1400,6 +1553,7 @@
       generation += 1;
       scheduled = false;
       targets = EMPTY$3;
+      anchorSnapshots = new WeakMap(); headerSnapshots = new WeakMap();
       activeRoot = null;
       observer = null;
       currentObserver.disconnect();
@@ -2157,7 +2311,10 @@
     const readerOptions = () => (normalized.hasBaseUrl
       ? { source: normalized.source, baseUrl: normalized.baseUrl }
       : { source: normalized.source });
-    const removeBadge = (target) => removeLocationBadge(target.badgeContainer);
+    const removeBadge = (target) => {
+      const removed = removePostLocationHeader(target);
+      return removed + removeLocationBadge(target.badgeContainer);
+    };
     const removeAction = (target) => removeAccountAction(target.accountContainer);
 
     const present = (target, location) => {
@@ -2175,8 +2332,13 @@
         ? { source: normalized.source, location, baseUrl: normalized.baseUrl }
         : { source: normalized.source, location };
       try {
-        const evaluation = presentXAccountLink(target.link, target.badgeContainer, observation, settings,
-          normalized.resolveFlagAssetUrl);
+        const isPost = target.source === 'timeline' || target.source === 'reply';
+        const host = isPost ? reconcilePostLocationHeader(target) : target.badgeContainer;
+        const evaluation = isPost && host === null
+          ? evaluateXAccountLink(target.link, observation, settings)
+          : isPost && host !== target.badgeContainer
+          ? presentXAccountLinkInPost(target.link, host, observation, settings, normalized.resolveFlagAssetUrl)
+          : presentXAccountLink(target.link, host, observation, settings, normalized.resolveFlagAssetUrl);
         if (evaluation === null) removeAction(target);
         else applyAccountAction(target.accountContainer, evaluation.action);
       } catch {
@@ -4686,6 +4848,100 @@
     return Object.freeze({ start, stop, isActive: () => active });
   }
 
+  const SIDEBAR_NAV_ATTRIBUTE = 'data-x-region-block-sidebar-item';
+
+  const ANCHORS = Object.freeze([
+    ['[data-testid="AppTabBar_More_Menu"]', 'before'],
+    ['[data-testid="AppTabBar_Profile_Link"]', 'after'],
+    ['[data-testid="AppTabBar_Home_Link"]', 'after'],
+  ]);
+
+  function createXSidebarNavigation(root, options) {
+    const { extensionApi, observerFactory, onError = () => {} } = options;
+    let active = false;
+    let observer = null;
+    let item = null;
+    const report = () => { try { onError(new Error('Region Blocker options navigation failed.')); } catch { /* contained */ } };
+    const open = () => {
+      try {
+        const result = extensionApi?.runtime?.openOptionsPage?.();
+        if (result && typeof result.catch === 'function') result.catch(report);
+      } catch { report(); }
+    };
+    const activate = (event) => {
+      if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault?.(); event.stopPropagation?.(); open();
+    };
+    const remove = () => {
+      if (item) {
+        item.removeEventListener?.('click', activate);
+        item.removeEventListener?.('keydown', activate);
+        if (item.parentNode) item.parentNode.removeChild(item);
+      }
+      item = null;
+    };
+    const resolveEntryBoundary = (control) => {
+      let entry = control;
+      let parent = control?.parentElement;
+      while (parent && String(parent.tagName).toLowerCase() !== 'nav') {
+        entry = parent;
+        parent = parent.parentElement;
+      }
+      if (parent && String(parent.tagName).toLowerCase() === 'nav') return { entry, container: parent };
+      return control?.parentElement ? { entry: control, container: control.parentElement } : null;
+    };
+    const reconcile = () => {
+      if (!active) return null;
+      const existing = typeof root.querySelectorAll === 'function'
+        ? [...root.querySelectorAll(`[${SIDEBAR_NAV_ATTRIBUTE}="1"]`)] : [];
+      if (item && !item.parentNode) item = null;
+      for (const duplicate of existing) {
+        if (duplicate !== item && duplicate.parentNode) duplicate.parentNode.removeChild(duplicate);
+      }
+      let anchor = null; let placement = null;
+      for (const [selector, mode] of ANCHORS) {
+        anchor = root.querySelectorAll(selector)?.[0] ?? null;
+        if (anchor) { placement = mode; break; }
+      }
+      const boundary = resolveEntryBoundary(anchor);
+      const parent = boundary?.container;
+      const anchorEntry = boundary?.entry;
+      if (!parent || !anchorEntry || typeof parent.insertBefore !== 'function') return item;
+      if (!item) {
+        item = root.createElement('div');
+        item.setAttribute(SIDEBAR_NAV_ATTRIBUTE, '1');
+        item.setAttribute('data-testid', 'x-region-block-options-navigation');
+        item.setAttribute('role', 'button'); item.setAttribute('tabindex', '0');
+        item.setAttribute('aria-label', 'Open Region Blocker options');
+        item.setAttribute('class', 'x-region-block-sidebar-item');
+        const svgNamespace = ['http:', '', 'www.w3.org', '2000', 'svg'].join('/');
+        const icon = root.createElementNS(svgNamespace, 'svg');
+        icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true');
+        icon.setAttribute('class', 'x-region-block-sidebar-icon');
+        const circle = root.createElementNS(svgNamespace, 'circle');
+        circle.setAttribute('cx', '12'); circle.setAttribute('cy', '12'); circle.setAttribute('r', '9');
+        const slash = root.createElementNS(svgNamespace, 'path');
+        slash.setAttribute('d', 'M5.6 5.6 18.4 18.4');
+        icon.appendChild(circle); icon.appendChild(slash);
+        const label = root.createElement('span'); label.setAttribute('class', 'x-region-block-sidebar-label');
+        label.textContent = 'Region Blocker'; item.appendChild(icon); item.appendChild(label);
+        item.addEventListener('click', activate); item.addEventListener('keydown', activate);
+      }
+      const reference = placement === 'before' ? anchorEntry : anchorEntry.nextSibling;
+      if (item.parentNode !== parent || item.nextSibling !== reference) parent.insertBefore(item, reference);
+      return item;
+    };
+    const start = () => {
+      if (active) return item;
+      active = true;
+      try { observer = observerFactory(() => reconcile()); observer.observe(root, { childList: true, subtree: true }); }
+      catch { observer = null; report(); }
+      return reconcile();
+    };
+    const stop = () => { if (!active) return; active = false; try { observer?.disconnect(); } catch { /* contained */ } observer = null; remove(); };
+    return Object.freeze({ start, reconcile, stop, isActive: () => active });
+  }
+
   const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 
   function createDiagnostic(globalScope) {
@@ -4773,6 +5029,7 @@
           constructor(type, init = {}) { super(type, init); this.detail = init.detail; }
         },
         globalAdd, globalRemove, documentAdd, documentRemove,
+        extensionApi,
         resolveFlagAssetUrl: (countryCode) => extensionApi.runtime.getURL(
           `assets/flags/${normalizeCountryCode(countryCode).toLowerCase()}.png`,
         ) };
@@ -4827,6 +5084,7 @@
       stopComponent(state, 'settingsCandidate');
       stopComponent(state, 'settingsRuntime');
       stopComponent(state, 'injector');
+      stopComponent(state, 'sidebar');
       removePagehide(state);
       state.metadataCheckPending = false;
       if (state.metadataScheduleTimer !== null) {
@@ -4920,6 +5178,7 @@
         generation: generation + 1, claimed: false, cleaned: false, promiseSettled: false,
         resolve: null, reject: null, promise: null, bridge: null, injector: null,
         settingsCandidate: null, settingsRuntime: null, transport: null,
+        sidebar: null,
         routeCandidate: null, routeController: null,
         bridgeStopped: false, injectorStopped: false, settingsCandidateStopped: false,
         settingsRuntimeStopped: false, routeCandidateStopped: false,
@@ -4949,6 +5208,14 @@
       };
       state.pagehideListener = (event) => { if (event.persisted !== true && owned(state)) stop(); };
       try {
+        try {
+          state.sidebar = createXSidebarNavigation(dependencies.document, {
+            extensionApi: dependencies.extensionApi,
+            observerFactory: (callback) => new dependencies.MutationObserver(callback),
+            onError: report,
+          });
+          state.sidebar.start();
+        } catch { state.sidebar = null; }
         const facade = Object.assign(Object.create(null), {
           location: { origin: dependencies.origin }, document: dependencies.document,
           Event: dependencies.Event, URLSearchParams: dependencies.URLSearchParams,

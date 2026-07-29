@@ -1,5 +1,6 @@
 import { discoverXAccountPresentationTargets } from './account-target-discovery.js';
 import { ACCOUNT_IDENTITY_SOURCES } from '../shared/account-identity.js';
+import { resolvePostLocationHeaderHost } from './post-location-header.js';
 
 export const ACCOUNT_TARGET_OBSERVER_VERSION = 1;
 
@@ -41,7 +42,25 @@ function normalizeOptions(options) {
   };
 }
 
-function equivalent(previous, current) {
+function hasPostHeader(target) {
+  const host = resolvePostLocationHeaderHost(target);
+  const siblings = host?.contentColumn?.children;
+  const siblingList = siblings && typeof siblings[Symbol.iterator] === 'function' ? [...siblings] : [];
+  const index = siblingList.indexOf(host?.authorRow);
+  return index > 0 && siblingList[index - 1]
+    ?.getAttribute?.('data-x-region-block-location-header') === '1';
+}
+
+function anchorChanged(previousAnchor, current) {
+  if (current.source !== 'timeline' && current.source !== 'reply') return false;
+  const host = resolvePostLocationHeaderHost(current);
+  return (previousAnchor === null) !== (host === null)
+    || (previousAnchor !== null && (previousAnchor.authorRow !== host.authorRow
+      || previousAnchor.contentColumn !== host.contentColumn));
+}
+
+function equivalent(previous, current, previousAnchor, previousHadHeader) {
+  if (anchorChanged(previousAnchor, current) || (previousHadHeader && !hasPostHeader(current))) return false;
   return previous.version === current.version && previous.source === current.source
     && previous.link === current.link && previous.badgeContainer === current.badgeContainer
     && previous.identity.handle === current.identity.handle
@@ -65,6 +84,8 @@ export function createXAccountTargetObserver(root, options) {
   let targets = EMPTY;
   let generation = 0;
   let scheduled = false;
+  let anchorSnapshots = new WeakMap();
+  let headerSnapshots = new WeakMap();
 
   const report = (error) => {
     try { normalized.onError(error); } catch { /* The error boundary is intentionally silent. */ }
@@ -91,7 +112,8 @@ export function createXAccountTargetObserver(root, options) {
         added.push(discoveredTarget);
       } else {
         previousByContainer.delete(discoveredTarget.accountContainer);
-        if (equivalent(previous, discoveredTarget)) current.push(previous);
+        if (equivalent(previous, discoveredTarget, anchorSnapshots.get(previous) ?? null,
+          headerSnapshots.get(previous) === true)) current.push(previous);
         else {
           current.push(discoveredTarget);
           updated.push(Object.freeze({ previous, current: discoveredTarget }));
@@ -102,8 +124,20 @@ export function createXAccountTargetObserver(root, options) {
     const orderChanged = current.length !== targets.length
       || current.some((target, index) => target !== targets[index]);
     if (!initial && added.length === 0 && updated.length === 0 && removed.length === 0
-      && !orderChanged) return targets;
+      && !orderChanged) {
+      for (const target of targets) {
+        anchorSnapshots.set(target, resolvePostLocationHeaderHost(target));
+        headerSnapshots.set(target, hasPostHeader(target));
+      }
+      return targets;
+    }
     targets = Object.freeze(current);
+    const nextAnchors = new WeakMap(); const nextHeaders = new WeakMap();
+    for (const target of targets) {
+      nextAnchors.set(target, resolvePostLocationHeaderHost(target));
+      nextHeaders.set(target, hasPostHeader(target));
+    }
+    anchorSnapshots = nextAnchors; headerSnapshots = nextHeaders;
     deliver(Object.freeze({
       version: ACCOUNT_TARGET_OBSERVER_VERSION,
       reason,
@@ -169,6 +203,7 @@ export function createXAccountTargetObserver(root, options) {
     generation += 1;
     scheduled = false;
     targets = EMPTY;
+    anchorSnapshots = new WeakMap(); headerSnapshots = new WeakMap();
     activeRoot = null;
     observer = null;
     currentObserver.disconnect();

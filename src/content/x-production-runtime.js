@@ -7,6 +7,7 @@ import { createXAboutAccountPageTransport } from './x-about-account-page-transpo
 import { createXNavigationObserver } from './x-navigation-observer.js';
 import { createXPageScriptInjector } from './x-page-script-injector.js';
 import { normalizeCountryCode } from '../shared/country-regions.js';
+import { createXSidebarNavigation } from './sidebar-navigation.js';
 
 export const X_PRODUCTION_CONTENT_RUNTIME_VERSION = 1;
 const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
@@ -96,6 +97,7 @@ export function createXProductionContentRuntime(globalScope) {
         constructor(type, init = {}) { super(type, init); this.detail = init.detail; }
       },
       globalAdd, globalRemove, documentAdd, documentRemove,
+      extensionApi,
       resolveFlagAssetUrl: (countryCode) => extensionApi.runtime.getURL(
         `assets/flags/${normalizeCountryCode(countryCode).toLowerCase()}.png`,
       ) };
@@ -150,6 +152,7 @@ export function createXProductionContentRuntime(globalScope) {
     stopComponent(state, 'settingsCandidate');
     stopComponent(state, 'settingsRuntime');
     stopComponent(state, 'injector');
+    stopComponent(state, 'sidebar');
     removePagehide(state);
     state.metadataCheckPending = false;
     if (state.metadataScheduleTimer !== null) {
@@ -243,6 +246,7 @@ export function createXProductionContentRuntime(globalScope) {
       generation: generation + 1, claimed: false, cleaned: false, promiseSettled: false,
       resolve: null, reject: null, promise: null, bridge: null, injector: null,
       settingsCandidate: null, settingsRuntime: null, transport: null,
+      sidebar: null,
       routeCandidate: null, routeController: null,
       bridgeStopped: false, injectorStopped: false, settingsCandidateStopped: false,
       settingsRuntimeStopped: false, routeCandidateStopped: false,
@@ -272,6 +276,14 @@ export function createXProductionContentRuntime(globalScope) {
     };
     state.pagehideListener = (event) => { if (event.persisted !== true && owned(state)) stop(); };
     try {
+      try {
+        state.sidebar = createXSidebarNavigation(dependencies.document, {
+          extensionApi: dependencies.extensionApi,
+          observerFactory: (callback) => new dependencies.MutationObserver(callback),
+          onError: report,
+        });
+        state.sidebar.start();
+      } catch { state.sidebar = null; }
       const facade = Object.assign(Object.create(null), {
         location: { origin: dependencies.origin }, document: dependencies.document,
         Event: dependencies.Event, URLSearchParams: dependencies.URLSearchParams,

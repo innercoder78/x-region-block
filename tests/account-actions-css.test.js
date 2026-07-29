@@ -11,6 +11,9 @@ describe('account action CSS', () => {
     expect(css).toMatch(/width:\s*auto/);
     expect(css).toMatch(/height:\s*auto/);
     expect(css).toContain('object-fit: contain');
+    expect(css).toMatch(/\.x-region-block-post-location-header \.x-region-block-location-country\s*\{[^}]*width:\s*auto[^}]*height:\s*auto[^}]*flex:\s*0 1 auto[^}]*overflow:\s*visible/s);
+    expect(css).toMatch(/\.x-region-block-sidebar-item\s*\{[^}]*color:\s*inherit/s);
+    expect(css).toMatch(/\.x-region-block-sidebar-icon\s*\{[^}]*color:\s*rgb\(244, 33, 46\)/s);
     expect(css).not.toMatch(/show|data-testid|\.css-|visibility|background|transition/);
   });
 });
