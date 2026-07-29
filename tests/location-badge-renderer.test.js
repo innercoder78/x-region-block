@@ -10,6 +10,7 @@ import {
   renderLocationBadge,
 } from '../src/content/location-badge-renderer.js';
 import { attributesOf, createContainer, FakeDocument, snapshot } from './helpers/fake-dom.js';
+import { parseXAboutAccountDetailsPayload } from '../src/shared/x-about-account-details.js';
 
 const known = (countryCode = 'CA', countryName = 'Canada', extra = {}) => ({
   status: 'known', countryCode, countryName, ...extra,
@@ -143,6 +144,62 @@ describe('known location rendering', () => {
     expect(renderLocationBadge(container, known('CA', 'Canada', {
       regionCode: 'NORTH_AMERICA', regionName: 'North America',
     })).getAttribute('data-x-region-block-status')).toBe('known');
+  });
+});
+
+describe('post About Account details rendering', () => {
+  const resolver = (code) => `chrome-extension://test/assets/flags/${code.toLowerCase()}.png`;
+  const details = (accountBasedIn, source, locationAccurate) => parseXAboutAccountDetailsPayload({
+    version: 2, accountBasedIn, source, locationAccurate,
+  });
+  const render = (container, value) => renderLocationBadge(container, value.location, resolver,
+    { postHeader: true, details: value });
+
+  it.each([
+    ['United States', 'App Store', false,
+      'Country: | VPN/proxy detected | Connection: iOS app',
+      'Country: United States. VPN or proxy detected. Connection: iOS app.'],
+    ['United States', 'Web', true, 'Country: | Connection: Web',
+      'Country: United States. Connection: Web.'],
+    ['North America', 'Google Play', true, 'Region: 🌐 North America | Connection: Android app',
+      'Region: North America. Connection: Android app.'],
+    ['North America', 'Android', false,
+      'Region: 🌐 North America | VPN/proxy detected | Connection: Android app',
+      'Region: North America. VPN or proxy detected. Connection: Android app.'],
+    ['Atlantis', null, null, 'Location: Unknown | Unknown connection method',
+      'Location: Unknown. Unknown connection method.'],
+  ])('renders independent post segments for %s / %s / %s',
+    (location, source, accurate, visible, accessible) => {
+      const { container } = createContainer();
+      const root = render(container, details(location, source, accurate));
+      expect(root.textContent).toBe(visible);
+      expect(root.getAttribute('aria-label')).toBe(accessible);
+      const separators = root.children.slice(1).map((segment) => segment.children[0]);
+      expect(separators.every((separator) => separator.textContent === ' | '
+        && separator.getAttribute('aria-hidden') === 'true')).toBe(true);
+      expect(root.textContent).not.toMatch(/^\||\|$|\|\||\|\s*\|/);
+    });
+
+  it('falls back to Country: US and safely retains a bounded source title', async () => {
+    const { container } = createContainer();
+    const value = details('United States', 'United States App Store', false);
+    const root = render(container, value);
+    root.children[0].children[0].dispatchEvent({ type: 'error' });
+    expect(root.textContent).toBe('Country: US | VPN/proxy detected | Connection: iOS app');
+    expect(root.getAttribute('title')).toBe('Reported account source: United States App Store');
+    expect(await readFile('src/content/location-badge-renderer.js', 'utf8')).not.toContain('innerHTML');
+  });
+
+  it('removes stale VPN, source, country, region, and flag children across transitions', () => {
+    const { container } = createContainer();
+    const root = render(container, details('United States', 'App Store', false));
+    for (const value of [
+      details('United States', 'Web', true), details('North America', 'Google Play', null),
+      details('Canada', null, null), details('Canada', 'Android', false),
+    ]) render(container, value);
+    expect(root.textContent).toBe('Country: | VPN/proxy detected | Connection: Android app');
+    expect(root.textContent).not.toMatch(/iOS|Web|North America|Unknown connection/);
+    expect(root.querySelectorAll('[data-x-region-block-country-code="US"]')).toHaveLength(0);
   });
 });
 

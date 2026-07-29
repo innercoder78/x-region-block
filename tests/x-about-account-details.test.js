@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { classifyXAboutAccountConnectionSource } from '../src/shared/x-about-account-connection.js';
-import { parseXAboutAccountDetailsPayload } from '../src/shared/x-about-account-details.js';
+import {
+  createXAboutAccountDetails, parseXAboutAccountDetailsPayload,
+} from '../src/shared/x-about-account-details.js';
+import { createKnownLocation } from '../src/shared/location-model.js';
 
 describe('About Account connection source classifier', () => {
   it.each([
@@ -16,6 +19,38 @@ describe('About Account connection source classifier', () => {
 });
 
 describe('immutable About Account details parsing', () => {
+  const canada = () => createKnownLocation({ countryCode: 'CA', countryName: 'Canada',
+    rawLocation: 'Canada', source: 'x-about-account' });
+
+  it.each([
+    ['Web', 'web', 'Connection: Web'], ['App Store', 'ios', 'Connection: iOS app'],
+    ['Google Play', 'android', 'Connection: Android app'], [null, 'unknown', 'Unknown connection method'],
+  ])('constructs canonical %s connection details', (rawSource, method, label) => {
+    const details = createXAboutAccountDetails({ location: canada(),
+      connection: { method, label, rawSource }, locationAccuracy: 'unknown' });
+    expect(details.connection).toEqual({ method, label, rawSource });
+    expect(Object.isFrozen(details.location)).toBe(true);
+  });
+
+  it.each([
+    { method: 'web', label: 'Connection: Android app', rawSource: 'Web' },
+    { method: 'unknown', label: 'Connection: Web', rawSource: null },
+    { method: 'unknown', label: 'Unknown connection method', rawSource: `x${'a'.repeat(256)}` },
+    { method: 'web', label: 'Connection: Web', rawSource: ' Web ' },
+  ])('rejects a noncanonical connection %#', (connection) => {
+    expect(() => createXAboutAccountDetails({ location: canada(), connection,
+      locationAccuracy: 'unknown' })).toThrow(TypeError);
+  });
+
+  it('normalizes an empty unknown raw source and rejects arbitrary frozen locations', () => {
+    expect(createXAboutAccountDetails({ location: canada(), connection: {
+      method: 'unknown', label: 'Unknown connection method', rawSource: '',
+    }, locationAccuracy: 'unknown' }).connection.rawSource).toBeNull();
+    expect(() => createXAboutAccountDetails({ location: Object.freeze({}), connection: {
+      method: 'unknown', label: 'Unknown connection method', rawSource: null,
+    }, locationAccuracy: 'unknown' })).toThrow(TypeError);
+  });
+
   it('keeps location independent from source and classifies false accuracy', () => {
     const details = parseXAboutAccountDetailsPayload({ version: 2, accountBasedIn: 'Canada',
       source: 'United States App Store', locationAccurate: false });
@@ -43,5 +78,25 @@ describe('immutable About Account details parsing', () => {
         location: { countryCode: 'JP' } });
     expect(() => parseXAboutAccountDetailsPayload({ version: 2, accountBasedIn: 'Japan',
       source: null, locationAccurate: null, connectedVia: 'Web' })).toThrow();
+  });
+
+  it.each([
+    ['accountBasedIn', {}], ['accountBasedIn', []], ['accountBasedIn', 1],
+    ['accountBasedIn', () => {}], ['accountBasedIn', Symbol('location')],
+    ['source', {}], ['source', []], ['source', 1], ['source', () => {}], ['source', Symbol('source')],
+    ['locationAccurate', {}], ['locationAccurate', []], ['locationAccurate', 0],
+    ['locationAccurate', 'false'], ['locationAccurate', () => {}], ['locationAccurate', Symbol('accuracy')],
+  ])('rejects malformed version-2 %s value', (field, value) => {
+    const payload = { version: 2, accountBasedIn: 'Canada', source: 'Web', locationAccurate: false };
+    payload[field] = value;
+    expect(() => parseXAboutAccountDetailsPayload(payload)).toThrow(TypeError);
+  });
+
+  it('rejects accessors without invoking them', () => {
+    const getter = vi.fn(() => 'Web');
+    const payload = { version: 2, accountBasedIn: 'Canada', locationAccurate: null };
+    Object.defineProperty(payload, 'source', { enumerable: true, get: getter });
+    expect(() => parseXAboutAccountDetailsPayload(payload)).toThrow(TypeError);
+    expect(getter).not.toHaveBeenCalled();
   });
 });

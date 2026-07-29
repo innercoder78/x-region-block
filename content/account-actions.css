@@ -38,11 +38,10 @@
 .x-region-block-post-location-header .x-region-block-location-segment {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 0;
   white-space: nowrap;
   min-width: 0;
 }
-.x-region-block-post-location-header .x-region-block-location-separator { margin-left: 4px; }
 .x-region-block-post-location-header .x-region-block-location-country-label { order: -1; }
 .x-region-block-post-location-header .x-region-block-location-country {
   width: auto;

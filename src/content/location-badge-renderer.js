@@ -183,7 +183,7 @@ export function renderLocationBadge(container, location, resolveFlagAssetUrl, op
       const separator = container.ownerDocument.createElement('span');
       separator.setAttribute('class', LOCATION_BADGE_CLASSES.separator);
       separator.setAttribute('aria-hidden', 'true');
-      separator.textContent = '|';
+      separator.textContent = ' | ';
       const text = container.ownerDocument.createElement('span');
       text.textContent = segment.text;
       group.appendChild(separator); group.appendChild(text); root.appendChild(group);

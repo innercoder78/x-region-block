@@ -90,7 +90,8 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     const english = options.headers['accept-language'] === 'en-US,en;q=0.9';
     let payload = { data: { user_result_by_screen_name: { result: {
       about_profile: { account_based_in: english ? 'United States' : 'États-Unis',
-        connected_via: 'Web', app_store: 'North America App Store' },
+        source: 'United States App Store', location_accurate: false,
+        connected_via: 'Google Play', app_store: 'North America App Store', token: 'must-not-cross' },
     } } } };
     if (handle === 'missing') {
       payload = { data: { user_result_by_screen_name: { result: { about_profile: {} } } } };
@@ -98,7 +99,16 @@ it('runs the real production page, metadata, transport, broker, route, and prese
       payload = { data: { user_result_by_screen_name: { result: { about_profile: null } } } };
     } else if (handle === 'region') {
       payload = { data: { user_result_by_screen_name: { result: { about_profile: {
-        account_based_in: 'North America', connected_via: 'United States App Store',
+        account_based_in: 'North America', source: 'Google Play', location_accurate: true,
+        connected_via: 'United States App Store',
+      } } } } };
+    } else if (handle === 'web') {
+      payload = { data: { user_result_by_screen_name: { result: { about_profile: {
+        account_based_in: 'United States', source: 'Web', location_accurate: true,
+      } } } } };
+    } else if (handle === 'noaccuracy') {
+      payload = { data: { user_result_by_screen_name: { result: { about_profile: {
+        account_based_in: 'United States', source: 'App Store', connected_via: 'Google Play',
       } } } } };
     } else if (handle === 'malformed') payload = {};
     return Promise.resolve({
@@ -201,8 +211,12 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     .toContain('assets/flags/us.png');
   expect(findLocationBadge(targets.name).textContent).not.toContain('🌐');
   expect(findLocationBadge(targets.name).textContent).not.toContain('North America');
-  expect(findLocationBadge(targets.name).children).toHaveLength(2);
-  expect(findLocationBadge(targets.name).textContent).toContain('Unknown connection method');
+  expect(findLocationBadge(targets.name).children).toHaveLength(3);
+  expect(findLocationBadge(targets.name).textContent)
+    .toBe('Country: | VPN/proxy detected | Connection: iOS app');
+  expect(findLocationBadge(targets.name).getAttribute('aria-label'))
+    .toBe('Country: United States. VPN or proxy detected. Connection: iOS app.');
+  expect(findLocationBadge(targets.name).textContent).not.toMatch(/Google Play|North America App Store|token/);
   expect(findLocationBadge(targets.name).textContent).not.toContain('Location unavailable');
   expect(console.warn.mock.calls.flat().join('\n'))
     .not.toContain('About Account request queue failed.');
@@ -264,6 +278,7 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     ['missing', 'Location: Not provided'],
     ['unavailable', 'Location: Unavailable'],
     ['malformed', 'Location: Unavailable'], ['region', 'North America'],
+    ['web', 'Connection: Web'], ['noaccuracy', 'Connection: iOS app'],
   ]) {
     const outcomeTweet = document.createElement('article');
     outcomeTweet.setAttribute('data-testid', 'tweet');
@@ -281,10 +296,18 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     expect(findLocationBadge(outcomeName).textContent).toContain(label);
     if (handle === 'region') {
       expect(findLocationBadge(outcomeName).textContent)
-        .toBe('Region: 🌐 North America|Unknown connection method');
+        .toBe('Region: 🌐 North America | Connection: Android app');
       expect(findLocationBadge(outcomeName).textContent).not.toContain('Location unknown');
     }
-    expect(getAccountAction(outcomeTweet)).toBe('show');
+    if (handle === 'missing') expect(findLocationBadge(outcomeName).textContent)
+      .toBe('Location: Not provided | Unknown connection method');
+    if (handle === 'web') expect(findLocationBadge(outcomeName).textContent)
+      .toBe('Country: | Connection: Web');
+    if (handle === 'noaccuracy') {
+      expect(findLocationBadge(outcomeName).textContent).toBe('Country: | Connection: iOS app');
+      expect(findLocationBadge(outcomeName).textContent).not.toContain('VPN/proxy detected');
+    }
+    expect(getAccountAction(outcomeTweet)).toBe(['web', 'noaccuracy'].includes(handle) ? 'hide' : 'show');
     document.children.splice(document.children.indexOf(outcomeTweet), 1);
     outcomeTweet.parentNode = null;
     for (const observer of routeObservers) observer.trigger();
