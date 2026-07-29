@@ -40,7 +40,8 @@ describe('MAIN-world About Account executor', () => {
     expect(options.headers['x-twitter-client-language']).toBe('fr');
     expect(typeof responses[0]).toBe('string');
     expect(parseAboutAccountResponseDetail(responses[0])).toMatchObject({
-      ok: true, payload: { version: 1, accountBasedIn: 'United States' },
+      ok: true, payload: { version: 2, accountBasedIn: 'United States', source: null,
+        locationAccurate: null },
     });
     executor.stop(); capture.stop();
   });

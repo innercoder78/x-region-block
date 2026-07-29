@@ -201,7 +201,8 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     .toContain('assets/flags/us.png');
   expect(findLocationBadge(targets.name).textContent).not.toContain('🌐');
   expect(findLocationBadge(targets.name).textContent).not.toContain('North America');
-  expect(findLocationBadge(targets.name).children).toHaveLength(1);
+  expect(findLocationBadge(targets.name).children).toHaveLength(2);
+  expect(findLocationBadge(targets.name).textContent).toContain('Unknown connection method');
   expect(findLocationBadge(targets.name).textContent).not.toContain('Location unavailable');
   expect(console.warn.mock.calls.flat().join('\n'))
     .not.toContain('About Account request queue failed.');
@@ -279,7 +280,8 @@ it('runs the real production page, metadata, transport, broker, route, and prese
     await settle();
     expect(findLocationBadge(outcomeName).textContent).toContain(label);
     if (handle === 'region') {
-      expect(findLocationBadge(outcomeName).textContent).toBe('Region: 🌐 North America');
+      expect(findLocationBadge(outcomeName).textContent)
+        .toBe('Region: 🌐 North America|Unknown connection method');
       expect(findLocationBadge(outcomeName).textContent).not.toContain('Location unknown');
     }
     expect(getAccountAction(outcomeTweet)).toBe('show');

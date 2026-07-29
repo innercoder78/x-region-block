@@ -13,10 +13,16 @@ const compactPayload = (payload) => {
   const root = payload?.data?.user_result_by_screen_name?.result;
   const profile = root?.about_profile;
   if (profile === null || typeof profile !== 'object' || Array.isArray(profile)) throw new TypeError();
-  const present = Object.prototype.hasOwnProperty.call(profile, 'account_based_in');
-  const value = present ? profile.account_based_in : null;
-  if (value !== null && typeof value !== 'string') throw new TypeError();
-  return { version: 1, accountBasedIn: value };
+  const readData = (key, valid) => {
+    const descriptor = Object.getOwnPropertyDescriptor(profile, key);
+    if (descriptor === undefined) return null;
+    if (!Object.prototype.hasOwnProperty.call(descriptor, 'value') || !valid(descriptor.value)) throw new TypeError();
+    return descriptor.value;
+  };
+  const accountBasedIn = readData('account_based_in', (value) => value === null || typeof value === 'string');
+  const source = readData('source', (value) => value === null || typeof value === 'string');
+  const locationAccurate = readData('location_accurate', (value) => value === null || typeof value === 'boolean');
+  return { version: 2, accountBasedIn, source, locationAccurate };
 };
 const statusCode = (status) => {
   if ([400, 401, 403, 404, 429].includes(status)) return `HTTP_${status}`;

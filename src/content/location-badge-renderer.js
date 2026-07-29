@@ -11,6 +11,9 @@ export const LOCATION_BADGE_CLASSES = Object.freeze({
   separator: 'x-region-block-location-separator',
   region: 'x-region-block-location-region',
 });
+const SEGMENT_CLASS = 'x-region-block-location-segment';
+const CONNECTION_CLASS = 'x-region-block-location-connection';
+const VPN_PROXY_CLASS = 'x-region-block-location-vpn-proxy';
 
 const STATUS_ATTRIBUTE = 'data-x-region-block-status';
 const COUNTRY_CODE_ATTRIBUTE = 'data-x-region-block-country-code';
@@ -145,10 +148,12 @@ export function renderLocationBadge(container, location, resolveFlagAssetUrl, op
   root.removeAttribute('tabindex');
   root.removeAttribute('contenteditable');
 
+  let geographicLabel;
   if (display.country !== null) {
     const country = createCountryElement(container.ownerDocument, display.country, resolveFlagAssetUrl, postHeader);
 
-    root.setAttribute('aria-label', display.country.ariaLabel);
+    geographicLabel = display.country.ariaLabel;
+    root.setAttribute('aria-label', geographicLabel);
     root.setAttribute('title', display.country.title);
     root.appendChild(country);
   } else {
@@ -156,12 +161,40 @@ export function renderLocationBadge(container, location, resolveFlagAssetUrl, op
       unavailable: 'Location: Unavailable', unknown: 'Location: Unknown' };
     const semanticLabel = postHeader && statusLabels[display.status]
       ? statusLabels[display.status] : display.region.ariaLabel;
+    geographicLabel = semanticLabel;
     root.setAttribute('aria-label', semanticLabel);
     root.setAttribute('title', postHeader ? semanticLabel : display.region.title);
     const region = postHeader && display.region.code === null
       ? { ...display.region, label: semanticLabel, title: semanticLabel }
       : display.region;
     root.appendChild(createRegionElement(container.ownerDocument, region, postHeader));
+  }
+  if (postHeader && options?.details) {
+    const details = options.details;
+    const segments = [];
+    if (details.locationAccuracy === 'vpn-proxy-detected') {
+      segments.push({ className: VPN_PROXY_CLASS, text: 'VPN/proxy detected' });
+    }
+    segments.push({ className: CONNECTION_CLASS, text: details.connection.label });
+    for (const segment of segments) {
+      const group = container.ownerDocument.createElement('span');
+      group.setAttribute('class', `${SEGMENT_CLASS} ${segment.className}`);
+      group.setAttribute('aria-hidden', 'true');
+      const separator = container.ownerDocument.createElement('span');
+      separator.setAttribute('class', LOCATION_BADGE_CLASSES.separator);
+      separator.setAttribute('aria-hidden', 'true');
+      separator.textContent = '|';
+      const text = container.ownerDocument.createElement('span');
+      text.textContent = segment.text;
+      group.appendChild(separator); group.appendChild(text); root.appendChild(group);
+    }
+    const semantic = [geographicLabel];
+    if (details.locationAccuracy === 'vpn-proxy-detected') semantic.push('VPN or proxy detected');
+    semantic.push(details.connection.label);
+    root.setAttribute('aria-label', `${semantic.join('. ')}.`);
+    if (details.connection.rawSource !== null) {
+      root.setAttribute('title', `Reported account source: ${details.connection.rawSource}`);
+    }
   }
   return root;
 }

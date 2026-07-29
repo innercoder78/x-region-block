@@ -7,12 +7,10 @@ import { ACCOUNT_TARGET_DISCOVERY_VERSION } from './account-target-discovery.js'
 import { ACCOUNT_TARGET_OBSERVER_VERSION } from './account-target-observer.js';
 import { findLocationBadge, removeLocationBadge } from './location-badge-renderer.js';
 import { ACCOUNT_IDENTITY_SOURCES, createAccountIdentity } from '../shared/account-identity.js';
-import { createUnavailableLocation } from '../shared/location-model.js';
 import { normalizeSettings } from '../shared/settings-schema.js';
 import {
-  parseXAboutAccountLocationPayload,
-  X_ABOUT_ACCOUNT_LOCATION_SOURCE,
-} from '../shared/x-about-account-location.js';
+  createUnavailableXAboutAccountDetails, parseXAboutAccountDetailsPayload,
+} from '../shared/x-about-account-details.js';
 import { X_ABOUT_ACCOUNT_RECOVERY_CODES } from '../shared/x-about-account-recovery.js';
 
 export const ACCOUNT_TARGET_PROCESSOR_VERSION = 1;
@@ -193,7 +191,7 @@ export function createXAccountTargetProcessor(options) {
   };
   const removeAction = (target) => removeAccountAction(target.accountContainer);
 
-  const present = (target, location) => {
+  const present = (target, details) => {
     let identity;
     try { identity = readXAccountIdentityFromLink(target.link, readerOptions()); } catch {
       identity = null;
@@ -205,15 +203,16 @@ export function createXAccountTargetProcessor(options) {
       return;
     }
     const observation = normalized.hasBaseUrl
-      ? { source: normalized.source, location, baseUrl: normalized.baseUrl }
-      : { source: normalized.source, location };
+      ? { source: normalized.source, location: details.location, baseUrl: normalized.baseUrl }
+      : { source: normalized.source, location: details.location };
     try {
       const isPost = target.source === 'timeline' || target.source === 'reply';
       const host = isPost ? reconcilePostLocationHeader(target) : target.badgeContainer;
       const evaluation = isPost && host === null
         ? evaluateXAccountLink(target.link, observation, settings)
         : isPost && host !== target.badgeContainer
-        ? presentXAccountLinkInPost(target.link, host, observation, settings, normalized.resolveFlagAssetUrl)
+        ? presentXAccountLinkInPost(target.link, host, observation, settings,
+          normalized.resolveFlagAssetUrl, details)
         : presentXAccountLink(target.link, host, observation, settings, normalized.resolveFlagAssetUrl);
       if (evaluation === null) removeAction(target);
       else applyAccountAction(target.accountContainer, evaluation.action);
@@ -224,7 +223,7 @@ export function createXAccountTargetProcessor(options) {
   };
   const presentEntry = (entry) => {
     for (const target of targets) {
-      if (entry.targets.has(target) && entry.location !== null) present(target, entry.location);
+      if (entry.targets.has(target) && entry.details !== null) present(target, entry.details);
     }
   };
   const isCurrent = (entry) => active && entry.live && entry.generation === generation
@@ -234,7 +233,7 @@ export function createXAccountTargetProcessor(options) {
     entry.pending = null;
     entry.controller = null;
     if (error?.name === 'AbortError' || error?.code === 'ABORTED') return;
-    entry.location = createUnavailableLocation({ source: X_ABOUT_ACCOUNT_LOCATION_SOURCE });
+    entry.details = createUnavailableXAboutAccountDetails();
     entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
       || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
     report(sanitizedDiagnosticError(error, message));
@@ -270,15 +269,15 @@ export function createXAccountTargetProcessor(options) {
     }
     promise.then((payload) => {
       if (!isCurrent(entry) || entry.pending !== promise) return;
-      let location;
-      try { location = parseXAboutAccountLocationPayload(payload); } catch {
+      let details;
+      try { details = parseXAboutAccountDetailsPayload(payload); } catch {
         resolveFailure(entry, 'Unable to parse account location');
         return;
       }
       if (!isCurrent(entry) || entry.pending !== promise) return;
       entry.pending = null;
       entry.controller = null;
-      entry.location = location;
+      entry.details = details;
       presentEntry(entry);
     }, (error) => resolveFailure(entry, 'Unable to load account location', error));
   };
@@ -290,7 +289,7 @@ export function createXAccountTargetProcessor(options) {
       const controller = entry.controller;
       entry.pending = null;
       entry.controller = null;
-      entry.location = null;
+      entry.details = null;
       if (controller !== null) {
         try { controller.abort(); } catch { /* Cancellation failure is intentionally silent. */ }
       }
@@ -313,7 +312,7 @@ export function createXAccountTargetProcessor(options) {
       const controller = entry.controller;
       entry.pending = null;
       entry.controller = null;
-      entry.location = null;
+      entry.details = null;
       entry.targets.clear();
       if (controller !== null) {
         try { controller.abort(); } catch { failed = true; }
@@ -362,7 +361,7 @@ export function createXAccountTargetProcessor(options) {
           targets: new Set(),
           pending: null,
           controller: null,
-          location: null,
+          details: null,
           generation,
           live: true,
           recoverable: false,
@@ -371,11 +370,11 @@ export function createXAccountTargetProcessor(options) {
         entriesToStart.push(entry);
       }
       entry.targets.add(target);
-      if (entry.location !== null) present(target, entry.location);
+      if (entry.details !== null) present(target, entry.details);
     }
     retireEmptyEntries();
     for (const entry of entriesToStart) {
-      if (isCurrent(entry) && entry.pending === null && entry.location === null) startLookup(entry);
+      if (isCurrent(entry) && entry.pending === null && entry.details === null) startLookup(entry);
     }
     if (cleanupFailed) report(new Error('Unable to remove account location badge'));
     if (actionCleanupFailed) report(new Error('Unable to remove account filter action'));
@@ -387,7 +386,7 @@ export function createXAccountTargetProcessor(options) {
     if (active) {
       for (const target of targets) {
         const entry = accounts.get(target.identity.allowlistKey);
-        if (entry?.location !== null && entry?.location !== undefined) present(target, entry.location);
+        if (entry?.details !== null && entry?.details !== undefined) present(target, entry.details);
       }
     }
     return settings;
@@ -399,7 +398,7 @@ export function createXAccountTargetProcessor(options) {
     for (const entry of accounts.values()) {
       if (!entry.recoverable || !isCurrent(entry) || entry.pending !== null) continue;
       entry.recoverable = false;
-      entry.location = null;
+      entry.details = null;
       startLookup(entry);
       count += 1;
     }
