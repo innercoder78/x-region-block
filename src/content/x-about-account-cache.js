@@ -109,7 +109,7 @@ export function createXAboutAccountCacheRepository(options) {
     if (!entry) return null;
     const timestamp = now();
     if (entry.expiresAt <= timestamp) { entries.delete(key); scheduleWrite(); return null; }
-    entries.delete(key); entry.lastAccessAt = timestamp; entries.set(key, entry); scheduleWrite();
+    entries.delete(key); entry.lastAccessAt = timestamp; entries.set(key, entry);
     return entry.payload;
   };
   const put = async (identity, value) => {

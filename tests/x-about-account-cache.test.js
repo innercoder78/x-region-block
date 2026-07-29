@@ -44,13 +44,37 @@ describe('persistent About Account cache', () => {
     time += 1; await expect(cache.get(identity())).resolves.toBeNull(); await cache.stop();
   });
 
-  it('does not extend expiration when a hit updates LRU access ordering', async () => {
+  it('does not extend expiration when a hit updates in-memory LRU access ordering', async () => {
     const storage = fakeStorage(); let time = 1_000; const cache = repository(storage, { now: () => time });
-    await cache.put(identity(), known); time += 6 * DAY; await cache.get(identity()); await cache.flush();
+    await cache.put(identity(), known); await cache.flush(); time += 6 * DAY; await cache.get(identity());
     expect(storage.data[X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY].entries[0]).toMatchObject({
-      createdAt: 1_000, expiresAt: 1_000 + TTL, lastAccessAt: 1_000 + 6 * DAY,
+      createdAt: 1_000, expiresAt: 1_000 + TTL, lastAccessAt: 1_000,
     });
     time = 1_000 + TTL; await expect(cache.get(identity())).resolves.toBeNull(); await cache.stop();
+  });
+
+  it('repeated fresh hits neither write storage nor create a debounced write timer', async () => {
+    const storage = fakeStorage({ [X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY]: { schemaVersion: 2,
+      entries: [storedEntry('handle:openai', 0, TTL)] } });
+    const setTimer = vi.fn(); const cache = repository(storage, { now: () => DAY, setTimeout: setTimer });
+    await cache.initialize();
+    await expect(cache.get(identity())).resolves.toEqual(known);
+    await expect(cache.get(identity())).resolves.toEqual(known);
+    await expect(cache.get(identity())).resolves.toEqual(known);
+    expect(storage.set).not.toHaveBeenCalled(); expect(setTimer).not.toHaveBeenCalled(); await cache.stop();
+  });
+
+  it('persists read-updated ordering and timestamps naturally with the next genuine mutation', async () => {
+    const storage = fakeStorage({ [X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY]: { schemaVersion: 2, entries: [
+      storedEntry('handle:first', 0, TTL, 10), storedEntry('handle:second', 0, TTL, 20),
+    ] } });
+    let time = 100; const cache = repository(storage, { maximumEntries: 2, now: () => time }); await cache.initialize();
+    await cache.get(identity('timeline', null, 'First')); expect(storage.set).not.toHaveBeenCalled();
+    time = 200; await cache.put(identity('timeline', null, 'Third'), known); await cache.flush();
+    expect(storage.data[X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY].entries).toEqual([
+      storedEntry('handle:first', 0, TTL, 100), storedEntry('handle:third', 200, 200 + TTL),
+    ]);
+    await expect(cache.get(identity('profile', null, 'Second'))).resolves.toBeNull(); await cache.stop();
   });
 
   it('expires rolling cohorts independently', async () => {
