@@ -2,9 +2,9 @@ import { createAccountIdentity } from '../shared/account-identity.js';
 import { parseXAboutAccountDetailsPayload } from '../shared/x-about-account-details.js';
 
 export const X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY = 'xAboutAccountCacheV1';
-const SCHEMA_VERSION = 1;
-const KNOWN_TTL = 24 * 60 * 60 * 1000;
-const UNKNOWN_TTL = 60 * 60 * 1000;
+const LEGACY_SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+const RETENTION_PERIOD = 7 * 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 10_000;
 const WRITE_DELAY = 1_000;
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -57,6 +57,13 @@ export function createXAboutAccountCacheRepository(options) {
     dirty = true;
     if (timer === null && active) timer = setTimer(() => { timer = null; void flush(); }, WRITE_DELAY);
   };
+  const purgeExpired = (timestamp) => {
+    let removed = false;
+    for (const [key, entry] of entries) {
+      if (entry.expiresAt <= timestamp) { entries.delete(key); removed = true; }
+    }
+    if (removed) scheduleWrite();
+  };
   const initialize = () => {
     if (initialized) return Promise.resolve();
     if (initializePromise !== null) return initializePromise;
@@ -66,7 +73,8 @@ export function createXAboutAccountCacheRepository(options) {
         ? Object.getOwnPropertyDescriptor(stored, X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY) : null;
       const root = storedDescriptor && own(storedDescriptor, 'value') ? storedDescriptor.value : null;
       if (root === undefined) { initialized = true; return; }
-      if (!exactData(root, ['schemaVersion', 'entries']) || read(root, 'schemaVersion') !== SCHEMA_VERSION
+      const schemaVersion = exactData(root, ['schemaVersion', 'entries']) ? read(root, 'schemaVersion') : null;
+      if (schemaVersion !== SCHEMA_VERSION && schemaVersion !== LEGACY_SCHEMA_VERSION
         || !Array.isArray(read(root, 'entries')) || read(root, 'entries').length > MAX_ENTRIES) {
         initialized = true; void storage.remove(X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY).catch(report); return;
       }
@@ -77,14 +85,20 @@ export function createXAboutAccountCacheRepository(options) {
         const times = ['createdAt', 'expiresAt', 'lastAccessAt'].map((name) => read(item, name));
         if (typeof key !== 'string' || key.length > 40 || !/^(?:id:\d+|handle:[a-z0-9_]{1,15})$/.test(key)
           || compact === null || times.some((time) => !Number.isSafeInteger(time) || time < 0)) { malformed = true; break; }
-        loaded.push([key, { payload: compact, createdAt: times[0], expiresAt: times[1], lastAccessAt: times[2] }]);
+        const expiresAt = schemaVersion === LEGACY_SCHEMA_VERSION ? times[0] + RETENTION_PERIOD : times[1];
+        if (!Number.isSafeInteger(expiresAt)
+          || schemaVersion === SCHEMA_VERSION && expiresAt !== times[0] + RETENTION_PERIOD) { malformed = true; break; }
+        loaded.push([key, { payload: compact, createdAt: times[0], expiresAt, lastAccessAt: times[2] }]);
       }
       if (malformed) {
         initialized = true; void storage.remove(X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY).catch(report); return;
       }
       loaded.sort((a, b) => a[1].lastAccessAt - b[1].lastAccessAt || a[1].createdAt - b[1].createdAt
         || a[0].localeCompare(b[0]));
-      entries = new Map(loaded.slice(-maximum)); initialized = true;
+      const timestamp = now();
+      const retained = loaded.filter(([, entry]) => entry.expiresAt > timestamp).slice(-maximum);
+      entries = new Map(retained); initialized = true;
+      if (schemaVersion === LEGACY_SCHEMA_VERSION || retained.length !== loaded.length) scheduleWrite();
     }).catch(() => { if (active) initialized = true; report(); }).finally(() => { initializePromise = null; });
     return initializePromise;
   };
@@ -93,8 +107,9 @@ export function createXAboutAccountCacheRepository(options) {
     if (!active) return null;
     const entry = entries.get(key);
     if (!entry) return null;
-    if (entry.expiresAt <= now()) { entries.delete(key); return null; }
-    entries.delete(key); entry.lastAccessAt = now(); entries.set(key, entry);
+    const timestamp = now();
+    if (entry.expiresAt <= timestamp) { entries.delete(key); scheduleWrite(); return null; }
+    entries.delete(key); entry.lastAccessAt = timestamp; entries.set(key, entry);
     return entry.payload;
   };
   const put = async (identity, value) => {
@@ -102,10 +117,9 @@ export function createXAboutAccountCacheRepository(options) {
     if (compact === null) throw new TypeError('Invalid About Account cache payload');
     await initialize(); if (!active) return compact;
     const timestamp = now();
-    const details = parseXAboutAccountDetailsPayload(compact);
-    const known = details.location.status === 'known';
+    purgeExpired(timestamp);
     entries.delete(key); entries.set(key, { payload: compact, createdAt: timestamp,
-      expiresAt: timestamp + (known ? KNOWN_TTL : UNKNOWN_TTL), lastAccessAt: timestamp });
+      expiresAt: timestamp + RETENTION_PERIOD, lastAccessAt: timestamp });
     while (entries.size > maximum) entries.delete(entries.keys().next().value);
     scheduleWrite(); return compact;
   };
