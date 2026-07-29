@@ -29,9 +29,11 @@ describe('production source privacy boundaries', () => {
       } else expect(source, term).not.toContain(term);
     }
     const runtime = sources.find(([file]) => file === 'src/content/x-production-runtime.js')[1];
-    expect(runtime.match(/\bsetTimeout/g)).toHaveLength(7);
+    expect(runtime.match(/\bsetTimeout/g)).toHaveLength(12);
     expect(runtime).toContain('dependencies.setTimeout(() =>');
     expect(runtime).toContain('metadataScheduleTimer');
+    expect(runtime).toContain('recoverableRetryTimer');
+    expect(runtime).toContain('transientRecoveryTimer');
     expect(runtime).toContain('clearTimeout');
   });
 
@@ -48,7 +50,7 @@ describe('production source privacy boundaries', () => {
     expect(source).not.toMatch(/\bstopped\s*:\s*new Set\s*\(/);
     for (const field of [
       'bridge', 'injector', 'settingsCandidate', 'settingsRuntime',
-      'routeCandidate', 'routeController',
+      'routeCandidate', 'routeController', 'cache',
     ]) {
       expect(source).toContain(`state[key] = null`);
       expect(source).toContain(`stopComponent(state, '${field}'`);

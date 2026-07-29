@@ -2250,18 +2250,18 @@
   const X_ABOUT_ACCOUNT_LOCATION_ACCURACY_STATES = Object.freeze([
     'accurate', 'vpn-proxy-detected', 'unknown',
   ]);
-  const own$1 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-  const plain$3 = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+  const own$2 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const plain$4 = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
     && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
   const data = (value, key) => {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (!descriptor || !own$1(descriptor, 'value')) throw new TypeError('Accessors are not supported');
+    if (!descriptor || !own$2(descriptor, 'value')) throw new TypeError('Accessors are not supported');
     return descriptor.value;
   };
-  const exact$1 = (value, keys) => plain$3(value) && Reflect.ownKeys(value).length === keys.length
+  const exact$1 = (value, keys) => plain$4(value) && Reflect.ownKeys(value).length === keys.length
     && Reflect.ownKeys(value).every((key) => typeof key === 'string')
-    && keys.every((key) => own$1(value, key)
-      && own$1(Object.getOwnPropertyDescriptor(value, key) ?? {}, 'value'));
+    && keys.every((key) => own$2(value, key)
+      && own$2(Object.getOwnPropertyDescriptor(value, key) ?? {}, 'value'));
 
   const canonicalLocation = (location) => {
     const keys = ['status', 'countryCode', 'countryName', 'regionCode', 'regionName', 'rawLocation', 'source'];
@@ -2296,9 +2296,9 @@
     });
   }
   function parseXAboutAccountDetailsPayload(payload) {
-    if (!plain$3(payload)) throw new TypeError('X About Account payload must be a plain object');
+    if (!plain$4(payload)) throw new TypeError('X About Account payload must be a plain object');
     const versionDescriptor = Object.getOwnPropertyDescriptor(payload, 'version');
-    if (versionDescriptor && !own$1(versionDescriptor, 'value')) throw new TypeError('Accessors are not supported');
+    if (versionDescriptor && !own$2(versionDescriptor, 'value')) throw new TypeError('Accessors are not supported');
     const version = versionDescriptor?.value;
     if (version === 1) {
       if (!exact$1(payload, ['version', 'accountBasedIn'])) throw new TypeError('Invalid version 1 payload');
@@ -2306,7 +2306,7 @@
         connection: classifyXAboutAccountConnectionSource(null), locationAccuracy: 'unknown' });
     }
     // Retain the established direct GraphQL parser path used by non-MAIN-world consumers.
-    if (!own$1(payload, 'version')) return createXAboutAccountDetails({
+    if (!own$2(payload, 'version')) return createXAboutAccountDetails({
       location: parseXAboutAccountLocationPayload(payload),
       connection: classifyXAboutAccountConnectionSource(null), locationAccuracy: 'unknown',
     });
@@ -2551,11 +2551,13 @@
       entry.pending = null;
       entry.controller = null;
       if (error?.name === 'AbortError' || error?.code === 'ABORTED') return;
-      entry.details = createUnavailableXAboutAccountDetails();
-      entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
+      const transient = ['HTTP_429', 'NETWORK', 'HTTP_5XX', 'BRIDGE_TIMEOUT',
+        'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC'].includes(error?.code);
+      if (!transient) entry.details = createUnavailableXAboutAccountDetails();
+      entry.recoverable = transient || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
         || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
       report(sanitizedDiagnosticError(error, message));
-      presentEntry(entry);
+      if (!transient) presentEntry(entry);
     };
     const startLookup = (entry) => {
       let controller;
@@ -3216,13 +3218,13 @@
     'resolveFlagAssetUrl',
   ]);
 
-  function plain$2(value) {
+  function plain$3(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
     try { return Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null; } catch { return false; }
   }
 
   function normalizeOptions(options) {
-    if (!plain$2(options)) throw new TypeError('account target route session options must be a plain object');
+    if (!plain$3(options)) throw new TypeError('account target route session options must be a plain object');
     let keys;
     try { keys = Reflect.ownKeys(options); } catch { throw new TypeError('Invalid account target route session options'); }
     if (keys.includes('accountId')) {
@@ -4158,11 +4160,11 @@
   const CODES = new Set(['ABORTED', 'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC', 'NETWORK',
     'HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404', 'HTTP_429', 'HTTP_5XX',
     'INVALID_RESPONSE', 'INVALID_PAYLOAD', 'BRIDGE_TIMEOUT', 'UNKNOWN']);
-  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-  const plain$1 = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+  const own$1 = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const plain$2 = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
     && Object.getPrototypeOf(value) === Object.prototype;
-  const exact = (value, keys) => plain$1(value) && Reflect.ownKeys(value).length === keys.length
-    && Reflect.ownKeys(value).every((key) => typeof key === 'string') && keys.every((key) => own(value, key));
+  const exact = (value, keys) => plain$2(value) && Reflect.ownKeys(value).length === keys.length
+    && Reflect.ownKeys(value).every((key) => typeof key === 'string') && keys.every((key) => own$1(value, key));
   const validStatus = (value) => value === null
     || (Number.isInteger(value) && value >= 100 && value <= 599);
   const validRetry = (value) => value === null
@@ -4470,8 +4472,10 @@
       hasSnapshot: () => snapshot !== null, isActive: () => active });
   }
 
-  const MAX_IN_FLIGHT = 4;
-  const START_INTERVAL = 200;
+  const MAX_IN_FLIGHT = 2;
+  const START_INTERVAL = 750;
+  const RATE_LIMIT_FALLBACKS = [60_000, 120_000, 300_000, 900_000, 1_800_000];
+  const MAX_COOLDOWN = 24 * 60 * 60 * 1000;
   const BRIDGE_TIMEOUT = 30_000;
   const SYNCHRONIZATION_TIMEOUT = 30_000;
   const abortError = () => Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
@@ -4486,8 +4490,12 @@
     const setTimer = options.setTimeout ?? ((callback, ms) => setTimeout(callback, ms));
     const clearTimer = options.clearTimeout ?? ((timer) => clearTimeout(timer));
     const onMetadataRejected = options.onMetadataRejected ?? (() => {});
+    const onCooldownComplete = options.onCooldownComplete ?? (() => {});
+    const onSuccessfulResponse = options.onSuccessfulResponse ?? (() => {});
+    const onTerminalFailure = options.onTerminalFailure ?? (() => {});
     let sequence = 0; let active = true; let inFlight = 0; let lastStart = -Infinity;
-    let cooldownUntil = 0; let scheduleTimer = null; let resumeTimer = null;
+    let cooldownUntil = 0; let scheduleTimer = null; let resumeTimer = null; let cooldownTimer = null;
+    let consecutiveRateLimits = 0;
     let recoveryState = null;
     const blockedMetadata = { auth: new Set(), query: new Set() };
     const queue = []; const pending = new Map(); const waitingMetadata = new Set();
@@ -4497,6 +4505,21 @@
     const dispatchCancellation = (id) => {
       try { dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(id)); }
       catch { /* Cancellation cleanup never depends on page event delivery. */ }
+    };
+    const reportTerminalFailure = (code) => {
+      if (!['NETWORK', 'HTTP_5XX', 'BRIDGE_TIMEOUT', 'PAGE_BRIDGE_UNAVAILABLE'].includes(code)) return;
+      try { onTerminalFailure(code); } catch { /* lifecycle owner reports failures */ }
+    };
+    const armCooldownTimer = () => {
+      if (!active) return;
+      if (cooldownTimer !== null) clearTimer(cooldownTimer);
+      cooldownTimer = setTimer(() => {
+        cooldownTimer = null;
+        if (!active) return;
+        if (now() < cooldownUntil) { armCooldownTimer(); schedule(); return; }
+        try { onCooldownComplete(); } catch { /* lifecycle owner reports failures */ }
+        schedule();
+      }, Math.max(0, cooldownUntil - now()));
     };
     const schedule = () => {
       if (!active || scheduleTimer !== null || blockedMetadata.auth.size > 0
@@ -4514,19 +4537,22 @@
       entry.attemptQuery = recoveryState?.queryId ?? null;
       if (entry.attemptRevision === null) {
         entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
+        reportTerminalFailure('PAGE_BRIDGE_UNAVAILABLE');
         entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
       }
       try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
         serializeAboutAccountRequest(entry.id, entry.handle, entry.attemptRevision)); }
       catch {
         entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
+        reportTerminalFailure('PAGE_BRIDGE_UNAVAILABLE');
         entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
       }
       entry.attemptTimer = setTimer(() => {
         if (!active || !entry.started || pending.get(entry.id) !== entry) return;
         entry.attemptTimer = null; entry.started = false; inFlight = Math.max(0, inFlight - 1);
         dispatchCancellation(entry.id);
-        pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('BRIDGE_TIMEOUT'));
+        pending.delete(entry.id); entry.cleanup(); reportTerminalFailure('BRIDGE_TIMEOUT');
+        entry.reject(codedError('BRIDGE_TIMEOUT'));
         schedule();
       }, BRIDGE_TIMEOUT);
       schedule();
@@ -4555,7 +4581,11 @@
       if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
       entry.started = false; inFlight = Math.max(0, inFlight - 1);
       if (entry.cancelled) { schedule(); return; }
-      if (result.ok) { pending.delete(entry.id); entry.cleanup(); entry.resolve(result.payload); schedule(); return; }
+      if (result.ok) {
+        consecutiveRateLimits = 0; pending.delete(entry.id); entry.cleanup();
+        try { onSuccessfulResponse(); } catch { /* lifecycle owner reports failures */ }
+        entry.resolve(result.payload); schedule(); return;
+      }
       const rejectionCode = ['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(result.code);
       const code = rejectionCode && result.metadataRevision !== entry.attemptRevision
         ? 'METADATA_SYNC' : result.code;
@@ -4574,7 +4604,12 @@
           schedule(); return;
         }
       } else if (code === 'HTTP_429') {
-        cooldownUntil = Math.max(cooldownUntil, now() + Math.min(300_000, result.retryAfterMs ?? 60_000));
+        consecutiveRateLimits += 1;
+        const fallback = RATE_LIMIT_FALLBACKS[Math.min(consecutiveRateLimits - 1, RATE_LIMIT_FALLBACKS.length - 1)];
+        const supplied = Number.isFinite(result.retryAfterMs) && result.retryAfterMs > 0
+          ? Math.min(MAX_COOLDOWN, result.retryAfterMs) : 0;
+        cooldownUntil = Math.max(cooldownUntil, now() + Math.max(60_000, supplied || fallback));
+        armCooldownTimer();
         if (entry.rateRetries++ < 1) retryDelay = 0;
       } else if ((code === 'NETWORK' || code === 'HTTP_5XX') && entry.transientRetries < 2) {
         retryDelay = 1000 * (2 ** entry.transientRetries); entry.transientRetries += 1;
@@ -4604,6 +4639,7 @@
         }, retryDelay);
       } else {
         pending.delete(entry.id); entry.cleanup();
+        reportTerminalFailure(code);
         entry.reject(code === 'ABORTED' ? abortError() : codedError(code, result.status));
       }
       schedule();
@@ -4693,6 +4729,7 @@
       if (!active) return; active = false;
       if (scheduleTimer !== null) { clearTimer(scheduleTimer); scheduleTimer = null; }
       if (resumeTimer !== null) { clearTimer(resumeTimer); resumeTimer = null; }
+      if (cooldownTimer !== null) { clearTimer(cooldownTimer); cooldownTimer = null; }
       document.removeEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
       for (const entry of pending.values()) {
         entry.cancelled = true; entry.cleanup();
@@ -4711,7 +4748,7 @@
 
   const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 
-  function plain(value) {
+  function plain$1(value) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
     try { return [Object.prototype, null].includes(Object.getPrototypeOf(value)); } catch { return false; }
   }
@@ -4730,7 +4767,7 @@
         || typeof document.addEventListener !== 'function'
         || typeof document.removeEventListener !== 'function') throw new Error();
     } catch { throw new TypeError('Invalid X navigation observer global scope'); }
-    if (!plain(options)) throw new TypeError('X navigation observer options must be a plain object');
+    if (!plain$1(options)) throw new TypeError('X navigation observer options must be a plain object');
     let keys;
     try { keys = Reflect.ownKeys(options); } catch { throw new TypeError('Invalid X navigation observer options'); }
     if (keys.length !== 2 || keys.some((key) => typeof key !== 'string')
@@ -5144,6 +5181,124 @@
     type: OPEN_OPTIONS_MESSAGE_TYPE,
   });
 
+  const X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY = 'xAboutAccountCacheV1';
+  const SCHEMA_VERSION = 1;
+  const KNOWN_TTL = 24 * 60 * 60 * 1000;
+  const UNKNOWN_TTL = 60 * 60 * 1000;
+  const MAX_ENTRIES = 10_000;
+  const WRITE_DELAY = 1_000;
+  const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+  const exactData = (value, keys) => plain(value) && Reflect.ownKeys(value).length === keys.length
+    && keys.every((key) => own(value, key)
+      && own(Object.getOwnPropertyDescriptor(value, key) ?? {}, 'value'));
+  const read = (value, key) => Object.getOwnPropertyDescriptor(value, key).value;
+
+  function payload(value) {
+    if (!exactData(value, ['version', 'accountBasedIn', 'source', 'locationAccurate'])) return null;
+    const copy = { version: read(value, 'version'), accountBasedIn: read(value, 'accountBasedIn'),
+      source: read(value, 'source'), locationAccurate: read(value, 'locationAccurate') };
+    try { parseXAboutAccountDetailsPayload(copy); } catch { return null; }
+    return Object.freeze(copy);
+  }
+
+  function keyFor(identity) {
+    const canonical = createAccountIdentity(identity);
+    return canonical.accountId === null ? `handle:${canonical.handle}` : `id:${canonical.accountId}`;
+  }
+
+  function createXAboutAccountCacheRepository(options) {
+    if (!plain(options) || typeof options.storage?.get !== 'function'
+      || typeof options.storage?.set !== 'function' || typeof options.storage?.remove !== 'function') {
+      throw new TypeError('Invalid About Account cache options');
+    }
+    const storage = options.storage;
+    const now = options.now ?? (() => Date.now());
+    const setTimer = options.setTimeout ?? setTimeout;
+    const clearTimer = options.clearTimeout ?? clearTimeout;
+    const onError = options.onError ?? (() => {});
+    const maximum = options.maximumEntries ?? MAX_ENTRIES;
+    if (!Number.isInteger(maximum) || maximum < 1 || maximum > MAX_ENTRIES) throw new TypeError('Invalid cache limit');
+    let active = true; let initialized = false; let initializePromise = null; let timer = null;
+    let entries = new Map(); let dirty = false;
+    const report = () => { try { onError(new Error('About Account local cache storage failed')); } catch { /* local */ } };
+    const serialize = () => ({ schemaVersion: SCHEMA_VERSION, entries: [...entries].map(([key, entry]) => ({
+      key, createdAt: entry.createdAt, expiresAt: entry.expiresAt, lastAccessAt: entry.lastAccessAt,
+      payload: entry.payload,
+    })) });
+    const flush = async () => {
+      if (timer !== null) { clearTimer(timer); timer = null; }
+      if (!dirty || !active) return;
+      dirty = false;
+      try { await storage.set({ [X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY]: serialize() }); } catch { dirty = true; report(); }
+    };
+    const scheduleWrite = () => {
+      dirty = true;
+      if (timer === null && active) timer = setTimer(() => { timer = null; void flush(); }, WRITE_DELAY);
+    };
+    const initialize = () => {
+      if (initialized) return Promise.resolve();
+      if (initializePromise !== null) return initializePromise;
+      initializePromise = Promise.resolve().then(() => storage.get(X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY)).then((stored) => {
+        if (!active) return;
+        const storedDescriptor = plain(stored)
+          ? Object.getOwnPropertyDescriptor(stored, X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY) : null;
+        const root = storedDescriptor && own(storedDescriptor, 'value') ? storedDescriptor.value : null;
+        if (root === undefined) { initialized = true; return; }
+        if (!exactData(root, ['schemaVersion', 'entries']) || read(root, 'schemaVersion') !== SCHEMA_VERSION
+          || !Array.isArray(read(root, 'entries')) || read(root, 'entries').length > MAX_ENTRIES) {
+          initialized = true; void storage.remove(X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY).catch(report); return;
+        }
+        const loaded = []; let malformed = false;
+        for (const item of read(root, 'entries')) {
+          if (!exactData(item, ['key', 'createdAt', 'expiresAt', 'lastAccessAt', 'payload'])) { malformed = true; break; }
+          const key = read(item, 'key'); const compact = payload(read(item, 'payload'));
+          const times = ['createdAt', 'expiresAt', 'lastAccessAt'].map((name) => read(item, name));
+          if (typeof key !== 'string' || key.length > 40 || !/^(?:id:\d+|handle:[a-z0-9_]{1,15})$/.test(key)
+            || compact === null || times.some((time) => !Number.isSafeInteger(time) || time < 0)) { malformed = true; break; }
+          loaded.push([key, { payload: compact, createdAt: times[0], expiresAt: times[1], lastAccessAt: times[2] }]);
+        }
+        if (malformed) {
+          initialized = true; void storage.remove(X_ABOUT_ACCOUNT_CACHE_STORAGE_KEY).catch(report); return;
+        }
+        loaded.sort((a, b) => a[1].lastAccessAt - b[1].lastAccessAt || a[1].createdAt - b[1].createdAt
+          || a[0].localeCompare(b[0]));
+        entries = new Map(loaded.slice(-maximum)); initialized = true;
+      }).catch(() => { if (active) initialized = true; report(); }).finally(() => { initializePromise = null; });
+      return initializePromise;
+    };
+    const get = async (identity) => {
+      const key = keyFor(identity); await initialize();
+      if (!active) return null;
+      const entry = entries.get(key);
+      if (!entry) return null;
+      if (entry.expiresAt <= now()) { entries.delete(key); return null; }
+      entries.delete(key); entry.lastAccessAt = now(); entries.set(key, entry);
+      return entry.payload;
+    };
+    const put = async (identity, value) => {
+      const key = keyFor(identity); const compact = payload(value);
+      if (compact === null) throw new TypeError('Invalid About Account cache payload');
+      await initialize(); if (!active) return compact;
+      const timestamp = now();
+      const details = parseXAboutAccountDetailsPayload(compact);
+      const known = details.location.status === 'known';
+      entries.delete(key); entries.set(key, { payload: compact, createdAt: timestamp,
+        expiresAt: timestamp + (known ? KNOWN_TTL : UNKNOWN_TTL), lastAccessAt: timestamp });
+      while (entries.size > maximum) entries.delete(entries.keys().next().value);
+      scheduleWrite(); return compact;
+    };
+    const loadPayload = async (identity, context, loader) => {
+      const hit = await get(identity); if (hit !== null) return hit;
+      const result = await loader(identity, context); return put(identity, result);
+    };
+    return Object.freeze({ initialize, get, put, loadPayload, flush, stop: async () => {
+      if (!active) return; await initialize(); await flush(); active = false;
+      if (timer !== null) clearTimer(timer); timer = null; entries.clear(); entries = new Map();
+    } });
+  }
+
   const supportedOrigins = new Set(['https://x.com', 'https://twitter.com']);
 
   function createDiagnostic(globalScope) {
@@ -5300,6 +5455,7 @@
       stopComponent(state, 'routeCandidate');
       stopComponent(state, 'routeController', 'routeCandidateStopped');
       stopComponent(state, 'transport');
+      stopComponent(state, 'cache');
       stopComponent(state, 'bridge');
       stopComponent(state, 'settingsCandidate');
       stopComponent(state, 'settingsRuntime');
@@ -5309,6 +5465,12 @@
       state.metadataCheckPending = false;
       if (state.metadataScheduleTimer !== null) {
         dependencies.clearTimeout(state.metadataScheduleTimer); state.metadataScheduleTimer = null;
+      }
+      if (state.recoverableRetryTimer !== null) {
+        dependencies.clearTimeout(state.recoverableRetryTimer); state.recoverableRetryTimer = null;
+      }
+      if (state.transientRecoveryTimer !== null) {
+        dependencies.clearTimeout(state.transientRecoveryTimer); state.transientRecoveryTimer = null;
       }
       state.prerequisitesReady = false;
     };
@@ -5338,19 +5500,47 @@
       try {
         const recoveryState = typeof state.bridge.getRecoveryState === 'function'
           ? state.bridge.getRecoveryState() : undefined;
+        state.acceptedRecoveryGeneration = recoveryState?.generation ?? 0;
+        state.acceptedRecoveryRevision = recoveryState?.revision ?? 0;
+        const retryRecoverableSoon = () => {
+          if (!owned(state) || state.recoverableRetryTimer !== null) return;
+          state.recoverableRetryTimer = dependencies.setTimeout(() => {
+            state.recoverableRetryTimer = null;
+            if (owned(state) && state.routeController === candidate) candidate.retryRecoverable();
+          }, 0);
+        };
         const transport = createXAboutAccountPageTransport({
           document: dependencies.document, CustomEvent: dependencies.CustomEvent,
         }, {
           recoveryState,
           onMetadataRejected: (kind, revision, rejectedValue) =>
             state.bridge.invalidateRecovery?.(kind, revision, rejectedValue),
+          onCooldownComplete: () => {
+            if (owned(state) && state.routeController === candidate) candidate.retryRecoverable();
+          },
+          onTerminalFailure: () => {
+            if (!owned(state) || state.nonRateRecoveryUsed || state.transientRecoveryTimer !== null) return;
+            state.nonRateRecoveryUsed = true;
+            state.transientRecoveryTimer = dependencies.setTimeout(() => {
+              state.transientRecoveryTimer = null;
+              if (owned(state) && state.routeController === candidate) candidate.retryRecoverable();
+            }, 60_000);
+          },
+          onSuccessfulResponse: () => {
+            if (!owned(state)) return;
+            state.nonRateRecoveryUsed = false;
+            if (state.transientRecoveryTimer !== null) {
+              dependencies.clearTimeout(state.transientRecoveryTimer); state.transientRecoveryTimer = null;
+            }
+            retryRecoverableSoon();
+          },
         });
         if (!owned(state)) throw new Error();
         state.transport = transport;
         candidate = createXAccountTargetRouteSessionController(dependencies.document, {
           settingsRuntime: state.settingsRuntime,
           observerFactory: (callback) => new dependencies.MutationObserver(callback),
-          loadPayload: transport.loadPayload,
+          loadPayload: (identity, context) => state.cache.loadPayload(identity, context, transport.loadPayload),
           brokerAbortControllerFactory: () => new dependencies.AbortController(),
           consumerAbortControllerFactory: () => new dependencies.AbortController(),
           navigationObserverFactory: (options) => {
@@ -5397,7 +5587,7 @@
       const state = {
         generation: generation + 1, claimed: false, cleaned: false, promiseSettled: false,
         resolve: null, reject: null, promise: null, bridge: null, injector: null,
-        settingsCandidate: null, settingsRuntime: null, transport: null,
+        settingsCandidate: null, settingsRuntime: null, transport: null, cache: null,
         sidebar: null,
         routeCandidate: null, routeController: null,
         bridgeStopped: false, injectorStopped: false, settingsCandidateStopped: false,
@@ -5405,6 +5595,8 @@
         metadataListener: null, metadataMayBeAdded: false,
         metadataCheckPending: false, pagehideListener: null, pagehideMayBeAdded: false,
         metadataScheduleTimer: null,
+        recoverableRetryTimer: null, transientRecoveryTimer: null, nonRateRecoveryUsed: false,
+        acceptedRecoveryGeneration: 0, acceptedRecoveryRevision: 0,
         prerequisitesReady: false, routeStarting: false,
       };
       state.promise = new dependencies.Promise((resolve, reject) => {
@@ -5420,7 +5612,26 @@
         if (!owned(state)) return;
         const recoveryState = state.bridge && typeof state.bridge.getRecoveryState === 'function'
           ? state.bridge.getRecoveryState() : null;
-        if (recoveryState !== null) state.transport?.updateRecoveryState(recoveryState);
+        if (recoveryState !== null && state.transport !== null) {
+          const newer = recoveryState.generation > state.acceptedRecoveryGeneration
+            || (recoveryState.generation === state.acceptedRecoveryGeneration
+              && recoveryState.revision > state.acceptedRecoveryRevision);
+          const accepted = state.transport.updateRecoveryState(recoveryState);
+          if (accepted && newer) {
+            state.acceptedRecoveryGeneration = recoveryState.generation;
+            state.acceptedRecoveryRevision = recoveryState.revision;
+            state.nonRateRecoveryUsed = false;
+            if (state.transientRecoveryTimer !== null) {
+              dependencies.clearTimeout(state.transientRecoveryTimer); state.transientRecoveryTimer = null;
+            }
+            if (ready && state.recoverableRetryTimer === null) {
+              state.recoverableRetryTimer = dependencies.setTimeout(() => {
+                state.recoverableRetryTimer = null;
+                if (owned(state)) state.routeController?.retryRecoverable();
+              }, 0);
+            }
+          }
+        }
         if (state.metadataScheduleTimer === null) state.metadataScheduleTimer = dependencies.setTimeout(() => {
           state.metadataScheduleTimer = null;
           if (owned(state) && !ready) startRoute(state);
@@ -5463,6 +5674,11 @@
             ['pagehide', pagehideListener]); } catch { /* contained */ }
         }
         checkpoint();
+        state.cache = createXAboutAccountCacheRepository({
+          storage: createBrowserStorageAdapter(globalScope),
+          setTimeout: dependencies.setTimeout, clearTimeout: dependencies.clearTimeout, onError: report,
+        });
+        void state.cache.initialize();
         const injector = createXPageScriptInjector(globalScope);
         state.injector = injector;
         if (!owned(state)) stopComponent(state, 'injector');

@@ -7,8 +7,10 @@ import {
 } from '../shared/x-about-account-request-event.js';
 import { isValidXAboutAccountQueryId } from '../shared/x-about-account-query.js';
 
-const MAX_IN_FLIGHT = 4;
-const START_INTERVAL = 200;
+const MAX_IN_FLIGHT = 2;
+const START_INTERVAL = 750;
+const RATE_LIMIT_FALLBACKS = [60_000, 120_000, 300_000, 900_000, 1_800_000];
+const MAX_COOLDOWN = 24 * 60 * 60 * 1000;
 const BRIDGE_TIMEOUT = 30_000;
 const SYNCHRONIZATION_TIMEOUT = 30_000;
 const abortError = () => Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
@@ -23,8 +25,12 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
   const setTimer = options.setTimeout ?? ((callback, ms) => setTimeout(callback, ms));
   const clearTimer = options.clearTimeout ?? ((timer) => clearTimeout(timer));
   const onMetadataRejected = options.onMetadataRejected ?? (() => {});
+  const onCooldownComplete = options.onCooldownComplete ?? (() => {});
+  const onSuccessfulResponse = options.onSuccessfulResponse ?? (() => {});
+  const onTerminalFailure = options.onTerminalFailure ?? (() => {});
   let sequence = 0; let active = true; let inFlight = 0; let lastStart = -Infinity;
-  let cooldownUntil = 0; let scheduleTimer = null; let resumeTimer = null;
+  let cooldownUntil = 0; let scheduleTimer = null; let resumeTimer = null; let cooldownTimer = null;
+  let consecutiveRateLimits = 0;
   let recoveryState = null;
   const blockedMetadata = { auth: new Set(), query: new Set() };
   const queue = []; const pending = new Map(); const waitingMetadata = new Set();
@@ -34,6 +40,21 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
   const dispatchCancellation = (id) => {
     try { dispatch(X_ABOUT_ACCOUNT_CANCEL_EVENT_TYPE, serializeAboutAccountCancel(id)); }
     catch { /* Cancellation cleanup never depends on page event delivery. */ }
+  };
+  const reportTerminalFailure = (code) => {
+    if (!['NETWORK', 'HTTP_5XX', 'BRIDGE_TIMEOUT', 'PAGE_BRIDGE_UNAVAILABLE'].includes(code)) return;
+    try { onTerminalFailure(code); } catch { /* lifecycle owner reports failures */ }
+  };
+  const armCooldownTimer = () => {
+    if (!active) return;
+    if (cooldownTimer !== null) clearTimer(cooldownTimer);
+    cooldownTimer = setTimer(() => {
+      cooldownTimer = null;
+      if (!active) return;
+      if (now() < cooldownUntil) { armCooldownTimer(); schedule(); return; }
+      try { onCooldownComplete(); } catch { /* lifecycle owner reports failures */ }
+      schedule();
+    }, Math.max(0, cooldownUntil - now()));
   };
   const schedule = () => {
     if (!active || scheduleTimer !== null || blockedMetadata.auth.size > 0
@@ -51,19 +72,22 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     entry.attemptQuery = recoveryState?.queryId ?? null;
     if (entry.attemptRevision === null) {
       entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
+      reportTerminalFailure('PAGE_BRIDGE_UNAVAILABLE');
       entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
     }
     try { dispatch(X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE,
       serializeAboutAccountRequest(entry.id, entry.handle, entry.attemptRevision)); }
     catch {
       entry.started = false; inFlight -= 1; pending.delete(entry.id); entry.cleanup();
+      reportTerminalFailure('PAGE_BRIDGE_UNAVAILABLE');
       entry.reject(codedError('PAGE_BRIDGE_UNAVAILABLE')); schedule(); return;
     }
     entry.attemptTimer = setTimer(() => {
       if (!active || !entry.started || pending.get(entry.id) !== entry) return;
       entry.attemptTimer = null; entry.started = false; inFlight = Math.max(0, inFlight - 1);
       dispatchCancellation(entry.id);
-      pending.delete(entry.id); entry.cleanup(); entry.reject(codedError('BRIDGE_TIMEOUT'));
+      pending.delete(entry.id); entry.cleanup(); reportTerminalFailure('BRIDGE_TIMEOUT');
+      entry.reject(codedError('BRIDGE_TIMEOUT'));
       schedule();
     }, BRIDGE_TIMEOUT);
     schedule();
@@ -92,7 +116,11 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     if (entry.attemptTimer !== null) { clearTimer(entry.attemptTimer); entry.attemptTimer = null; }
     entry.started = false; inFlight = Math.max(0, inFlight - 1);
     if (entry.cancelled) { schedule(); return; }
-    if (result.ok) { pending.delete(entry.id); entry.cleanup(); entry.resolve(result.payload); schedule(); return; }
+    if (result.ok) {
+      consecutiveRateLimits = 0; pending.delete(entry.id); entry.cleanup();
+      try { onSuccessfulResponse(); } catch { /* lifecycle owner reports failures */ }
+      entry.resolve(result.payload); schedule(); return;
+    }
     const rejectionCode = ['HTTP_400', 'HTTP_401', 'HTTP_403', 'HTTP_404'].includes(result.code);
     const code = rejectionCode && result.metadataRevision !== entry.attemptRevision
       ? 'METADATA_SYNC' : result.code;
@@ -111,7 +139,12 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
         schedule(); return;
       }
     } else if (code === 'HTTP_429') {
-      cooldownUntil = Math.max(cooldownUntil, now() + Math.min(300_000, result.retryAfterMs ?? 60_000));
+      consecutiveRateLimits += 1;
+      const fallback = RATE_LIMIT_FALLBACKS[Math.min(consecutiveRateLimits - 1, RATE_LIMIT_FALLBACKS.length - 1)];
+      const supplied = Number.isFinite(result.retryAfterMs) && result.retryAfterMs > 0
+        ? Math.min(MAX_COOLDOWN, result.retryAfterMs) : 0;
+      cooldownUntil = Math.max(cooldownUntil, now() + Math.max(60_000, supplied || fallback));
+      armCooldownTimer();
       if (entry.rateRetries++ < 1) retryDelay = 0;
     } else if ((code === 'NETWORK' || code === 'HTTP_5XX') && entry.transientRetries < 2) {
       retryDelay = 1000 * (2 ** entry.transientRetries); entry.transientRetries += 1;
@@ -141,6 +174,7 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
       }, retryDelay);
     } else {
       pending.delete(entry.id); entry.cleanup();
+      reportTerminalFailure(code);
       entry.reject(code === 'ABORTED' ? abortError() : codedError(code, result.status));
     }
     schedule();
@@ -230,6 +264,7 @@ export function createXAboutAccountPageTransport(globalScope, options = {}) {
     if (!active) return; active = false;
     if (scheduleTimer !== null) { clearTimer(scheduleTimer); scheduleTimer = null; }
     if (resumeTimer !== null) { clearTimer(resumeTimer); resumeTimer = null; }
+    if (cooldownTimer !== null) { clearTimer(cooldownTimer); cooldownTimer = null; }
     document.removeEventListener(X_ABOUT_ACCOUNT_RESPONSE_EVENT_TYPE, response);
     for (const entry of pending.values()) {
       entry.cancelled = true; entry.cleanup();

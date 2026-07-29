@@ -30,11 +30,18 @@ const statusCode = (status) => {
   return 'UNKNOWN';
 };
 export function parseRateLimitDelay(headers, now = Date.now()) {
+  const maximum = 24 * 60 * 60 * 1000;
+  const delays = [];
   const retry = headers?.get?.('retry-after');
-  if (/^\d+$/.test(retry ?? '')) return Math.min(300_000, Number(retry) * 1000);
+  if (/^\d+(?:\.\d+)?$/.test(retry ?? '')) delays.push(Number(retry) * 1000);
+  else if (typeof retry === 'string') {
+    const timestamp = Date.parse(retry);
+    if (Number.isFinite(timestamp)) delays.push(timestamp - now);
+  }
   const reset = headers?.get?.('x-rate-limit-reset');
-  if (/^\d+$/.test(reset ?? '')) return Math.min(300_000, Math.max(0, Number(reset) * 1000 - now));
-  return 60_000;
+  if (/^\d+$/.test(reset ?? '')) delays.push(Number(reset) * 1000 - now);
+  const valid = delays.filter((delay) => Number.isFinite(delay) && delay > 0);
+  return valid.length === 0 ? null : Math.min(maximum, Math.max(...valid));
 }
 export function installXAboutAccountRequestExecutor(globalScope, capture) {
   const { document, CustomEvent, AbortController, location } = globalScope;
@@ -104,7 +111,7 @@ export function installXAboutAccountRequestExecutor(globalScope, capture) {
         }
         let retryAfterMs = null;
         if (status === 429) {
-          try { retryAfterMs = parseRateLimitDelay(response.headers); } catch { retryAfterMs = 60_000; }
+          try { retryAfterMs = parseRateLimitDelay(response.headers); } catch { retryAfterMs = null; }
         }
         fail(command.id, statusCode(status), status, retryAfterMs,
           [400, 401, 403, 404].includes(status) ? metadata.revision : null); return;

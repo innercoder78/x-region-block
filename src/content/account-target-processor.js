@@ -233,11 +233,13 @@ export function createXAccountTargetProcessor(options) {
     entry.pending = null;
     entry.controller = null;
     if (error?.name === 'AbortError' || error?.code === 'ABORTED') return;
-    entry.details = createUnavailableXAboutAccountDetails();
-    entry.recoverable = error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
+    const transient = ['HTTP_429', 'NETWORK', 'HTTP_5XX', 'BRIDGE_TIMEOUT',
+      'PAGE_BRIDGE_UNAVAILABLE', 'NO_METADATA', 'METADATA_SYNC'].includes(error?.code);
+    if (!transient) entry.details = createUnavailableXAboutAccountDetails();
+    entry.recoverable = transient || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.AUTHENTICATION
       || error?.code === X_ABOUT_ACCOUNT_RECOVERY_CODES.QUERY;
     report(sanitizedDiagnosticError(error, message));
-    presentEntry(entry);
+    if (!transient) presentEntry(entry);
   };
   const startLookup = (entry) => {
     let controller;

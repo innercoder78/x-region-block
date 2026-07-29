@@ -6,12 +6,13 @@ import { getAccountAction } from '../src/content/account-action-renderer.js';
 import { FakeDocument, FakeElement } from './helpers/fake-dom.js';
 import { createFakeAbortController } from './helpers/fake-abort-controller.js';
 import { MetadataEvent, observedHeaders, observedUrl } from './helpers/x-request-metadata-facade.js';
+import { X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE } from '../src/shared/x-about-account-request-event.js';
 
 vi.useFakeTimers();
 
 const settle = async () => {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();
-  await vi.advanceTimersByTimeAsync(210);
+  await vi.advanceTimersByTimeAsync(760);
   for (let index = 0; index < 4; index += 1) await Promise.resolve();
 };
 
@@ -326,15 +327,14 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(transportCalls).toHaveLength(beforeNavigation);
   globalScope.history.pushState({}, '', '/openai/with_replies');
   const afterPush = transportCalls.length;
-  expect(afterPush).toBe(beforeNavigation + 1);
+  expect(afterPush).toBe(beforeNavigation);
   await settle();
   globalScope.history.replaceState({}, '', '/openai/status/1');
   expect(transportCalls.length).toBe(afterPush);
   globalScope.location.href = 'https://x.com/home';
   globalScope.dispatchEvent(new MetadataEvent('popstate'));
   const afterHome = transportCalls.length;
-  expect(afterHome).toBe(afterPush + 1);
-  expect(decodeURIComponent(transportCalls.at(-1).url)).toContain('"screenName":"openai"');
+  expect(afterHome).toBe(afterPush);
   expect(observerInstances.some((observer) => observer.target === document)).toBe(true);
 
   runtime.stop();
@@ -348,27 +348,35 @@ it('runs the real production page, metadata, transport, broker, route, and prese
   expect(transportCalls.every(({ url }) => url.startsWith('https://x.com/'))).toBe(true);
 });
 
-async function recoveryHarness({ failureStatus, settings, responder = null }) {
+async function recoveryHarness({ failureStatus, settings, responder = null, handles = ['visible'] }) {
   const document = new FakeDocument();
   const listeners = new Map();
+  let beforeDispatch = null;
   document.addEventListener = (type, listener) => { const values = listeners.get(type) ?? []; values.push(listener); listeners.set(type, values); };
   document.removeEventListener = (type, listener) => listeners.set(type, (listeners.get(type) ?? []).filter((value) => value !== listener));
-  document.dispatchEvent = (event) => { for (const listener of [...(listeners.get(event.type) ?? [])]) listener(event); return true; };
-  const tweet = document.createElement('article'); tweet.setAttribute('data-testid', 'tweet');
-  const name = document.createElement('div'); name.setAttribute('data-testid', 'User-Name');
-  const link = document.createElement('a'); link.setAttribute('href', '/visible');
-  const shell = document.createElement('div'); const column = document.createElement('div');
-  const authorRow = document.createElement('div'); const menu = document.createElement('button');
-  menu.setAttribute('data-testid', 'caret'); name.appendChild(link); authorRow.appendChild(name); authorRow.appendChild(menu);
-  column.appendChild(authorRow); shell.appendChild(column); tweet.appendChild(shell); document.appendChild(tweet);
+  document.dispatchEvent = (event) => {
+    beforeDispatch?.(event);
+    for (const listener of [...(listeners.get(event.type) ?? [])]) listener(event); return true;
+  };
+  const targets = handles.map((handle) => {
+    const tweet = document.createElement('article'); tweet.setAttribute('data-testid', 'tweet');
+    const name = document.createElement('div'); name.setAttribute('data-testid', 'User-Name');
+    const link = document.createElement('a'); link.setAttribute('href', `/${handle}`);
+    const shell = document.createElement('div'); const column = document.createElement('div');
+    const authorRow = document.createElement('div'); const menu = document.createElement('button');
+    menu.setAttribute('data-testid', 'caret'); name.appendChild(link); authorRow.appendChild(name); authorRow.appendChild(menu);
+    column.appendChild(authorRow); shell.appendChild(column); tweet.appendChild(shell); document.appendChild(tweet);
+    return { handle, tweet, name, link };
+  });
   const observers = [];
   class MutationObserver { constructor(callback) { this.callback = callback; observers.push(this); } observe(target) { this.target = target; } disconnect() { this.disconnected = true; } }
   class AbortController { constructor() { const value = createFakeAbortController(); this.signal = value.signal; this.abort = value.abort.bind(value); } }
   let pageTraffic = true; let attempt = 0; const transportCalls = [];
   const originalFetch = vi.fn((url, options) => {
     if (pageTraffic) return 'page-result';
-    transportCalls.push({ url, options }); attempt += 1;
-    if (responder) return responder(attempt);
+    const handle = JSON.parse(new URL(url).searchParams.get('variables')).screenName;
+    transportCalls.push({ url, options, handle, time: Date.now() }); attempt += 1;
+    if (responder) return responder(attempt, handle);
     if (attempt === 1) return Promise.resolve({ ok: false, status: failureStatus, json: () => null });
     return Promise.resolve({ ok: true, status: 200, json: () => ({ data: {
       user_result_by_screen_name: { result: { about_profile: { account_based_in: 'Canada' } } },
@@ -392,7 +400,16 @@ async function recoveryHarness({ failureStatus, settings, responder = null }) {
   scriptRoot.appendChild = (script) => { installXPageRuntime(globalScope); script.onload?.(); return script; };
   const runtime = createXProductionContentRuntime(globalScope); await runtime.start();
   const capture = (url, headers) => { pageTraffic = true; const result = globalScope.fetch(url, { headers }); pageTraffic = false; return result; };
-  return { runtime, globalScope, tweet, name, link, transportCalls, capture, observers, console };
+  const [first] = targets;
+  return { runtime, globalScope, tweet: first.tweet, name: first.name, link: first.link,
+    targets, transportCalls, capture, observers, console,
+    setBeforeDispatch: (callback) => { beforeDispatch = callback; },
+    trigger: () => observers.filter((observer) => observer.target === document)
+      .forEach((observer) => observer.callback([{}])),
+    remove: (target) => {
+      document.children.splice(document.children.indexOf(target.tweet), 1); target.tweet.parentNode = null;
+      observers.filter((observer) => observer.target === document).forEach((observer) => observer.callback([{}]));
+    } };
 }
 
 it('recovers the same visible production target after genuinely fresh authentication metadata', async () => {
@@ -473,10 +490,10 @@ it.each([
     context.capture('/i/api/graphql/generic/HomeTimeline?fresh=1', {
       ...observedHeaders, 'x-csrf-token': 'fresh-csrf',
     });
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(750);
   } else if (code === 'HTTP_404') {
     context.capture(observedUrl('fresh_diagnostic_query'), observedHeaders);
-    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(750);
   }
   await Promise.resolve(); await Promise.resolve();
   const diagnostics = context.console.warn.mock.calls.flat().join('\n');
@@ -487,5 +504,148 @@ it.each([
     expect(diagnostics).not.toContain('Account processing failed.');
   }
   expect(diagnostics).not.toMatch(/private-network-secret|raw-secret-payload|diagnostic=1|@visible|authorization|csrf|cookie|token/i);
+  context.runtime.stop();
+});
+
+it('coalesces terminal network recovery, retries once after 60 seconds, and does not loop', async () => {
+  const settings = { schemaVersion: 1, country: { hide: [], highlight: [], alwaysShow: [] },
+    region: { hide: [], highlight: [] }, language: { highlight: [] }, tag: { highlight: [] },
+    other: { hide: [], highlight: [] }, allowlist: [] };
+  const context = await recoveryHarness({ failureStatus: 500, settings, handles: ['one', 'two'],
+    responder: () => Promise.reject(new Error('offline')) });
+  context.capture('/i/api/graphql/generic/HomeTimeline?network=1', observedHeaders); await settle();
+  await vi.advanceTimersByTimeAsync(3_500);
+  expect(context.transportCalls).toHaveLength(6);
+  expect(context.transportCalls.map(({ handle }) => handle).sort()).toEqual(['one', 'one', 'one', 'two', 'two', 'two']);
+  expect(context.targets.every(({ name }) => findLocationBadge(name) === null)).toBe(true);
+  await vi.advanceTimersByTimeAsync(58_000); expect(context.transportCalls).toHaveLength(6);
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(context.transportCalls).toHaveLength(8);
+  await vi.advanceTimersByTimeAsync(3_500);
+  expect(context.transportCalls).toHaveLength(12);
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(context.transportCalls).toHaveLength(12);
+  expect(context.targets.every(({ name }) => findLocationBadge(name) === null)).toBe(true);
+  context.runtime.stop();
+});
+
+it('a real X success rearms non-rate recovery while a removed target is not retried', async () => {
+  const settings = { schemaVersion: 1, country: { hide: [], highlight: [], alwaysShow: [] },
+    region: { hide: [], highlight: [] }, language: { highlight: [] }, tag: { highlight: [] },
+    other: { hide: [], highlight: [] }, allowlist: [] };
+  const counts = new Map();
+  const context = await recoveryHarness({ failureStatus: 500, settings,
+    responder: (_attempt, handle) => {
+      const count = (counts.get(handle) ?? 0) + 1; counts.set(handle, count);
+      if (handle === 'visible' && count <= 3) return Promise.reject(new Error('offline'));
+      if (handle === 'later') return Promise.reject(new Error('offline'));
+      return Promise.resolve({ ok: true, status: 200, json: () => ({ data: {
+        user_result_by_screen_name: { result: { about_profile: { account_based_in: 'Canada' } } },
+      } }) });
+    } });
+  context.capture('/i/api/graphql/generic/HomeTimeline?success-reset=1', observedHeaders); await settle();
+  await vi.advanceTimersByTimeAsync(3_500); expect(context.transportCalls).toHaveLength(3);
+  await vi.advanceTimersByTimeAsync(60_000); await settle();
+  expect(findLocationBadge(context.name).textContent).toContain('Country:');
+  context.link.setAttribute('href', '/later'); context.trigger(); await settle();
+  await vi.advanceTimersByTimeAsync(3_500);
+  const laterBeforeRecovery = context.transportCalls.filter(({ handle }) => handle === 'later').length;
+  expect(laterBeforeRecovery).toBe(3);
+  context.remove(context.targets[0]);
+  await vi.advanceTimersByTimeAsync(61_000);
+  expect(context.transportCalls.filter(({ handle }) => handle === 'later')).toHaveLength(laterBeforeRecovery);
+  context.runtime.stop();
+});
+
+it('newer metadata recovers terminal synchronization and shutdown cancels owned retries', async () => {
+  const settings = { schemaVersion: 1, country: { hide: [], highlight: [], alwaysShow: [] },
+    region: { hide: [], highlight: [] }, language: { highlight: [] }, tag: { highlight: [] },
+    other: { hide: [], highlight: [] }, allowlist: [] };
+  const context = await recoveryHarness({ failureStatus: 500, settings });
+  let revisions = 0;
+  context.setBeforeDispatch((event) => {
+    if (event.type !== X_ABOUT_ACCOUNT_REQUEST_EVENT_TYPE || revisions >= 3) return;
+    revisions += 1;
+    context.capture(observedUrl(`sync_query_${revisions}`), {
+      ...observedHeaders, 'x-csrf-token': `sync-csrf-${revisions}`,
+    });
+  });
+  context.capture('/i/api/graphql/generic/HomeTimeline?sync=1', observedHeaders); await settle();
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(findLocationBadge(context.name)).toBeNull();
+  expect(context.transportCalls).toHaveLength(1);
+  context.setBeforeDispatch(null);
+  context.capture(observedUrl('sync_query_final'), {
+    ...observedHeaders, 'x-csrf-token': 'sync-csrf-final',
+  });
+  await settle();
+  expect(context.transportCalls).toHaveLength(2);
+  expect(findLocationBadge(context.name).textContent).toContain('Country:');
+
+  context.link.setAttribute('href', '/shutdown'); context.trigger();
+  await vi.advanceTimersByTimeAsync(3_500);
+  const beforeStop = context.transportCalls.length;
+  context.runtime.stop(); await vi.runAllTimersAsync();
+  expect(context.transportCalls).toHaveLength(beforeStop);
+});
+
+it('shutdown cancels the pending global transient retry episode', async () => {
+  const settings = { schemaVersion: 1, country: { hide: [], highlight: [], alwaysShow: [] },
+    region: { hide: [], highlight: [] }, language: { highlight: [] }, tag: { highlight: [] },
+    other: { hide: [], highlight: [] }, allowlist: [] };
+  const context = await recoveryHarness({ failureStatus: 500, settings,
+    responder: () => Promise.reject(new Error('offline')) });
+  context.capture('/i/api/graphql/generic/HomeTimeline?shutdown=1', observedHeaders); await settle();
+  await vi.advanceTimersByTimeAsync(3_500);
+  expect(context.transportCalls).toHaveLength(3);
+  context.runtime.stop();
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(context.transportCalls).toHaveLength(3);
+});
+
+it('keeps 429 recovery exclusively on the escalating transport cooldown path', async () => {
+  const settings = { schemaVersion: 1, country: { hide: [], highlight: [], alwaysShow: [] },
+    region: { hide: [], highlight: [] }, language: { highlight: [] }, tag: { highlight: [] },
+    other: { hide: [], highlight: [] }, allowlist: [] };
+  const context = await recoveryHarness({ failureStatus: 429, settings,
+    responder: () => Promise.resolve({ ok: false, status: 429, headers: new Headers(), json: () => null }) });
+  context.capture('/i/api/graphql/generic/HomeTimeline?rate=1', observedHeaders); await settle();
+  expect(context.transportCalls).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(59_000); expect(context.transportCalls).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1_000); expect(context.transportCalls).toHaveLength(2);
+  await vi.advanceTimersByTimeAsync(60_000); expect(context.transportCalls).toHaveLength(2);
+  await vi.advanceTimersByTimeAsync(60_000); expect(context.transportCalls).toHaveLength(3);
+  expect(findLocationBadge(context.name)).toBeNull();
+  context.runtime.stop();
+});
+
+it('a persistent-cache hit neither calls X nor rearms the non-rate recovery gate', async () => {
+  const settings = { schemaVersion: 1, country: { hide: [], highlight: [], alwaysShow: [] },
+    region: { hide: [], highlight: [] }, language: { highlight: [] }, tag: { highlight: [] },
+    other: { hide: [], highlight: [] }, allowlist: [] };
+  const context = await recoveryHarness({ failureStatus: 500, settings, handles: ['cached'],
+    responder: (_attempt, handle) => handle === 'cached'
+      ? Promise.resolve({ ok: true, status: 200, json: () => ({ data: {
+        user_result_by_screen_name: { result: { about_profile: { account_based_in: 'Canada' } } },
+      } }) }) : Promise.reject(new Error('offline')) });
+  context.capture('/i/api/graphql/generic/HomeTimeline?cache-gate=1', observedHeaders); await settle();
+  expect(context.transportCalls.filter(({ handle }) => handle === 'cached')).toHaveLength(1);
+  expect(findLocationBadge(context.name).textContent).toContain('Country:');
+
+  context.link.setAttribute('href', '/failed'); context.trigger(); await settle();
+  await vi.advanceTimersByTimeAsync(3_500);
+  expect(context.transportCalls.filter(({ handle }) => handle === 'failed')).toHaveLength(3);
+  context.link.setAttribute('href', '/cached'); context.trigger(); await settle();
+  expect(context.transportCalls.filter(({ handle }) => handle === 'cached')).toHaveLength(1);
+  expect(findLocationBadge(context.name).textContent).toContain('Country:');
+
+  context.link.setAttribute('href', '/failedagain'); context.trigger(); await settle();
+  await vi.advanceTimersByTimeAsync(3_500);
+  expect(context.transportCalls.filter(({ handle }) => handle === 'failedagain')).toHaveLength(3);
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.advanceTimersByTimeAsync(3_500);
+  expect(context.transportCalls.filter(({ handle }) => handle === 'failedagain')).toHaveLength(6);
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(context.transportCalls.filter(({ handle }) => handle === 'failedagain')).toHaveLength(6);
   context.runtime.stop();
 });
